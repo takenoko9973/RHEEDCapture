@@ -1,0 +1,71 @@
+[project]
+name = "rheed_capture"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+dependencies = [
+    "numpy>=2.4.2",
+    "opencv-python-headless>=4.13.0.92",
+    "pypylon>=4.2.0",
+    "pyside6>=6.10.2",
+    "pytest>=9.0.2",
+    "tifffile>=2026.1.28",
+]
+
+[dependency-groups]
+dev = ["pylance>=1.0.0", "ruff>=0.14.2", "ty>=0.0.1a24"]
+
+[tool.uv.sources]
+my-pyside-app = { url = "https://pypi.org/simple" }
+
+[project.optional-dependencies]
+dev = ["ruff", "ty"]
+
+[tool.ruff]
+target-version = "py312"
+
+line-length = 100
+
+# チェックするエラー
+select = ["ALL"]
+# 除外するエラー
+ignore = [
+    "ANN002", # missing-type-args
+    "ANN003", # missing-type-kwargs
+    "COM812", # 末尾のカンマを必須としない
+    "INP001", # __init__.pyを必須としない
+    "T20",    # flake8-print
+    "D1",     # docstring除外する
+    "EXE",    # flake8-executable
+    "D400",
+    "D415",   # docstringの末尾ピリオドの強制を無効化
+    "FBT001",
+    "FBT002", # 関数の引数にbooleanを許可
+    "ERA001",
+    #
+    "S101",
+    "TD002",
+    "TD003",
+    "FIX002",
+    "FBT003",
+    "TRY300",
+]
+# 警告はするが、自動修正はしないエラー
+unfixable = [
+    "F401",   # unused-import : 使用していないモジュールの自動削除停止
+    "F841",   # unused-variable : 使用していない変数の自動削除停止
+    "ERA001", # commented-out-code : コメントアウトしたpythonコードのエラー
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.ruff.isort]
+known-third-party = ["fastapi", "pydantic", "starlette"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+
+[tool.ruff.pylint]
+max-args = 10
