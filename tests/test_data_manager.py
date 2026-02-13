@@ -1,12 +1,14 @@
-import os
 import json
 import tempfile
+from pathlib import Path
+
 import numpy as np
 import tifffile
-from pathlib import Path
+
 from rheed_capture.core.data_manager import DataManager
 
-def test_experiment_directory_creation():
+
+def test_experiment_directory_creation() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         dm = DataManager(root_dir=temp_dir)
 
@@ -25,17 +27,18 @@ def test_experiment_directory_creation():
         assert img_dir.name == "image_001"
         assert img_dir.exists()
 
-def test_save_tiff_with_metadata():
+
+def test_save_tiff_with_metadata() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         dm = DataManager(root_dir=temp_dir)
-        dummy_data = np.ones((100, 100), dtype=np.uint16) * 2048 # 12bit value
+        dummy_data = np.ones((100, 100), dtype=np.uint16) * 2048  # 12bit value
 
         meta = {
             "exposure_us": 10000,
             "gain": 0,
             "timestamp": "2026-02-13T12:00:00",
             "bit_depth_saved": 16,
-            "bit_depth_sensor": 12
+            "bit_depth_sensor": 12,
         }
 
         # 保存実行

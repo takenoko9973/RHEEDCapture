@@ -12,7 +12,7 @@ from rheed_capture.core.camera_device import CameraDevice
 
 
 @pytest.fixture
-def camera_device():
+def camera_device():  # noqa: ANN201
     """テスト用のカメラデバイスフィクスチャ"""
     dev = CameraDevice()
     dev.connect()
@@ -20,7 +20,7 @@ def camera_device():
     dev.disconnect()
 
 
-def test_camera_connection_and_mandatory_settings(camera_device):
+def test_camera_connection_and_mandatory_settings(camera_device: CameraDevice) -> None:
     """接続と強制初期化設定(Mono16等)が正しく適用されるかのテスト"""
     assert camera_device.is_connected()
 
@@ -33,7 +33,7 @@ def test_camera_connection_and_mandatory_settings(camera_device):
         assert cam.ExposureAuto.GetValue() == "Off"
 
 
-def test_set_exposure_and_gain(camera_device):
+def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
     """露光時間とゲインの設定テスト"""
     # 露光時間を10000usに設定
     camera_device.set_exposure(10000.0)
@@ -46,7 +46,7 @@ def test_set_exposure_and_gain(camera_device):
         assert camera_device.camera.Gain.GetValue() == pytest.approx(45)  # なぜか若干誤差が発生する
 
 
-def test_grab_one(camera_device):
+def test_grab_one(camera_device: CameraDevice) -> None:
     """同期取得(GrabOne)のテスト"""
     # GrabOneで1枚画像を取得する
     img_data = camera_device.grab_one(timeout_ms=1000)
@@ -56,13 +56,13 @@ def test_grab_one(camera_device):
     assert img_data.dtype == np.uint16, "Mono16設定のためuint16で返ること"
 
 
-def test_preview_grabbing(camera_device):
+def test_preview_grabbing(camera_device: CameraDevice) -> None:
     """プレビュー用非同期取得(StartGrabbing)のテスト"""
     camera_device.start_preview_grab()
     assert camera_device.camera.IsGrabbing()
 
     # 1フレームだけ手動で取り出してみる
-    grab_result = camera_device.camera.RetrieveResult(1000, pylon.GrabStrategy_LatestImages)
+    grab_result = camera_device.camera.RetrieveResult(1000, pylon.TimeoutHandling_ThrowException)
     assert grab_result.GrabSucceeded()
     grab_result.Release()
 

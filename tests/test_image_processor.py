@@ -1,10 +1,13 @@
 import numpy as np
+
 from rheed_capture.core.image_processor import ImageProcessor
 
-def test_apply_double_clahe():
+
+def test_apply_double_clahe() -> None:
     # 1. 準備 (Arrange)
     # カメラからの12bit生データ(16bitコンテナ)を模擬したダミー画像 (1024x1024)
-    dummy_image = np.random.randint(0, 4096, (1024, 1024), dtype=np.uint16)
+    rng = np.random.default_rng(1234)
+    dummy_image = rng.integers(0, 4096, (1024, 1024), dtype=np.uint16)
 
     # 2. 実行 (Act)
     result = ImageProcessor.apply_double_clahe(dummy_image)

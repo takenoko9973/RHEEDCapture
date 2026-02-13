@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -19,6 +18,9 @@ GrabStrategy_OneByOne: int  # 出力キューに順次保持される
 GrabStrategy_LatestImageOnly: int  # 最新の画像だけ出力キューに保持
 GrabStrategy_LatestImages: int  # 最後から指定した数の画像が出力キューに保持
 GrabStrategy_UpcomingImage: int  # RetrieveResultメソッドが呼ばれてから出力キューに保持
+
+TimeoutHandling_Return: int
+TimeoutHandling_ThrowException: int
 
 class NodeMap:
     def GetNode(self, name: str) -> Any: ...
