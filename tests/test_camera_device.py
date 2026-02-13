@@ -68,3 +68,20 @@ def test_preview_grabbing(camera_device: CameraDevice) -> None:
 
     camera_device.stop_grabbing()
     assert not camera_device.camera.IsGrabbing()
+
+
+def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
+    """プレビュー連続取得中のフレーム取り出し(RetrieveResult)のテスト"""
+    camera_device.start_preview_grab()
+
+    # 連続してフレームが取得できるかテスト
+    for _ in range(3):
+        img_data = camera_device.retrieve_preview_frame(timeout_ms=1000)
+        assert img_data is not None
+        assert isinstance(img_data, np.ndarray)
+        assert img_data.dtype == np.uint16
+
+    camera_device.stop_grabbing()
+
+    # 停止中に取得しようとした場合はNoneが返ること
+    assert camera_device.retrieve_preview_frame() is None

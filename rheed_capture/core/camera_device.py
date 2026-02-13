@@ -142,3 +142,29 @@ class CameraDevice:
 
         finally:
             grab_result.Release()
+
+    def retrieve_preview_frame(self, timeout_ms: int = 1000) -> np.ndarray | None:
+        """プレビュー中(IsGrabbing == True)に最新のフレームを1枚取り出す。
+        UIスレッドをブロックしないよう、タイムアウト時はNoneを返す。
+
+        Args:
+            timeout_ms (int): タイムアウト時間(ms)
+
+        Returns:
+            np.ndarray | None: 画像データ(uint16)。取得失敗・タイムアウト時はNone
+
+        """
+        if not self.is_connected() or not self.camera.IsGrabbing():
+            return None
+
+        try:
+            # TimeoutHandling_Return で、タイムアウト時に例外ではなく無効なResultを返すようにする
+            grab_result = self.camera.RetrieveResult(timeout_ms, pylon.TimeoutHandling_Return)
+
+            img_data = grab_result.GetArray() if grab_result.GrabSucceeded() else None
+            grab_result.Release()
+            return img_data
+
+        except pylon.GenericException:
+            logger.exception("プレビュー画像の取得中にエラーが発生しました")
+            return None

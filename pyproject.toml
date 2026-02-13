@@ -9,6 +9,7 @@ dependencies = [
     "pypylon>=4.2.0",
     "pyside6>=6.10.2",
     "pytest>=9.0.2",
+    "pytest-qt>=4.5.0",
     "tifffile>=2026.1.28",
 ]
 
