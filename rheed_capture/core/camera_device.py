@@ -91,9 +91,11 @@ class CameraDevice:
         set_float("Gamma", 1.0)
         set_float("BlackLevel", 0.0)
 
-    def set_exposure(self, exposure_us: float) -> None:
+    def set_exposure(self, exposure_ms: float) -> None:
         """露光時間を設定 (単位: マイクロ秒)"""
         if self.is_connected() and genicam.IsWritable(self.camera.ExposureTime):
+            # Basler API はマイクロ秒(us)を要求するため、内部で1000倍する
+            exposure_us = exposure_ms * 1000.0
             self.camera.ExposureTime.SetValue(exposure_us)
 
     def set_gain(self, gain: float) -> None:
@@ -111,7 +113,7 @@ class CameraDevice:
         if self.is_connected() and self.camera.IsGrabbing():
             self.camera.StopGrabbing()
 
-    def grab_one(self, timeout_ms: int) -> np.ndarray:
+    def grab_one(self, timeout_ms: int) -> np.ndarray | None:
         """同期的に1枚の画像を取得する。
 
         Args:
@@ -125,23 +127,21 @@ class CameraDevice:
             msg = "カメラが接続されていません。"
             raise RuntimeError(msg)
 
-        # GrabOne はカメラが IsGrabbing() == True の時は呼べないため、
-        # 事前に停止されていることを前提とする。
+        # IsGrabbing() == True の時は呼べないため、事前に停止されていることを前提
         if self.camera.IsGrabbing():
             msg = "現在プレビュー実行中です。StopGrabbingを呼び出してください。"
             raise RuntimeError(msg)
 
-        grab_result = self.camera.GrabOne(timeout_ms)
-
         try:
-            if grab_result.GrabSucceeded():
-                return grab_result.GetArray()
+            with self.camera.GrabOne(timeout_ms) as result:
+                if result.GrabSucceeded():
+                    return result.GetArray()
 
-            msg = f"Grab failed: {grab_result.GetErrorDescription()}"
-            raise RuntimeError(msg)
+                return None
 
-        finally:
-            grab_result.Release()
+        except pylon.GenericException:
+            logger.exception("プレビュー画像の取得中にエラーが発生しました")
+            return None
 
     def retrieve_preview_frame(self, timeout_ms: int = 1000) -> np.ndarray | None:
         """プレビュー中(IsGrabbing == True)に最新のフレームを1枚取り出す。
@@ -159,11 +159,11 @@ class CameraDevice:
 
         try:
             # TimeoutHandling_Return で、タイムアウト時に例外ではなく無効なResultを返すようにする
-            grab_result = self.camera.RetrieveResult(timeout_ms, pylon.TimeoutHandling_Return)
+            with self.camera.RetrieveResult(timeout_ms, pylon.TimeoutHandling_Return) as result:
+                if result.GrabSucceeded():
+                    return result.GetArray()
 
-            img_data = grab_result.GetArray() if grab_result.GrabSucceeded() else None
-            grab_result.Release()
-            return img_data
+                return None
 
         except pylon.GenericException:
             logger.exception("プレビュー画像の取得中にエラーが発生しました")

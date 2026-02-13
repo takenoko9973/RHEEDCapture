@@ -6,6 +6,11 @@ class ImageProcessor:
     """RHEED画像処理を担当する静的クラス"""
 
     @staticmethod
+    def to_8bit_preview(image_16bit: np.ndarray) -> np.ndarray:
+        """16bitレンジの生データをプレビュー用に8bitへスケーリング"""
+        return (image_16bit / 255.0).astype(np.uint8)
+
+    @staticmethod
     def apply_double_clahe(image_16bit: np.ndarray) -> np.ndarray:
         """16bit画像に対してCLAHEを2段適用し、プレビュー用の8bit画像を生成する。
 
@@ -22,4 +27,4 @@ class ImageProcessor:
         clahe2 = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
         img_clahe2 = clahe2.apply(img_clahe1)
 
-        return (img_clahe2 / 16).astype(np.uint8)  # プレビュー用にuint8に変換
+        return ImageProcessor.to_8bit_preview(img_clahe2)  # プレビュー用にuint8に変換

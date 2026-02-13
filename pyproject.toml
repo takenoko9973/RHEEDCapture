@@ -11,6 +11,7 @@ dependencies = [
     "pytest>=9.0.2",
     "pytest-qt>=4.5.0",
     "tifffile>=2026.1.28",
+    "tzdata>=2025.3",
 ]
 
 [dependency-groups]

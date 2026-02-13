@@ -1,5 +1,3 @@
-import time
-
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
@@ -29,24 +27,22 @@ class PreviewWorker(QThread):
             # 画像の取得 (タイムアウト短めでUI停止を防ぐ)
             raw_image = self.camera_device.retrieve_preview_frame(timeout_ms=500)
 
-            if raw_image is not None:
-                try:
-                    # 画像処理
-                    if self.enable_processing:
-                        # CLAHEを2段適用
-                        display_image = ImageProcessor.apply_double_clahe(raw_image)
-                    else:
-                        # 未処理時もプレビュー表示用に8bitにスケーリング
-                        display_image = (raw_image / 16).astype(np.uint8)
+            if raw_image is None:
+                continue
 
-                    # シグナルでUIへ送信
-                    self.image_ready.emit(display_image)
+            try:
+                # 画像処理
+                display_image = (
+                    ImageProcessor.apply_double_clahe(raw_image)  # CLAHEを2段適用
+                    if self.enable_processing
+                    else ImageProcessor.to_8bit_preview(raw_image)  # 8bitにスケーリング
+                )
 
-                except Exception as e:  # noqa: BLE001
-                    self.error_occurred.emit(f"画像処理エラー: {e}")
+                # 結果の送信
+                self.image_ready.emit(display_image)
 
-            # CPU負荷を下げるための微小なスリープ (約30fpsを上限とする)
-            time.sleep(0.03)
+            except Exception as e:  # noqa: BLE001
+                self.error_occurred.emit(f"プレビュー更新エラー: {e}")
 
     def stop(self) -> None:
         """ループを終了し、スレッドの停止を要求する"""

@@ -35,9 +35,10 @@ def test_camera_connection_and_mandatory_settings(camera_device: CameraDevice) -
 
 def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
     """露光時間とゲインの設定テスト"""
-    # 露光時間を10000usに設定
-    camera_device.set_exposure(10000.0)
-    assert camera_device.camera.ExposureTime.GetValue() == 10000.0
+    # UIからの入力として 10.5 ms を設定
+    camera_device.set_exposure(10.5)
+    # Baslerカメラ内部のExposureTimeノードには 10500.0 us として書き込まれている
+    assert camera_device.camera.ExposureTime.GetValue() == 10500.0
 
     # ゲインを設定 (エミュレータが対応している場合)
     if genicam.IsWritable(camera_device.camera.Gain):
