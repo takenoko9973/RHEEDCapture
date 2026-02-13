@@ -5,5 +5,13 @@
         "genicam",
         "pypylon",
         "RHEED"
-    ]
+    ],
+    "python.analysis.packageIndexDepths": [
+        {
+            // PySide6 のインポート予測を表示させるように
+            "name": "PySide6",
+            "depth": 3,
+            "includeAllSymbols": false
+        }
+    ],
 }
