@@ -1,0 +1,133 @@
+import logging
+from typing import Any
+
+import numpy as np
+from pypylon import genicam, pylon  # pyright: ignore[reportMissingModuleSource]
+from pypylon.genicam import IEnumeration, IFloat, INode
+from pypylon.pylon import GenericException, InstantCamera, TlFactory
+
+logger = logging.getLogger(__name__)
+
+
+class CameraDevice:
+    """Baslerカメラの制御を行うハードウェアラッパークラス"""
+
+    _camera: InstantCamera | None
+
+    def __init__(self) -> None:
+        self._camera = None
+
+    @property
+    def camera(self) -> pylon.InstantCamera:
+        """カメラインスタンスへ安全にアクセスするための内部プロパティ。
+        接続されていない場合は RuntimeError。
+        """
+        if self._camera is None or not self._camera.IsOpen():
+            raise RuntimeError("カメラが接続されていません。")
+        return self._camera
+
+    def connect(self):
+        """最初の利用可能なカメラに接続し、初期化設定を行う"""
+        if self.is_connected():
+            return
+
+        try:
+            tl_factory = TlFactory.GetInstance()
+            devices = tl_factory.EnumerateDevices()
+            if not devices:
+                raise RuntimeError("カメラが見つかりません。")
+
+            # 最初に見つかったデバイスを作成
+            self._camera = InstantCamera(tl_factory.CreateFirstDevice())
+            self._camera.Open()
+
+            self._apply_mandatory_settings()
+            device_info = self.camera.GetDeviceInfo()
+            logger.info(f"Connected to camera: {device_info.GetModelName()}")
+
+        except GenericException as e:
+            raise RuntimeError(f"カメラへの接続に失敗しました: {e}")
+
+    def disconnect(self):
+        """カメラから切断する"""
+        if self.is_connected():
+            self.stop_grabbing()
+            self.camera.Close()
+            self._camera = None
+
+    def is_connected(self) -> bool:
+        return self._camera is not None and self._camera.IsOpen()
+
+    def _apply_mandatory_settings(self):
+        """仕様書に基づく強制初期化設定 (Rawデータ担保)"""
+        # NodeMapを取得
+        nodemap = self.camera.GetNodeMap()
+
+        # ユーティリティ: Writableな場合のみ設定する関数 (エミュレータと実機の差分吸収のため)
+        def set_enum(node_name: str, value: str):
+            node: IEnumeration = nodemap.GetNode(node_name)
+            if node is not None and genicam.IsWritable(node):
+                node.SetValue(value)
+
+        def set_float(node_name: str, value: float):
+            node: IFloat = nodemap.GetNode(node_name)
+            if node is not None and genicam.IsWritable(node):
+                node.SetValue(value)
+
+        # 必須フォーマット設定
+        set_enum("PixelFormat", "Mono16")
+
+        # 自動機能の無効化
+        set_enum("ExposureAuto", "Off")
+        set_enum("GainAuto", "Off")
+
+        # 画像補正の無効化 (生データを担保)
+        set_float("Gamma", 1.0)
+        set_float("BlackLevel", 0.0)
+
+    def set_exposure(self, exposure_us: float):
+        """露光時間を設定 (単位: マイクロ秒)"""
+        if self.is_connected() and genicam.IsWritable(self.camera.ExposureTime):
+            self.camera.ExposureTime.SetValue(exposure_us)
+
+    def set_gain(self, gain: float):
+        """ゲインを設定"""
+        if self.is_connected() and genicam.IsWritable(self.camera.Gain):
+            self.camera.Gain.SetValue(gain)
+
+    def start_preview_grab(self):
+        """プレビュー用の画像取得を開始 (LatestImageOnly戦略)"""
+        if self.is_connected() and not self.camera.IsGrabbing():
+            self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+
+    def stop_grabbing(self):
+        """画像取得を停止"""
+        if self.is_connected() and self.camera.IsGrabbing():
+            self.camera.StopGrabbing()
+
+    def grab_one(self, timeout_ms: int) -> np.ndarray:
+        """同期的に1枚の画像を取得する。
+
+        Args:
+            timeout_ms (int): タイムアウト時間(ms)
+
+        Returns:
+            np.ndarray: 画像データ (uint16)
+
+        """
+        if not self.is_connected():
+            raise RuntimeError("カメラが接続されていません。")
+
+        # GrabOne はカメラが IsGrabbing() == True の時は呼べないため、
+        # 事前に停止されていることを前提とする。
+        if self.camera.IsGrabbing():
+            raise RuntimeError("現在プレビュー実行中です。StopGrabbingを呼び出してください。")
+
+        grab_result = self.camera.GrabOne(timeout_ms)
+
+        try:
+            if grab_result.GrabSucceeded():
+                return grab_result.GetArray()
+            raise RuntimeError(f"Grab failed: {grab_result.GetErrorDescription()}")
+        finally:
+            grab_result.Release()
