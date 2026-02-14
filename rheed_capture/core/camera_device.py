@@ -96,6 +96,25 @@ class CameraDevice:
         set_float("Gamma", 1.0)
         set_float("BlackLevel", 0.0)
 
+    def get_exposure_bounds(self) -> tuple[float, float]:
+        """露光時間の最小・最大値(ms)を取得する"""
+        if self.is_connected() and genicam.IsReadable(self.camera.ExposureTime):
+            # pylonはus単位なのでmsに変換して返す
+            min_us = self.camera.ExposureTime.GetMin()
+            max_us = self.camera.ExposureTime.GetMax()
+            return (min_us / 1000.0, max_us / 1000.0)
+
+        return (0.1, 10000.0)  # フォールバック
+
+    def get_gain_bounds(self) -> tuple[float, float]:
+        """ゲインの最小・最大値を取得する"""
+        if self.is_connected() and genicam.IsReadable(self.camera.Gain):
+            min_gain = self.camera.Gain.GetMin()
+            max_gain = self.camera.Gain.GetMax()
+            return (float(min_gain), float(max_gain))
+
+        return (0.0, 48.0)  # フォールバック
+
     def set_exposure(self, exposure_ms: float) -> None:
         """露光時間を設定 (単位: マイクロ秒)"""
         if self.is_connected() and genicam.IsWritable(self.camera.ExposureTime):

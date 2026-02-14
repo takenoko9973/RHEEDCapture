@@ -33,6 +33,20 @@ def test_camera_connection_and_mandatory_settings(camera_device: CameraDevice) -
         assert cam.ExposureAuto.GetValue() == "Off"
 
 
+def test_camera_bounds(camera_device: CameraDevice) -> None:
+    """カメラから設定可能な最小・最大値が取得できるかのテスト"""
+    exp_min, exp_max = camera_device.get_exposure_bounds()
+    assert isinstance(exp_min, float)
+    assert isinstance(exp_max, float)
+    assert exp_min < exp_max
+
+    if genicam.IsReadable(camera_device.camera.Gain):
+        gain_min, gain_max = camera_device.get_gain_bounds()
+        assert isinstance(gain_min, float)
+        assert isinstance(gain_max, float)
+        assert gain_min < gain_max
+
+
 def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
     """露光時間とゲインの設定テスト"""
     # UIからの入力として 10.5 ms を設定
