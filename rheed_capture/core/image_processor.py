@@ -8,11 +8,12 @@ class ImageProcessor:
     @staticmethod
     def to_8bit_preview(image_16bit: np.ndarray) -> np.ndarray:
         """16bitレンジの生データをプレビュー用に8bitへスケーリング"""
-        return (image_16bit / 255.0).astype(np.uint8)
+        return (image_16bit >> 8).astype(np.uint8)
 
     @staticmethod
     def apply_double_clahe(image_16bit: np.ndarray) -> np.ndarray:
-        """16bit画像に対してCLAHEを2段適用し、プレビュー用の8bit画像を生成する。
+        """
+        16bit画像に対してCLAHEを2段適用し、プレビュー用の8bit画像を生成する。
 
         Args:
             image_16bit (np.ndarray): カメラからの生データ (uint16, 12bit有効)

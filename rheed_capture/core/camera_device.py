@@ -19,9 +19,14 @@ class CameraDevice:
     def __init__(self) -> None:
         self._camera = None
 
+        self.converter = pylon.ImageFormatConverter()
+        self.converter.OutputPixelFormat = pylon.PixelType_Mono16
+        self.converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
+
     @property
     def camera(self) -> pylon.InstantCamera:
-        """カメラインスタンスへ安全にアクセスするための内部プロパティ。
+        """
+        カメラインスタンスへ安全にアクセスするための内部プロパティ。
         接続されていない場合は RuntimeError。
         """
         if self._camera is None or not self._camera.IsOpen():
@@ -114,7 +119,8 @@ class CameraDevice:
             self.camera.StopGrabbing()
 
     def grab_one(self, timeout_ms: int) -> np.ndarray | None:
-        """同期的に1枚の画像を取得する。
+        """
+        同期的に1枚の画像を取得する。
 
         Args:
             timeout_ms (int): タイムアウト時間(ms)
@@ -135,7 +141,8 @@ class CameraDevice:
         try:
             with self.camera.GrabOne(timeout_ms) as result:
                 if result.GrabSucceeded():
-                    return result.GetArray()
+                    image = self.converter.Convert(result)
+                    return image.GetArray()
 
                 return None
 
@@ -144,7 +151,8 @@ class CameraDevice:
             return None
 
     def retrieve_preview_frame(self, timeout_ms: int = 1000) -> np.ndarray | None:
-        """プレビュー中(IsGrabbing == True)に最新のフレームを1枚取り出す。
+        """
+        プレビュー中(IsGrabbing == True)に最新のフレームを1枚取り出す。
         UIスレッドをブロックしないよう、タイムアウト時はNoneを返す。
 
         Args:
@@ -161,7 +169,8 @@ class CameraDevice:
             # TimeoutHandling_Return で、タイムアウト時に例外ではなく無効なResultを返すようにする
             with self.camera.RetrieveResult(timeout_ms, pylon.TimeoutHandling_Return) as result:
                 if result.GrabSucceeded():
-                    return result.GetArray()
+                    image = self.converter.Convert(result)
+                    return image.GetArray()
 
                 return None
 

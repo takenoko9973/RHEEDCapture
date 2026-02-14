@@ -23,6 +23,11 @@ GrabStrategy_UpcomingImage: int  # RetrieveResultメソッドが呼ばれてか�
 TimeoutHandling_Return: int
 TimeoutHandling_ThrowException: int
 
+PixelType_Mono12: int
+PixelType_Mono16: int
+OutputBitAlignment_LsbAligned: Any
+OutputBitAlignment_MsbAligned: Any
+
 class NodeMap:
     def GetNode(self, name: str) -> Any: ...
     # camera.ExposureTime.SetValue() のようなドットアクセスを Any で許容する
