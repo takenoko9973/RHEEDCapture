@@ -23,16 +23,23 @@ class PreviewPanel(QGroupBox):
 
         self.expo_min = max(self.expo_min, 0.01)  # 小数点第2まで表示するため、最小値を調整
 
-        # 露光時間UI (対数スケール)
-        self.spin_expo = QDoubleSpinBox(minimum=self.expo_min, maximum=self.expo_max)
+        # === 露光時間UI (対数スケール)
+        self.spin_expo = QDoubleSpinBox()
+        self.spin_expo.setRange(self.expo_min, self.expo_max)
         self.spin_expo.setSuffix(" ms")
+        # タイピング中は値を更新せず、Enterキー押下かフォーカス外れ時のみ更新する
+        self.spin_expo.setKeyboardTracking(False)
+
         self.slider_expo = QSlider(Qt.Orientation.Horizontal)
         self.slider_expo.setRange(0, self.expo_steps)
 
-        # ゲインUI
-        self.spin_gain = QSpinBox(minimum=self.gain_min, maximum=self.gain_max)
+        # === ゲインUI
+        self.spin_gain = QSpinBox()
+        self.spin_gain.setRange(int(self.gain_min), int(self.gain_max))
+        self.spin_gain.setKeyboardTracking(False)
+
         self.slider_gain = QSlider(Qt.Orientation.Horizontal)
-        self.slider_gain.setRange(self.gain_min, self.gain_max)
+        self.slider_gain.setRange(int(self.gain_min), int(self.gain_max))
 
         self.chk_processing = QCheckBox("Enable CLAHE Processing")
 
