@@ -540,8 +540,6 @@ dependencies = [
     { name = "opencv-python-headless" },
     { name = "pypylon" },
     { name = "pyside6" },
-    { name = "pytest" },
-    { name = "pytest-qt" },
     { name = "tifffile" },
     { name = "tzdata" },
 ]
@@ -557,6 +555,8 @@ dev = [
     { name = "mypy" },
     { name = "pybind11-stubgen" },
     { name = "pylance" },
+    { name = "pytest" },
+    { name = "pytest-qt" },
     { name = "ruff" },
     { name = "ty" },
 ]
@@ -567,8 +567,6 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = ">=4.13.0.92" },
     { name = "pypylon", specifier = ">=4.2.0" },
     { name = "pyside6", specifier = ">=6.10.2" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-qt", specifier = ">=4.5.0" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "tifffile", specifier = ">=2026.1.28" },
     { name = "ty", marker = "extra == 'dev'" },
@@ -581,6 +579,8 @@ dev = [
     { name = "mypy", specifier = ">=1.19.1" },
     { name = "pybind11-stubgen", specifier = ">=2.5.5" },
     { name = "pylance", specifier = ">=2.0.1" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-qt", specifier = ">=4.5.0" },
     { name = "ruff", specifier = ">=0.14.2" },
     { name = "ty", specifier = ">=0.0.17" },
 ]

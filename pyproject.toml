@@ -12,8 +12,6 @@ dependencies = [
     "opencv-python-headless>=4.13.0.92",
     "pypylon>=4.2.0",
     "pyside6>=6.10.2",
-    "pytest>=9.0.2",
-    "pytest-qt>=4.5.0",
     "tifffile>=2026.1.28",
     "tzdata>=2025.3",
 ]
@@ -25,6 +23,8 @@ dev = [
     "pylance>=2.0.1",
     "ruff>=0.14.2",
     "ty>=0.0.17",
+    "pytest>=9.0.2",
+    "pytest-qt>=4.5.0",
 ]
 
 
