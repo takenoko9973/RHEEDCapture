@@ -73,15 +73,15 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.sequence_panel)
 
         # === Splitterへ配置
-        self.splitter.addWidget(control_widget)
         self.splitter.addWidget(self.image_viewer)
+        self.splitter.addWidget(control_widget)
 
         # パネル側を優先して拡大するように設定
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
 
         # 初期表示時の幅のバランス
-        self.splitter.setSizes([300, 720])
+        self.splitter.setSizes([720, 300])
 
         # 3. シグナルの結線
         self.storage_panel.browse_requested.connect(self._on_browse_root)
