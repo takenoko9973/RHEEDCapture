@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSplitter,
+    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +36,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("RHEED Capture System")
         self.resize(1200, 700)
+
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
 
         self._setup_ui()
         self._start_preview()
@@ -134,6 +139,9 @@ class MainWindow(QMainWindow):
             self, "Branch Updated", f"Next capture will be saved in:\n{new_name}"
         )
 
+        msg = f"Branch Updated: Next capture will be saved in '{new_name}'"
+        self.statusBar().showMessage(msg, 5000)
+
     @Slot(list, list)
     def _on_start_sequence_requested(self, exp_list: list[float], gain_list: list[float]) -> None:
         self.sequence_panel.set_capturing_state(True)
@@ -163,15 +171,15 @@ class MainWindow(QMainWindow):
             self.capture_service.cancel()
             self.sequence_panel.btn_cancel.setEnabled(False)
 
-    @Slot(bool)
-    def _on_sequence_finished(self, success: bool) -> None:
+    @Slot(bool, str)
+    def _on_sequence_finished(self, success: bool, saved_dir_name: str) -> None:
         self.sequence_panel.set_capturing_state(False)
         self.preview_panel.set_controls_enabled(True)
         self.preview_worker.resume()
         if success:
-            QMessageBox.information(
-                self, "Sequence Complete", "All images have been captured successfully."
-            )
+            # ステータスバーに保存先を表示 (5000ミリ秒 = 5秒間で自動消去)
+            msg = f"Capture Complete: Saved to '{saved_dir_name}'"
+            self.status_bar.showMessage(msg, 10000)
 
     @Slot(str)
     def _show_error(self, message: str) -> None:

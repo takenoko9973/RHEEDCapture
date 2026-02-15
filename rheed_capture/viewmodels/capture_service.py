@@ -25,7 +25,7 @@ class CaptureService(QThread):
     # 進捗シグナル (現在の枚数, 全体の枚数)
     progress_update = Signal(int, int)
     # 完了シグナル (成功したかどうか bool)
-    sequence_finished = Signal(bool)
+    sequence_finished = Signal(bool, str)
     # エラーメッセージシグナル
     error_occurred = Signal(str)
 
@@ -54,10 +54,13 @@ class CaptureService(QThread):
     def run(self) -> None:
         """シーケンスのメイン処理"""
         success = False
+        saved_dir_name = ""
+
         try:
             logger.info("撮影シーケンスを開始します...")
 
             self.storage.start_new_sequence()  # 保存先フォルダの準備
+            saved_dir_name = self.storage.get_current_sequence_dir().name # 保存先
 
             #  撮影ループ
             for shot_count, (exp_ms, gain) in enumerate(self.conditions, 1):
@@ -80,7 +83,7 @@ class CaptureService(QThread):
             self.error_occurred.emit(str(e))
 
         finally:
-            self.sequence_finished.emit(success)
+            self.sequence_finished.emit(success, saved_dir_name)
 
     def _check_cancelled(self) -> None:
         """キャンセル状態をチェックし、必要なら例外を投げる"""
