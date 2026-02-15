@@ -105,8 +105,10 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_new_branch(self) -> None:
-        new_name = self.storage.increment_branch()
+        self.storage.increment_branch()
         self._update_storage_display()
+
+        new_name = self.storage_panel.lbl_target_dir.text()
         QMessageBox.information(
             self, "Branch Updated", f"Next capture will be saved in:\n{new_name}"
         )
