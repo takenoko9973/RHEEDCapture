@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import tifffile
 
-from rheed_capture.core.storage import ExperimentStorage, TiffWriter
+from rheed_capture.models.io.storage import ExperimentStorage, TiffWriter
 
 JST = ZoneInfo("Asia/Tokyo")
 

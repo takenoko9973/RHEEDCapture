@@ -8,7 +8,7 @@ os.environ["PYLON_CAMEMU"] = "1"
 
 from pypylon import genicam, pylon
 
-from rheed_capture.core.camera_device import CameraDevice
+from rheed_capture.models.hardware.camera_device import CameraDevice
 
 
 @pytest.fixture

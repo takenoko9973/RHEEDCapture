@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.core.camera_device import CameraDevice
-from rheed_capture.core.settings import AppSettings
-from rheed_capture.core.storage import ExperimentStorage
-from rheed_capture.ui.main_window import MainWindow
+from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.models.io.settings import AppSettings
+from rheed_capture.models.io.storage import ExperimentStorage
+from rheed_capture.views.main_window import MainWindow
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def mock_storage() -> MagicMock:
 @pytest.fixture
 def mock_settings() -> None:
     """設定保存/復元 (AppSettings) のモック"""
-    with patch("rheed_capture.ui.main_window.AppSettings") as mock_app_settings:
+    with patch("rheed_capture.views.main_window.AppSettings") as mock_app_settings:
         # ロード時に返すダミー設定
         mock_app_settings.load.return_value = {
             "root_dir": "dummy/root",
@@ -50,6 +50,18 @@ def mock_settings() -> None:
             "enable_clahe": True,
         }
         yield mock_app_settings
+
+
+@pytest.fixture(autouse=True)
+def mock_preview_worker() -> None:
+    """
+    すべてのテストで自動適用されるPreviewWorkerのモック。
+    MainWindow初期化時にQThreadが実際にスタートし、テストがハングするのを防ぐ。
+    """
+    with patch("rheed_capture.views.main_window.PreviewWorker") as mock_worker_class:
+        mock_worker_instance = MagicMock()
+        mock_worker_class.return_value = mock_worker_instance
+        yield
 
 
 def test_main_window_initialization_and_settings_load(
@@ -106,7 +118,7 @@ def test_branch_update_logic(
     qtbot.addWidget(window)
 
     # UIテストで邪魔になるQMessageBoxをモック化して非表示にする
-    with patch("rheed_capture.ui.main_window.QMessageBox.information") as mock_msg:
+    with patch("rheed_capture.views.main_window.QMessageBox.information") as mock_msg:
         # 新規ブランチボタンのクリックをシミュレート
         window._on_new_branch()  # noqa: SLF001
 

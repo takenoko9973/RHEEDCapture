@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 from pypylon import pylon
 from PySide6.QtCore import QObject, QThread, Signal
 
-from rheed_capture.core.camera_device import CameraDevice
-from rheed_capture.core.storage import ExperimentStorage
+from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.models.io.storage import ExperimentStorage
 
 logger = logging.getLogger(__name__)
 

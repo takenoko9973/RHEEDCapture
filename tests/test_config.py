@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from rheed_capture.core.config_manager import ConfigManager
+from rheed_capture.models.io.config_manager import ConfigManager
 
 
 def test_config_save_load() -> None:

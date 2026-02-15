@@ -1,8 +1,8 @@
 import numpy as np
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.core.camera_device import CameraDevice
-from rheed_capture.core.preview_worker import PreviewWorker
+from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.viewmodels.preview_worker import PreviewWorker
 
 
 class MockCamera(CameraDevice):

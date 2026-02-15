@@ -1,8 +1,8 @@
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
-from rheed_capture.core.camera_device import CameraDevice
-from rheed_capture.core.image_processor import ImageProcessor
+from rheed_capture.models.domain.image_processor import ImageProcessor
+from rheed_capture.models.hardware.camera_device import CameraDevice
 
 
 class PreviewWorker(QThread):

@@ -21,11 +21,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rheed_capture.core.camera_device import CameraDevice
-from rheed_capture.core.capture_service import CaptureService
-from rheed_capture.core.preview_worker import PreviewWorker
-from rheed_capture.core.settings import AppSettings
-from rheed_capture.core.storage import ExperimentStorage
+from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.models.io.settings import AppSettings
+from rheed_capture.models.io.storage import ExperimentStorage
+from rheed_capture.viewmodels.capture_service import CaptureService
+from rheed_capture.viewmodels.preview_worker import PreviewWorker
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +51,13 @@ class MainWindow(QMainWindow):
 
         # --- 画像表示部 ---
         self.image_label = QLabel("Camera not connected")
-        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("background-color: black; color: white;")
         main_layout.addWidget(self.image_label, stretch=2)
 
         # --- コントロール部 ---
         control_layout = QVBoxLayout()
-        control_layout.setAlignment(Qt.AlignTop)
+        control_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # 0. 保存先設定グループ (NEW)
         group_storage = QGroupBox("Storage Settings")
@@ -95,7 +95,8 @@ class MainWindow(QMainWindow):
         self.spin_preview_exp.setRange(exp_min, exp_max)
         self.spin_preview_exp.setSuffix(" ms")
 
-        self.slider_exp = QSlider(Qt.Horizontal, value=1)
+        self.slider_exp = QSlider(Qt.Orientation.Horizontal)
+        self.slider_exp.setValue(1)
         # QSliderは整数のみなので、値を1000倍して扱う (精度0.001ms)
         self.slider_exp.setRange(np.ceil(exp_min * 100), int(exp_max * 100))
 
@@ -108,7 +109,7 @@ class MainWindow(QMainWindow):
         self.spin_preview_gain = QDoubleSpinBox()
         self.spin_preview_gain.setRange(gain_min, gain_max)
 
-        self.slider_gain = QSlider(Qt.Horizontal)
+        self.slider_gain = QSlider(Qt.Orientation.Horizontal)
         self.slider_gain.setRange(int(gain_min * 100), int(gain_max * 100))
 
         # シグナル連携

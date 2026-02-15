@@ -1,6 +1,6 @@
 import numpy as np
 
-from rheed_capture.core.image_processor import ImageProcessor
+from rheed_capture.models.domain.image_processor import ImageProcessor
 
 
 def test_apply_double_clahe() -> None:
