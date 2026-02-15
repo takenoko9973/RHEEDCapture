@@ -1,4 +1,5 @@
 import logging
+import signal
 import sys
 
 from dotenv import load_dotenv
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     app = QApplication(sys.argv)
+
+    # Ctrl+C で終了できるように (Pyside6 では Ctrl+C で終了できない)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     try:
         # 1. モデル(ハードウェアとストレージ)の初期化
