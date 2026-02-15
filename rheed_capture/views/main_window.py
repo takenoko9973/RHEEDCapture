@@ -16,6 +16,7 @@ from rheed_capture.models.io.settings import AppSettings
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.viewmodels.capture_service import CaptureService
 from rheed_capture.viewmodels.preview_worker import PreviewWorker
+from rheed_capture.views.components.histogram_viewer import HistogramPanel, HistogramWidget
 from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
@@ -50,6 +51,7 @@ class MainWindow(QMainWindow):
             self.camera.get_exposure_bounds(), self.camera.get_gain_bounds()
         )
         self.sequence_panel = SequencePanel()
+        self.histogram_panel = HistogramPanel()
 
         self._update_storage_display()
 
@@ -58,6 +60,7 @@ class MainWindow(QMainWindow):
         control_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         control_layout.addWidget(self.storage_panel)
         control_layout.addWidget(self.preview_panel)
+        control_layout.addWidget(self.histogram_panel)
         control_layout.addWidget(self.sequence_panel)
 
         main_layout.addWidget(self.image_viewer, stretch=2)
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
     def _start_preview(self) -> None:
         self.preview_worker = PreviewWorker(self.camera)
         self.preview_worker.image_ready.connect(self.image_viewer.update_image)
+        self.preview_worker.histogram_ready.connect(self.histogram_panel.update_histogram)
         self.preview_worker.error_occurred.connect(self._show_error)
 
         self.preview_panel.clahe_toggled.connect(self.preview_worker.set_processing_enabled)

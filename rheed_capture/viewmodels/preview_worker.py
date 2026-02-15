@@ -12,6 +12,8 @@ class PreviewWorker(QThread):
 
     # 処理済みの画像 (UI表示用の8bit ndarray) を送るシグナル
     image_ready = Signal(np.ndarray)
+    # 12bitヒストグラム配列と統計量を送るシグナル (hist_array, mean, std)
+    histogram_ready = Signal(np.ndarray, float, float)
 
     error_occurred = Signal(str)  # エラー発生を通知するシグナル
     preview_paused = Signal()  # 一時停止を知らせるシグナル
@@ -52,6 +54,14 @@ class PreviewWorker(QThread):
                 continue
 
             try:
+                # 12-bitデータ (0-4095) のヒストグラムを計算
+                # カメラデータはMsbAlignedで4bit左シフトされているため、4bit右シフトで12bitに変換
+                image_12bit = np.right_shift(raw_image, 4).ravel()
+                mean_val = float(np.mean(image_12bit))
+                std_val = float(np.std(image_12bit))
+                hist = np.bincount(image_12bit, minlength=4096)
+                self.histogram_ready.emit(hist, mean_val, std_val)
+
                 # 画像処理
                 display_image = (
                     ImageProcessor.apply_double_clahe(raw_image)  # CLAHEを2段適用

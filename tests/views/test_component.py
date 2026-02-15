@@ -1,5 +1,7 @@
+import numpy as np
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.views.components.histogram_viewer import HistogramPanel, HistogramWidget
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
 
@@ -58,3 +60,25 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
     panel.edit_seq_expo.setText("invalid")
     with qtbot.waitSignal(panel.validation_error, timeout=1000):
         panel.btn_start.click()
+
+def test_histogram_panel_update(qtbot: QtBot) -> None:
+    """HistogramPanelにデータが渡され、UIテキストが正しくフォーマットされるかテスト"""
+    panel = HistogramPanel()
+    qtbot.addWidget(panel)
+
+    # UI用のダミー計算結果を用意
+    dummy_hist = np.zeros(256, dtype=int)
+    dummy_hist[128] = 500  # 真ん中にピーク
+    dummy_mean = 2048.5
+    dummy_var = 123.456
+
+    # Workerからシグナルが飛んできたと仮定してスロットを直接叩く
+    panel.update_histogram(dummy_hist, dummy_mean, dummy_var)
+
+    # 描画用ウィジェットに配列が渡されているか
+    assert np.array_equal(panel.hist_widget.hist_data, dummy_hist)
+
+    # 統計量ラベルのテキストが指定の書式（少数第2位まで）で表示されているか
+    lbl_text = panel.lbl_stats.text()
+    assert "2048.50" in lbl_text
+    assert "123.46" in lbl_text  # 四捨五入の確認
