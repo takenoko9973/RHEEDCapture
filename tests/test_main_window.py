@@ -1,4 +1,3 @@
-import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -41,8 +40,8 @@ def mock_storage() -> MagicMock:
     return storage
 
 
-@pytest.fixture
-def mock_settings() -> types.GeneratorType:
+@pytest.fixture(autouse=True)
+def mock_settings() -> MagicMock:
     """設定保存/復元 (AppSettings) のモック"""
     with patch("rheed_capture.views.main_window.AppSettings") as mock_app_settings:
         # ロード時に返すダミー設定
@@ -58,7 +57,7 @@ def mock_settings() -> types.GeneratorType:
 
 
 @pytest.fixture(autouse=True)
-def mock_preview_worker() -> types.GeneratorType:
+def mock_preview_worker() -> None:
     """
     すべてのテストで自動適用されるPreviewWorkerのモック。
     MainWindow初期化時にQThreadが実際にスタートし、テストがハングするのを防ぐ。
