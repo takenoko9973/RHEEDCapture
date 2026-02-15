@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -33,7 +34,7 @@ class MainWindow(QMainWindow):
         self.capture_service = None
 
         self.setWindowTitle("RHEED Capture System")
-        self.resize(1000, 700)
+        self.resize(1200, 700)
 
         self._setup_ui()
         self._start_preview()
@@ -42,7 +43,12 @@ class MainWindow(QMainWindow):
     def _setup_ui(self) -> None:
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
+
         main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(self.splitter)
 
         # 1. コンポーネントのインスタンス化
         self.image_viewer = ImageViewer()
@@ -56,15 +62,26 @@ class MainWindow(QMainWindow):
         self._update_storage_display()
 
         # 2. レイアウトへの配置
-        control_layout = QVBoxLayout()
+        control_widget = QWidget()
+        control_layout = QVBoxLayout(control_widget)
         control_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        control_layout.setContentsMargins(0, 0, 0, 0)
+
         control_layout.addWidget(self.storage_panel)
         control_layout.addWidget(self.preview_panel)
         control_layout.addWidget(self.histogram_panel)
         control_layout.addWidget(self.sequence_panel)
 
-        main_layout.addLayout(control_layout, stretch=1)
-        main_layout.addWidget(self.image_viewer, stretch=2)
+        # === Splitterへ配置
+        self.splitter.addWidget(control_widget)
+        self.splitter.addWidget(self.image_viewer)
+
+        # パネル側を優先して拡大するように設定
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+
+        # 初期表示時の幅のバランス
+        self.splitter.setSizes([300, 720])
 
         # 3. シグナルの結線
         self.storage_panel.browse_requested.connect(self._on_browse_root)
