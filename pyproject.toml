@@ -12,6 +12,7 @@ dependencies = [
     "opencv-python-headless>=4.13.0.92",
     "pypylon>=4.2.0",
     "pyside6>=6.10.2",
+    "python-dotenv>=1.2.1",
     "tifffile>=2026.1.28",
     "tzdata>=2025.3",
 ]
@@ -25,11 +26,16 @@ dev = [
     "ty>=0.0.17",
     "pytest>=9.0.2",
     "pytest-qt>=4.5.0",
+    "nuitka>=4.0.1",
+    "poethepoet>=0.38.0",
 ]
-
 
 [project.scripts]
 main = "rheed_capture.main:main"
+
+[tool.poe.tasks]
+# uv run poe build で実行可能
+build = "uv run nuitka --enable-plugin=pyside6 --standalone --onefile --windows-console-mode=disable --output-dir=dist -o RHEEDCapture.exe rheed_capture/main.py"
 
 [tool.uv.sources]
 my-pyside-app = { url = "https://pypi.org/simple" }
@@ -37,10 +43,8 @@ my-pyside-app = { url = "https://pypi.org/simple" }
 [project.optional-dependencies]
 dev = ["ruff", "ty"]
 
-
 [tool.hatch.build.targets.wheel]
 packages = ["rheed_capture"]
-
 
 [tool.ruff]
 target-version = "py312"
@@ -58,7 +62,10 @@ ignore = [
     "T20",    # flake8-print
     "D1",     # docstring除外する
     "EXE",    # flake8-executable
+    "D205",
+    "D212",
     "D400",
+    "D403",
     "D415",   # docstringの末尾ピリオドの強制を無効化
     "FBT001",
     "FBT002", # 関数の引数にbooleanを許可
@@ -70,10 +77,7 @@ ignore = [
     "FIX002",
     "FBT003",
     "TRY300",
-    "D212",
-    "D205",
     "RUF003",
-    "D403",
 ]
 # 警告はするが、自動修正はしないエラー
 unfixable = [

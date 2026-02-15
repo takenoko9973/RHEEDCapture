@@ -1,19 +1,18 @@
 import logging
-import os
 import sys
 
+from dotenv import load_dotenv
 from PySide6.QtWidgets import QApplication
 
 from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.views.main_window import MainWindow
 
+load_dotenv()
+
 # ログの設定
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-# ※エミュレータでテストしたい場合はコメントアウトを外してください
-os.environ["PYLON_CAMEMU"] = "1"
 
 
 def main() -> None:
