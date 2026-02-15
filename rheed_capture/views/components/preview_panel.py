@@ -125,7 +125,7 @@ class PreviewPanel(QGroupBox):
     @Slot(float)
     def _on_spin_gain_changed(self, value: float) -> None:
         self.slider_gain.blockSignals(True)
-        self.slider_gain.setValue(value)
+        self.slider_gain.setValue(int(value))
         self.slider_gain.blockSignals(False)
         self.gain_changed.emit(value)
 
@@ -142,9 +142,9 @@ class PreviewPanel(QGroupBox):
         self.gain_changed.emit(self.spin_gain.value())
 
     # --- 外部からのデータ設定/取得用メソッド ---
-    def set_values(self, exp: float, gain: float, clahe: bool) -> None:
-        self.spin_expo.setValue(exp)
-        self.spin_gain.setValue(gain)
+    def set_values(self, expo: float, gain: float, clahe: bool) -> None:
+        self.spin_expo.setValue(expo)
+        self.spin_gain.setValue(int(gain))
         self.chk_processing.setChecked(clahe)
 
     def get_values(self) -> dict:
