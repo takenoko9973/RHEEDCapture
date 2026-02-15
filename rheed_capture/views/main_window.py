@@ -164,7 +164,7 @@ class MainWindow(QMainWindow):
             self._update_storage_display()
 
         self.preview_panel.set_values(
-            settings.get("preview_expo", 1.0),
+            settings.get("preview_expo", 50.0),
             settings.get("preview_gain", 0.0),
             settings.get("enable_clahe", False),
         )

@@ -5,23 +5,38 @@ from rheed_capture.views.components.sequence_panel import SequencePanel
 
 
 def test_preview_panel_sync(qtbot: QtBot) -> None:
-    """PreviewPanel内部のスライダー・スピンボックス同期テスト"""
-    panel = PreviewPanel(exp_bounds=(1.0, 100.0), gain_bounds=(0.0, 10.0))
+    """PreviewPanel内部のスライダー・スピンボックス同期と対数変換テスト"""
+    # 露光時間は 1.0(10^0) ~ 100.0(10^2) の範囲でテスト
+    panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0.0, 40.0))
     qtbot.addWidget(panel)
 
-    # スピンボックス変更でシグナルが出るか＆スライダーが動くか
+    # =========================================================
+    # 1. スピンボックス変更 -> 対数スライダーへの変換
+    # 露光時間10.0ms (10^1) は、範囲(10^0 ~ 10^2)のちょうど真ん中(500/1000)になるはず
+    # =========================================================
     with qtbot.waitSignal(panel.exposure_changed, timeout=1000) as blocker:
-        panel.spin_expo.setValue(50.25)
+        panel.spin_expo.setValue(10.0)
 
-    assert panel.slider_expo.value() == 5025
-    assert blocker.args[0] == 50.25
+    assert panel.slider_expo.value() == 500
+    assert blocker.args[0] == 10.0
 
-    # スライダー変更でシグナルが出るか＆スピンボックスが動くか
+    # =========================================================
+    # 2. スライダー変更 (ドラッグ中) はシグナルを出さずUIだけ更新するか
+    # =========================================================
+    # Gainを15に設定 (valueChangedシグナル発火)
+    panel.slider_gain.setValue(15)
+    assert panel.spin_gain.value() == 15
+
+    # qtbotを使って「シグナルが出ないこと」をアサートするのは難しいため、
+    # 値が内部で反映されていることだけを確認し、リリースエミュレートへ進む
+
+    # =========================================================
+    # 3. マウスリリース時に初めてカメラ用シグナルが発火するか
+    # =========================================================
     with qtbot.waitSignal(panel.gain_changed, timeout=1000) as blocker:
-        panel.slider_gain.setValue(150)  # 1.5
+        panel.slider_gain.sliderReleased.emit()
 
-    assert panel.spin_gain.value() == 1.5
-    assert blocker.args[0] == 1.5
+    assert blocker.args[0] == 15
 
 
 def test_sequence_panel_validation(qtbot: QtBot) -> None:

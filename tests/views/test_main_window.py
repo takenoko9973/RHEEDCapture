@@ -83,5 +83,5 @@ def test_settings_save_on_close(
 
     mock_settings.save.assert_called_once()
     saved_data = mock_settings.save.call_args[0][0]
-    assert saved_data["preview_exp"] == 99.9
+    assert saved_data["preview_expo"] == 99.9
     assert saved_data["enable_clahe"] is False
