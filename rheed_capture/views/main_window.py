@@ -63,8 +63,8 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.histogram_panel)
         control_layout.addWidget(self.sequence_panel)
 
-        main_layout.addWidget(self.image_viewer, stretch=2)
         main_layout.addLayout(control_layout, stretch=1)
+        main_layout.addWidget(self.image_viewer, stretch=2)
 
         # 3. シグナルの結線
         self.storage_panel.browse_requested.connect(self._on_browse_root)
