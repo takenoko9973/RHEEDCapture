@@ -57,7 +57,6 @@ class CaptureService(QThread):
         try:
             logger.info("撮影シーケンスを開始します...")
 
-            self.camera.stop_grabbing()  # プレビューの停止
             self.storage.start_new_sequence()  # 保存先フォルダの準備
 
             #  撮影ループ
@@ -81,7 +80,6 @@ class CaptureService(QThread):
             self.error_occurred.emit(str(e))
 
         finally:
-            self.camera.start_preview_grab()  # プレビューの再開
             self.sequence_finished.emit(success)
 
     def _check_cancelled(self) -> None:

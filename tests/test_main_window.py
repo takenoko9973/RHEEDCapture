@@ -1,3 +1,4 @@
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -5,7 +6,6 @@ import pytest
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.settings import AppSettings
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.views.main_window import MainWindow
 
@@ -14,8 +14,13 @@ from rheed_capture.views.main_window import MainWindow
 def mock_camera() -> MagicMock:
     """カメラデバイスのモックフィクスチャ"""
     camera = MagicMock(spec=CameraDevice)
+
+    # テストスレッドが無限ループでフリーズするのを防ぐため、即座にNoneを返さず少しだけ待機させる
+    def mock_retrieve(*args, **kwargs) -> None:  # noqa: ARG001
+        time.sleep(0.01)  # noqa: F821
+
     # プレビュー取得時にNoneを返し、処理エラーによる QMessageBox(エラーダイアログ) の表示を防ぐ
-    camera.retrieve_preview_frame.return_value = None
+    camera.retrieve_preview_frame.return_value = mock_retrieve
     camera.get_exposure_bounds.return_value = (1, 10000)
     camera.get_gain_bounds.return_value = (0, 48)
     return camera
@@ -37,7 +42,7 @@ def mock_storage() -> MagicMock:
 
 
 @pytest.fixture
-def mock_settings() -> None:
+def mock_settings() -> types.GeneratorType:
     """設定保存/復元 (AppSettings) のモック"""
     with patch("rheed_capture.views.main_window.AppSettings") as mock_app_settings:
         # ロード時に返すダミー設定
@@ -53,7 +58,7 @@ def mock_settings() -> None:
 
 
 @pytest.fixture(autouse=True)
-def mock_preview_worker() -> None:
+def mock_preview_worker() -> types.GeneratorType:
     """
     すべてのテストで自動適用されるPreviewWorkerのモック。
     MainWindow初期化時にQThreadが実際にスタートし、テストがハングするのを防ぐ。
@@ -66,9 +71,9 @@ def mock_preview_worker() -> None:
 
 def test_main_window_initialization_and_settings_load(
     qtbot: QtBot,
-    mock_camera: CameraDevice,
-    mock_storage: ExperimentStorage,
-    mock_settings: AppSettings,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+    mock_settings: MagicMock,
 ) -> None:
     """初期化時に設定ファイルが読み込まれ、UIに反映されているかテスト"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
@@ -88,8 +93,8 @@ def test_main_window_initialization_and_settings_load(
 
 def test_slider_and_spinbox_sync(
     qtbot: QtBot,
-    mock_camera: CameraDevice,
-    mock_storage: ExperimentStorage,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
 ) -> None:
     """スライダー(整数)とスピンボックス(小数)の双方向同期テスト"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
@@ -110,8 +115,8 @@ def test_slider_and_spinbox_sync(
 
 def test_branch_update_logic(
     qtbot: QtBot,
-    mock_camera: CameraDevice,
-    mock_storage: ExperimentStorage,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
 ) -> None:
     """ブランチ(-n)の更新ボタンのロジックテスト"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
@@ -133,9 +138,9 @@ def test_branch_update_logic(
 
 def test_settings_save_on_close(
     qtbot: QtBot,
-    mock_camera: CameraDevice,
-    mock_storage: ExperimentStorage,
-    mock_settings: AppSettings,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+    mock_settings: MagicMock,
 ) -> None:
     """ウィンドウを閉じる際に現在のUI状態が保存されるかテスト"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)

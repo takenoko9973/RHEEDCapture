@@ -40,14 +40,10 @@ def test_successful_capture_sequence(
     assert blocker.args[0] is True, "成功シグナルがTrueであること"
 
     # 呼び出し回数の検証
-    mock_camera.stop_grabbing.assert_called_once()  # プレビュー停止シグナル
     mock_storage.start_new_sequence.assert_called_once()  # シーケンス開始シグナル
 
     assert mock_camera.grab_one.call_count == 4  # 2条件 * 2条件
     assert mock_storage.save_frame.call_count == 4  # 保存が4回呼ばれたか
-
-    # 最後にプレビューが再開されたか
-    mock_camera.start_preview_grab.assert_called_once()
 
 
 def test_capture_retry_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:

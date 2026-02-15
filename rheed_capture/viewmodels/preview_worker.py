@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
@@ -10,20 +12,39 @@ class PreviewWorker(QThread):
 
     # 処理済みの画像 (UI表示用の8bit ndarray) を送るシグナル
     image_ready = Signal(np.ndarray)
-    # エラー発生を通知するシグナル
-    error_occurred = Signal(str)
+
+    error_occurred = Signal(str)  # エラー発生を通知するシグナル
+    preview_paused = Signal()  # 一時停止を知らせるシグナル
 
     def __init__(self, camera_device: CameraDevice, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.camera_device = camera_device
+
         self._is_running = False
         self.enable_processing = False  # CLAHE処理のON/OFFフラグ
+
+        self._pause_requested = False
+        self._is_paused = False
 
     def run(self) -> None:
         """スレッドのメインループ"""
         self._is_running = True
 
         while self._is_running:
+            # 一時停止の要求が来たらカメラを止めて報告する
+            if self._pause_requested:
+                self.camera_device.stop_grabbing()
+                self._is_paused = True
+                self._pause_requested = False
+                self.preview_paused.emit()
+
+            if self._is_paused:
+                # 一時停止中はカメラにアクセスせず、短いスリープで待機
+                time.sleep(0.1)
+                continue
+
+            self.camera_device.start_preview_grab()
+
             # 画像の取得 (タイムアウト短めでUI停止を防ぐ)
             raw_image = self.camera_device.retrieve_preview_frame(timeout_ms=500)
 
@@ -47,6 +68,14 @@ class PreviewWorker(QThread):
     def stop(self) -> None:
         """ループを終了し、スレッドの停止を要求する"""
         self._is_running = False
+
+    def request_pause(self) -> None:
+        """シーケンス撮影開始時などに、プレビューを一時停止させる"""
+        self._pause_requested = True
+
+    def resume(self) -> None:
+        """シーケンス終了後にプレビューを再開させる"""
+        self._is_paused = False
 
     def set_processing_enabled(self, enabled: bool) -> None:
         """画像処理のON/OFFを切り替える"""

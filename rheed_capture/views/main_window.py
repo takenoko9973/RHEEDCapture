@@ -159,7 +159,6 @@ class MainWindow(QMainWindow):
         self._on_preview_exp_changed(self.spin_preview_exp.value())
         self._on_preview_gain_changed(self.spin_preview_gain.value())
 
-        self.camera.start_preview_grab()
         self.preview_worker.start()
 
     @Slot()
@@ -276,6 +275,17 @@ class MainWindow(QMainWindow):
         self.group_preview_state(False)
         self.progress_bar.setValue(0)
 
+        # プレビューを一時停止
+        self.preview_worker.preview_paused.connect(
+            self._start_capture_service_after_pause, Qt.SingleShotConnection
+        )
+        self.preview_worker.request_pause()
+
+    @Slot()
+    def _start_capture_service_after_pause(self) -> None:
+        """PreviewWorkerの安全な停止が確認された後に自動で呼ばれる"""
+        exp_list, gain_list = self._parse_sequence_inputs()
+
         # CaptureServiceの初期化と開始
         self.capture_service = CaptureService(self.camera, self.storage, exp_list, gain_list)
         self.capture_service.progress_update.connect(self._update_progress)
@@ -301,10 +311,11 @@ class MainWindow(QMainWindow):
         self.btn_cancel_seq.setEnabled(False)
         self.group_preview_state(True)
 
+        # プレビュー再開
+        self.preview_worker.resume()
+
         if success:
-            QMessageBox.information(
-                self, "Sequence Complete", "All images have been captured successfully."
-            )
+            QMessageBox.information(self, "Sequence Complete", "撮影が完了しました。")
 
     def group_preview_state(self, enabled: bool) -> None:
         """撮影中はプレビュー設定を変更できないようにする"""
