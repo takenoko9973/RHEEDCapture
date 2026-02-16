@@ -2,7 +2,7 @@ from types import TracebackType
 from typing import Any, Self
 
 import numpy as np
-from pypylon.genicam import IBoolean, IEnumeration, IFloat
+from pypylon.genicam import IBoolean, IEnumeration, IFloat, IInteger
 
 GenericException = Exception
 BadAllocException = Exception
@@ -77,10 +77,10 @@ class InstantCamera:
     PixelFormat: IEnumeration
 
     ExposureAuto: IEnumeration
-    ExposureTime: IFloat
+    ExposureTimeRaw: IInteger
     ExposureTimeAbs: IFloat
     GainAuto: IEnumeration
-    Gain: IFloat
+    GainRaw: IInteger
     Gamma: IFloat
 
     ReverseX: IBoolean

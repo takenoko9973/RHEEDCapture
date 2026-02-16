@@ -1,12 +1,8 @@
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
 from pypylon import genicam, pylon
 from pypylon.pylon import GenericException, InstantCamera, TlFactory
-
-if TYPE_CHECKING:
-    from pypylon.genicam import IEnumeration, IFloat
 
 logger = logging.getLogger(__name__)
 
@@ -74,58 +70,65 @@ class CameraDevice:
         # NodeMapを取得
         nodemap = self.camera.GetNodeMap()
 
-        # ユーティリティ: Writableな場合のみ設定する関数 (エミュレータと実機の差分吸収のため)
-        def set_enum(node_name: str, value: str) -> None:
-            node: IEnumeration = nodemap.GetNode(node_name)
-            if node is not None and genicam.IsWritable(node):
-                node.SetValue(value)
+        def set_node_value(node_names: str | list[str], value: str | float | bool) -> None:
+            if isinstance(node_names, str):
+                node_names = [node_names]
 
-        def set_float(node_name: str, value: float) -> None:
-            node: IFloat = nodemap.GetNode(node_name)
-            if node is not None and genicam.IsWritable(node):
-                node.SetValue(value)
+            for node_name in node_names:
+                try:
+                    node = nodemap.GetNode(node_name)
+                    if node is not None and genicam.IsWritable(node):
+                        node.FromString(str(value))
+                        return  # 設定に成功したら、残りの候補は試さずに終了する
+
+                except genicam.LogicalErrorException:
+                    # pypylon特有のエラー: ノードが存在しない場合はここに来るので無視して次へ
+                    continue
+
+                except Exception as e:  # noqa: BLE001
+                    # その他の予期せぬエラー
+                    logger.debug("Error accessing node '%s': %s", node_name, e)
+                    continue
+
+            logger.debug("Node '%s' is not writable or not found. Skipping.", node_name)
 
         # 必須フォーマット設定
-        set_enum("PixelFormat", "Mono16")
+        set_node_value("PixelFormat", "Mono12")
 
         # 自動機能の無効化
-        set_enum("ExposureAuto", "Off")
-        set_enum("GainAuto", "Off")
+        set_node_value("ExposureAuto", "Off")
+        set_node_value("GainAuto", "Off")
 
         # 画像補正の無効化
-        set_float("Gamma", 1.0)
-        set_float("BlackLevel", 0.0)
+        set_node_value("Gamma", 1.0)
+        # エミュレータでは"BlackLevel"しかないため、両方で設定するように対応
+        set_node_value(["BlackLevelRaw", "BlackLevel"], 0)
+
+        # デフォルトだと左右逆のため、補正
+        set_node_value("ReverseX", True)
 
     def get_exposure_bounds(self) -> tuple[float, float]:
         """露光時間の最小・最大値(ms)を取得する"""
-        if self.is_connected() and genicam.IsReadable(self.camera.ExposureTime):
-            # pylonはus単位なのでmsに変換して返す
-            min_us = self.camera.ExposureTime.GetMin()
-            max_us = self.camera.ExposureTime.GetMax()
-            return (min_us / 1000.0, max_us / 1000.0)
+        # pylonはus単位なのでmsに変換して返す
+        min_us = self.camera.ExposureTimeAbs.GetMin()
+        max_us = self.camera.ExposureTimeAbs.GetMax()
+        return (min_us / 1000.0, max_us / 1000.0)
 
-        return (0.1, 10000.0)  # フォールバック
-
-    def get_gain_bounds(self) -> tuple[float, float]:
+    def get_gain_bounds(self) -> tuple[int, int]:
         """ゲインの最小・最大値を取得する"""
-        if self.is_connected() and genicam.IsReadable(self.camera.Gain):
-            min_gain = self.camera.Gain.GetMin()
-            max_gain = self.camera.Gain.GetMax()
-            return (float(min_gain), float(max_gain))
-
-        return (0.0, 48.0)  # フォールバック
+        min_gain = self.camera.GainRaw.GetMin()
+        max_gain = self.camera.GainRaw.GetMax()
+        return (min_gain, max_gain)
 
     def set_exposure(self, exposure_ms: float) -> None:
         """露光時間を設定 (単位: マイクロ秒)"""
-        if self.is_connected() and genicam.IsWritable(self.camera.ExposureTime):
-            # Basler API はマイクロ秒(us)を要求するため、内部で1000倍する
-            exposure_us = exposure_ms * 1000.0
-            self.camera.ExposureTime.SetValue(exposure_us)
+        # Basler API はマイクロ秒(us)を要求するため、内部で1000倍する
+        exposure_us = exposure_ms * 1000.0
+        self.camera.ExposureTimeAbs.SetValue(exposure_us)
 
-    def set_gain(self, gain: float) -> None:
+    def set_gain(self, gain: int) -> None:
         """ゲインを設定"""
-        if self.is_connected() and genicam.IsWritable(self.camera.Gain):
-            self.camera.Gain.SetValue(gain)
+        self.camera.GainRaw.SetValue(gain)
 
     def start_preview_grab(self) -> None:
         """プレビュー用の画像取得を開始 (LatestImageOnly戦略)"""
