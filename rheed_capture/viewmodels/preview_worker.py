@@ -48,7 +48,8 @@ class PreviewWorker(QThread):
             self.camera_device.start_preview_grab()
 
             # 画像の取得 (タイムアウト短めでUI停止を防ぐ)
-            raw_image = self.camera_device.retrieve_preview_frame(timeout_ms=500)
+            expo_time = self.camera_device.get_exposure()
+            raw_image = self.camera_device.retrieve_preview_frame(timeout_ms=int(expo_time + 500))
 
             if raw_image is None:
                 continue

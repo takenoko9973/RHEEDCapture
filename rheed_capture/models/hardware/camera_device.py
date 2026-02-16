@@ -1,4 +1,5 @@
 import logging
+import time
 
 import numpy as np
 from pypylon import genicam, pylon
@@ -126,9 +127,18 @@ class CameraDevice:
         exposure_us = exposure_ms * 1000.0
         self.camera.ExposureTimeAbs.SetValue(exposure_us)
 
+    def get_exposure(self) -> float:
+        """現在の露光時間を取得 (ms)"""
+        exposure_us = self.camera.ExposureTimeAbs.GetValue()
+        return exposure_us / 1000.0
+
     def set_gain(self, gain: int) -> None:
         """ゲインを設定"""
         self.camera.GainRaw.SetValue(gain)
+
+    def get_gain(self) -> float:
+        """現在のゲインを取得"""
+        return self.camera.GainRaw.GetValue()
 
     def start_preview_grab(self) -> None:
         """プレビュー用の画像取得を開始 (LatestImageOnly戦略)"""
