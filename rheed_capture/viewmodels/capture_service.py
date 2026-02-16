@@ -34,7 +34,7 @@ class CaptureService(QThread):
         camera_device: CameraDevice,
         storage: ExperimentStorage,
         exposure_list: list[float],
-        gain_list: list[float],
+        gain_list: list[int],
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -60,16 +60,16 @@ class CaptureService(QThread):
             logger.info("撮影シーケンスを開始します...")
 
             self.storage.start_new_sequence()  # 保存先フォルダの準備
-            saved_dir_name = self.storage.get_current_sequence_dir().name # 保存先
+            saved_dir_name = self.storage.get_current_sequence_dir().name  # 保存先
 
             #  撮影ループ
-            for shot_count, (exp_ms, gain) in enumerate(self.conditions, 1):
+            for shot_count, (expo_ms, gain) in enumerate(self.conditions, 1):
                 self._check_cancelled()
 
                 self.progress_update.emit(shot_count, self.total_shots)
 
                 # 1条件ごとの撮影処理 (リトライ制御付き)
-                self._capture_with_retry(exp_ms, gain)
+                self._capture_with_retry(expo_ms, gain)
 
             success = True
             logger.info("撮影シーケンスが正常に完了しました。")
@@ -91,14 +91,14 @@ class CaptureService(QThread):
             msg = "ユーザーによって撮影がキャンセルされました。"
             raise InterruptedError(msg)
 
-    def _capture_with_retry(self, exp_ms: float, gain: float) -> None:
+    def _capture_with_retry(self, expo_ms: float, gain: int) -> None:
         """1つの条件(露光・ゲイン)での撮影とリトライロジック"""
         last_error = None
 
         for attempt in range(1, self.max_retries + 1):
             try:
                 # 実際の撮影処理を呼び出す
-                self._execute_single_capture(exp_ms, gain)
+                self._execute_single_capture(expo_ms, gain)
                 return  # 成功したら抜ける
 
             except (pylon.GenericException, RuntimeError, TimeoutError) as e:
@@ -106,22 +106,22 @@ class CaptureService(QThread):
                 last_error = e
                 time.sleep(0.5)  # リトライ前に少し待機
 
-        self._raise_max_retry_error(exp_ms, gain, last_error)
+        self._raise_max_retry_error(expo_ms, gain, last_error)
 
-    def _raise_max_retry_error(self, exp_ms: float, gain: float, error: Exception | None) -> Never:
+    def _raise_max_retry_error(self, expo_ms: float, gain: int, error: Exception | None) -> Never:
         """最大リトライ到達時の例外送出"""
-        msg = f"最大リトライ回数に達しました。露光={exp_ms}ms, ゲイン={gain}"
+        msg = f"最大リトライ回数に達しました。露光={expo_ms}ms, ゲイン={gain}"
         if error:
             raise RuntimeError(msg) from error
 
         raise RuntimeError(msg)
 
-    def _execute_single_capture(self, exp_ms: float, gain: float) -> None:
+    def _execute_single_capture(self, expo_ms: float, gain: int) -> None:
         """純粋に1回の設定・撮影・保存のみを担当するメソッド (例外はそのまま投げる)"""
-        timeout_ms = int(exp_ms + 500)
+        timeout_ms = int(expo_ms + 500)
 
         # パラメータ設定
-        self.camera.set_exposure(exp_ms)
+        self.camera.set_exposure(expo_ms)
         self.camera.set_gain(gain)
 
         # 撮影
@@ -131,14 +131,14 @@ class CaptureService(QThread):
 
         # メタデータ作成と保存
         metadata = {
-            "exposure_ms": exp_ms,
+            "exposure_ms": expo_ms,
             "gain": gain,
             "timestamp": datetime.now(JST).isoformat(),
             "bit_depth_sensor": 12,
             "bit_depth_saved": 16,
             "alignment": "MsbAligned",
         }
-        self.storage.save_frame(raw_data, exp_ms, gain, metadata)
+        self.storage.save_frame(raw_data, expo_ms, gain, metadata)
 
     def _raise_grab_none_error(self) -> Never:
         """None取得時の例外送出"""

@@ -18,7 +18,7 @@ from rheed_capture.models.io.settings import AppSettings
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.viewmodels.capture_service import CaptureService
 from rheed_capture.viewmodels.preview_worker import PreviewWorker
-from rheed_capture.views.components.histogram_viewer import HistogramPanel, HistogramWidget
+from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
@@ -143,11 +143,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 5000)
 
     @Slot(list, list)
-    def _on_start_sequence_requested(self, exp_list: list[float], gain_list: list[float]) -> None:
+    def _on_start_sequence_requested(self, expo_list: list[float], gain_list: list[int]) -> None:
         self.sequence_panel.set_capturing_state(True)
         self.preview_panel.set_controls_enabled(False)
 
-        self._current_exp_list = exp_list
+        self._current_expo_list = expo_list
         self._current_gain_list = gain_list
 
         self.preview_worker.preview_paused.connect(
@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _start_capture_service_after_pause(self) -> None:
         self.capture_service = CaptureService(
-            self.camera, self.storage, self._current_exp_list, self._current_gain_list
+            self.camera, self.storage, self._current_expo_list, self._current_gain_list
         )
         self.capture_service.progress_update.connect(self.sequence_panel.update_progress)
         self.capture_service.sequence_finished.connect(self._on_sequence_finished)

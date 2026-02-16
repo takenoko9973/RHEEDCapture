@@ -37,9 +37,7 @@ class SequencePanel(QGroupBox):
             expo_list = [
                 float(x.strip()) for x in self.edit_seq_expo.text().split(",") if x.strip()
             ]
-            gain_list = [
-                float(x.strip()) for x in self.edit_seq_gain.text().split(",") if x.strip()
-            ]
+            gain_list = [int(x.strip()) for x in self.edit_seq_gain.text().split(",") if x.strip()]
             self._check_expo_and_gain_empty(expo_list, gain_list)
 
             self.start_requested.emit(expo_list, gain_list)
@@ -62,8 +60,8 @@ class SequencePanel(QGroupBox):
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
 
-    def set_values(self, exp_text: str, gain_text: str) -> None:
-        self.edit_seq_expo.setText(exp_text)
+    def set_values(self, expo_text: str, gain_text: str) -> None:
+        self.edit_seq_expo.setText(expo_text)
         self.edit_seq_gain.setText(gain_text)
 
     def get_values(self) -> dict:

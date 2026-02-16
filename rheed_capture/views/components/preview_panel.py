@@ -6,19 +6,19 @@ from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QFormLayout, QGroupBox,
 
 class PreviewPanel(QGroupBox):
     exposure_changed = Signal(float)
-    gain_changed = Signal(float)
+    gain_changed = Signal(int)
 
     clahe_toggled = Signal(bool)
 
     expo_steps = 1000  # 対数スライドの解像度
 
-    def __init__(self, expo_bounds: tuple[float, float], gain_bounds: tuple[float, float]) -> None:
+    def __init__(self, expo_bounds: tuple[float, float], gain_bounds: tuple[int, int]) -> None:
         super().__init__("Preview Settings")
         self._setup_ui(expo_bounds, gain_bounds)
 
-    def _setup_ui(self, exp_bounds: tuple[float, float], gain_bounds: tuple[float, float]) -> None:
+    def _setup_ui(self, expo_bounds: tuple[float, float], gain_bounds: tuple[int, int]) -> None:
         layout = QFormLayout(self)
-        self.expo_min, self.expo_max = exp_bounds
+        self.expo_min, self.expo_max = expo_bounds
         self.gain_min, self.gain_max = gain_bounds
 
         self.expo_min = max(self.expo_min, 0.01)  # 小数点第2まで表示するため、最小値を調整
@@ -35,11 +35,11 @@ class PreviewPanel(QGroupBox):
 
         # === ゲインUI
         self.spin_gain = QSpinBox()
-        self.spin_gain.setRange(int(self.gain_min), int(self.gain_max))
+        self.spin_gain.setRange(self.gain_min, self.gain_max)
         self.spin_gain.setKeyboardTracking(False)
 
         self.slider_gain = QSlider(Qt.Orientation.Horizontal)
-        self.slider_gain.setRange(int(self.gain_min), int(self.gain_max))
+        self.slider_gain.setRange(self.gain_min, self.gain_max)
 
         self.chk_processing = QCheckBox("Enable CLAHE Processing")
 
@@ -123,9 +123,9 @@ class PreviewPanel(QGroupBox):
 
     # --- Gain ---
     @Slot(float)
-    def _on_spin_gain_changed(self, value: float) -> None:
+    def _on_spin_gain_changed(self, value: int) -> None:
         self.slider_gain.blockSignals(True)
-        self.slider_gain.setValue(int(value))
+        self.slider_gain.setValue(value)
         self.slider_gain.blockSignals(False)
         self.gain_changed.emit(value)
 

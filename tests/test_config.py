@@ -12,7 +12,7 @@ def test_config_save_load() -> None:
         test_data = {
             "root_dir": "/dummy/path",
             "preview_exposure": 50.5,
-            "sequence_exp_list": [10.0, 20.0],
+            "sequence_expo_list": [10.0, 20.0],
         }
 
         # 保存
@@ -23,7 +23,7 @@ def test_config_save_load() -> None:
         loaded_data = ConfigManager.load(config_path)
         assert loaded_data["root_dir"] == "/dummy/path"
         assert loaded_data["preview_exposure"] == 50.5
-        assert loaded_data["sequence_exp_list"] == [10.0, 20.0]
+        assert loaded_data["sequence_expo_list"] == [10.0, 20.0]
 
 
 def test_config_load_not_found() -> None:

@@ -21,12 +21,12 @@ def camera_device():  # noqa: ANN201
 
 
 def test_camera_connection_and_mandatory_settings(camera_device: CameraDevice) -> None:
-    """接続と強制初期化設定(Mono16等)が正しく適用されるかのテスト"""
+    """接続と強制初期化設定(Mono12等)が正しく適用されるかのテスト"""
     assert camera_device.is_connected()
 
     # 実際のpylonカメラオブジェクトのノードにアクセスして検証
     cam = camera_device.camera
-    assert cam.PixelFormat.GetValue() == "Mono16"
+    assert cam.PixelFormat.GetValue() == "Mono12"
 
     # エミュレータでサポートされている範囲で強制設定が反映されているか
     if genicam.IsWritable(cam.ExposureAuto):
@@ -35,15 +35,15 @@ def test_camera_connection_and_mandatory_settings(camera_device: CameraDevice) -
 
 def test_camera_bounds(camera_device: CameraDevice) -> None:
     """カメラから設定可能な最小・最大値が取得できるかのテスト"""
-    exp_min, exp_max = camera_device.get_exposure_bounds()
-    assert isinstance(exp_min, float)
-    assert isinstance(exp_max, float)
-    assert exp_min < exp_max
+    expo_min, expo_max = camera_device.get_exposure_bounds()
+    assert isinstance(expo_min, float)
+    assert isinstance(expo_max, float)
+    assert expo_min < expo_max
 
     if genicam.IsReadable(camera_device.camera.Gain):
         gain_min, gain_max = camera_device.get_gain_bounds()
-        assert isinstance(gain_min, float)
-        assert isinstance(gain_max, float)
+        assert isinstance(gain_min, int)
+        assert isinstance(gain_max, int)
         assert gain_min < gain_max
 
 
@@ -52,13 +52,12 @@ def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
     # UIからの入力として 10.5 ms を設定
     camera_device.set_exposure(10.5)
     # Baslerカメラ内部のExposureTimeノードには 10500.0 us として書き込まれている
-    assert camera_device.camera.ExposureTime.GetValue() == 10500.0
+    assert camera_device.camera.ExposureTimeAbs.GetValue() == 10500.0
 
     # ゲインを設定 (エミュレータが対応している場合)
     if genicam.IsWritable(camera_device.camera.Gain):
-        camera_device.set_gain(45)
-        print(camera_device.camera.Gain.GetMax())
-        assert camera_device.camera.Gain.GetValue() == pytest.approx(45)  # なぜか若干誤差が発生する
+        camera_device.set_gain(400)
+        assert camera_device.camera.GainRaw.GetValue() == 400
 
 
 def test_grab_one(camera_device: CameraDevice) -> None:
