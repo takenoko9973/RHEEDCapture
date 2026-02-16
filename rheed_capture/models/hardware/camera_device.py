@@ -144,6 +144,7 @@ class CameraDevice:
         """プレビュー用の画像取得を開始 (LatestImageOnly戦略)"""
         if self.is_connected() and not self.camera.IsGrabbing():
             self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+            time.sleep(0.1)  # 起動時は安定化のために少し待機
 
     def stop_grabbing(self) -> None:
         """画像取得を停止"""
