@@ -3,6 +3,8 @@ import math
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QFormLayout, QGroupBox, QSlider, QSpinBox
 
+from rheed_capture.utils import round_sig_figs
+
 
 class PreviewPanel(QGroupBox):
     exposure_changed = Signal(float)
@@ -83,18 +85,18 @@ class PreviewPanel(QGroupBox):
         return round(t * self.expo_steps)
 
     def _slider_to_expo(self, slider_val: int) -> float:
-        """スライダーの段階(0~1000)から実際の露光時間(対数)を計算"""
+        """スライダーの段階(0~1000)から実際の露光時間(対数)を計算 (msの分解能)"""
         if slider_val <= 0:
-            return self.expo_min
+            return math.ceil(self.expo_min)  # ms の範囲での最小値
         if slider_val >= self.expo_steps:
-            return self.expo_max
+            return math.floor(self.expo_max)  # ms の範囲での最大値
 
-        log_min = math.log10(self.expo_min)
-        log_max = math.log10(self.expo_max)
+        log_min = math.log10(math.ceil(self.expo_min))
+        log_max = math.log10(math.floor(self.expo_max))
         t = slider_val / self.expo_steps
 
         log_val = log_min + t * (log_max - log_min)
-        return 10**log_val
+        return round_sig_figs(10**log_val, 2)  # 有効数字2桁で変更できるように
 
     # ==========================================
     # 同期・イベントハンドラ
