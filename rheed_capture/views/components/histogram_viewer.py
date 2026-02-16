@@ -1,6 +1,6 @@
 import numpy as np
-from PySide6.QtCore import QRectF, Qt, Slot, QPointF
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF, QPaintEvent
+from PySide6.QtCore import Qt, Slot
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
 
@@ -16,21 +16,23 @@ class HistogramWidget(QWidget):
         self.hist_data = hist_data
         self.update()  # paintEventをトリガーして再描画
 
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         """QPainterを使った高速なカスタム描画"""
         super().paintEvent(event)
         if self.hist_data is None or len(self.hist_data) == 0:
             return
 
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
         width = self.width()
         height = self.height()
 
+        painter = QPainter(self)
+
         # 線の色と内側の塗りつぶし色を設定して描画
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(100, 200, 255, 180)))
+        pen = QPen(QColor(100, 200, 255, 220))
+        pen.setWidth(2)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
 
         # Y軸（ピクセル数）を対数スケールに変換 (log(1 + x))
         log_hist = np.log1p(self.hist_data)
@@ -41,10 +43,19 @@ class HistogramWidget(QWidget):
         bin_width = width / len(self.hist_data)
 
         # 棒グラフ状に描画
-        for i, val in enumerate(self.hist_data):
-            h = (val / max_val) * height
-            rect = QRectF(i * bin_width, height - h, bin_width, h)
-            painter.drawRect(rect)
+        path = QPainterPath()
+        path.moveTo(0, height)  # 開始点：グラフの左下
+        for i, val in enumerate(log_hist):
+            x_left = i * bin_width
+            x_right = (i + 1) * bin_width
+            y_top = height - ((val / max_val) * height)
+
+            path.lineTo(x_left, y_top)
+            path.lineTo(x_right, y_top)
+
+        path.lineTo(width, height)
+        painter.drawPath(path)
+
 
 class HistogramPanel(QGroupBox):
     def __init__(self) -> None:

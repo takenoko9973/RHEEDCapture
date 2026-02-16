@@ -60,7 +60,7 @@ class PreviewWorker(QThread):
                 image_12bit = np.right_shift(raw_image, 4).ravel()
                 mean_val = float(np.mean(image_12bit))
                 std_val = float(np.std(image_12bit))
-                hist = np.bincount(image_12bit, minlength=4096)
+                hist, _ = np.histogram(image_12bit, bins=256)
                 self.histogram_ready.emit(hist, mean_val, std_val)
 
                 # 画像処理
