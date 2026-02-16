@@ -14,6 +14,12 @@ class MockCamera(CameraDevice):
     def is_connected(self) -> bool:
         return True
 
+    def get_exposure(self) -> float:
+        return 100
+
+    def get_gain(self) -> float:
+        return 120
+
     def start_preview_grab(self) -> None:
         self.is_grabbing = True
 
