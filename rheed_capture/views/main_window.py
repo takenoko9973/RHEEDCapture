@@ -17,7 +17,7 @@ from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.settings import AppSettings
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.services.capture_service import CaptureService
-from rheed_capture.services.preview_worker import PreviewWorker
+from rheed_capture.viewmodels.preview_viewmodel import PreviewViewModel
 from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel
@@ -100,20 +100,24 @@ class MainWindow(QMainWindow):
         self.sequence_panel.validation_error.connect(self._show_error)
 
     def _start_preview(self) -> None:
-        self.preview_worker = PreviewWorker(self.camera)
-        self.preview_worker.image_ready.connect(self.image_viewer.update_image)
-        self.preview_worker.histogram_ready.connect(self.histogram_panel.update_histogram)
-        self.preview_worker.error_occurred.connect(self._show_error)
+        self.preview_vm = PreviewViewModel(self.camera)
 
-        self.preview_panel.clahe_toggled.connect(self.preview_worker.set_processing_enabled)
+        # データフロー
+        self.preview_vm.image_ready.connect(self.image_viewer.update_image)
+        self.preview_vm.histogram_ready.connect(self.histogram_panel.update_histogram)
+        self.preview_vm.error_occurred.connect(self._show_error)
 
-        # 初期パラメータを適用
-        exp_dict = self.preview_panel.get_values()
-        self.camera.set_exposure(exp_dict["preview_expo"])
-        self.camera.set_gain(exp_dict["preview_gain"])
-        self.preview_worker.set_processing_enabled(exp_dict["enable_clahe"])
+        # View(UI操作) -> ViewModel(状態変更)
+        self.preview_panel.exposure_changed.connect(self.preview_vm.set_exposure)
+        self.preview_panel.gain_changed.connect(self.preview_vm.set_gain)
+        self.preview_panel.clahe_toggled.connect(self.preview_vm.set_clahe_enabled)
 
-        self.preview_worker.start()
+        # ViewModel(状態変更) -> View(UI表示更新)
+        self.preview_vm.exposure_updated.connect(self.preview_panel.update_exposure_ui)
+        self.preview_vm.gain_updated.connect(self.preview_panel.update_gain_ui)
+        self.preview_vm.clahe_enabled_updated.connect(self.preview_panel.update_clahe_ui)
+
+        self.preview_vm.start_preview()
 
     def _update_storage_display(self) -> None:
         self.storage_panel.update_displays(
@@ -150,10 +154,11 @@ class MainWindow(QMainWindow):
         self._current_expo_list = expo_list
         self._current_gain_list = gain_list
 
-        self.preview_worker.preview_paused.connect(
+        # workerが停止処理を完了したら、captureを開始するように
+        self.preview_vm.preview_paused.connect(
             self._start_capture_service_after_pause, Qt.ConnectionType.SingleShotConnection
         )
-        self.preview_worker.request_pause()
+        self.preview_vm.pause_preview()
 
     @Slot()
     def _start_capture_service_after_pause(self) -> None:
@@ -175,7 +180,8 @@ class MainWindow(QMainWindow):
     def _on_sequence_finished(self, success: bool, saved_dir_name: str) -> None:
         self.sequence_panel.set_capturing_state(False)
         self.preview_panel.set_controls_enabled(True)
-        self.preview_worker.resume()
+
+        self.preview_vm.resume_preview()
         if success:
             # ステータスバーに保存先を表示 (5000ミリ秒 = 5秒間で自動消去)
             msg = f"Capture Complete: Saved to '{saved_dir_name}'"
@@ -194,11 +200,7 @@ class MainWindow(QMainWindow):
             self.storage.set_root_dir(settings["root_dir"])
             self._update_storage_display()
 
-        self.preview_panel.set_values(
-            settings.get("preview_expo", 50.0),
-            settings.get("preview_gain", 0.0),
-            settings.get("enable_clahe", False),
-        )
+        self.preview_vm.load_settings(settings)
         self.sequence_panel.set_values(
             settings.get("seq_expo_list", "10, 50, 100"), settings.get("seq_gain_list", "0")
         )
@@ -211,13 +213,10 @@ class MainWindow(QMainWindow):
 
         settings_to_save = {}
         settings_to_save.update(self.storage_panel.get_values())
-        settings_to_save.update(self.preview_panel.get_values())
+        settings_to_save.update(self.preview_vm.get_settings_to_save())
         settings_to_save.update(self.sequence_panel.get_values())
         AppSettings.save(settings_to_save)
 
-        if hasattr(self, "preview_worker"):
-            self.preview_worker.stop()
-            self.preview_worker.wait(2000)
-
+        self.preview_vm.stop_preview()
         self.camera.disconnect()
         event.accept()

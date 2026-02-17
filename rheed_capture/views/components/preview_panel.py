@@ -9,7 +9,6 @@ from rheed_capture.utils import round_sig_figs
 class PreviewPanel(QGroupBox):
     exposure_changed = Signal(float)
     gain_changed = Signal(int)
-
     clahe_toggled = Signal(bool)
 
     expo_steps = 1000  # 対数スライドの解像度
@@ -143,18 +142,32 @@ class PreviewPanel(QGroupBox):
         """ゲイン ドラッグ終了時: ここで初めてカメラへ値を送る"""
         self.gain_changed.emit(self.spin_gain.value())
 
-    # --- 外部からのデータ設定/取得用メソッド ---
-    def set_values(self, expo: float, gain: float, clahe: bool) -> None:
-        self.spin_expo.setValue(expo)
-        self.spin_gain.setValue(int(gain))
-        self.chk_processing.setChecked(clahe)
+    @Slot(float)
+    def update_exposure_ui(self, value: float) -> None:
+        """シグナルの無限ループを防ぎつつUIを更新する"""
+        self.spin_expo.blockSignals(True)
+        self.spin_expo.setValue(value)
+        self.spin_expo.blockSignals(False)
+        # スライダー同期
+        self.slider_expo.blockSignals(True)
+        self.slider_expo.setValue(self._expo_to_slider(value))
+        self.slider_expo.blockSignals(False)
 
-    def get_values(self) -> dict:
-        return {
-            "preview_expo": self.spin_expo.value(),
-            "preview_gain": self.spin_gain.value(),
-            "enable_clahe": self.chk_processing.isChecked(),
-        }
+    @Slot(int)
+    def update_gain_ui(self, value: int) -> None:
+        self.spin_gain.blockSignals(True)
+        self.spin_gain.setValue(value)
+        self.spin_gain.blockSignals(False)
+        # スライダー同期
+        self.slider_gain.blockSignals(True)
+        self.slider_gain.setValue(value)
+        self.slider_gain.blockSignals(False)
+
+    @Slot(bool)
+    def update_clahe_ui(self, enabled: bool) -> None:
+        self.chk_processing.blockSignals(True)
+        self.chk_processing.setChecked(enabled)
+        self.chk_processing.blockSignals(False)
 
     def set_controls_enabled(self, enabled: bool) -> None:
         self.spin_expo.setEnabled(enabled)
