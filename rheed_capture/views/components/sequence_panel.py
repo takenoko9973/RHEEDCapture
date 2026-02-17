@@ -3,9 +3,11 @@ from PySide6.QtWidgets import QFormLayout, QGroupBox, QLineEdit, QProgressBar, Q
 
 
 class SequencePanel(QGroupBox):
-    start_requested = Signal(list, list)  # exp_list, gain_list
+    start_requested = Signal()
     cancel_requested = Signal()
-    validation_error = Signal(str)
+
+    expo_text_edited = Signal(str)
+    gain_text_edited = Signal(str)
 
     def __init__(self) -> None:
         super().__init__("Sequence Capture")
@@ -28,44 +30,36 @@ class SequencePanel(QGroupBox):
         layout.addRow(self.btn_cancel)
         layout.addRow(self.progress_bar)
 
+        # QLineEditの編集完了(Enterキー押下 or フォーカスが外れた時)にシグナルを発火
+        self.edit_seq_expo.editingFinished.connect(
+            lambda: self.expo_text_edited.emit(self.edit_seq_expo.text())
+        )
+        self.edit_seq_gain.editingFinished.connect(
+            lambda: self.gain_text_edited.emit(self.edit_seq_gain.text())
+        )
+
         self.btn_start.clicked.connect(self._on_start_clicked)
         self.btn_cancel.clicked.connect(self.cancel_requested.emit)
 
+    @Slot(str)
+    def update_expo_ui(self, text: str) -> None:
+        self.edit_seq_expo.setText(text)
+
+    @Slot(str)
+    def update_gain_ui(self, text: str) -> None:
+        self.edit_seq_gain.setText(text)
+
     @Slot()
     def _on_start_clicked(self) -> None:
-        try:
-            expo_list = [
-                float(x.strip()) for x in self.edit_seq_expo.text().split(",") if x.strip()
-            ]
-            gain_list = [int(x.strip()) for x in self.edit_seq_gain.text().split(",") if x.strip()]
-            self._check_expo_and_gain_empty(expo_list, gain_list)
-
-            self.start_requested.emit(expo_list, gain_list)
-        except ValueError:
-            self.validation_error.emit("Invalid input. Please enter numbers separated by commas.")
-
-    def _check_expo_and_gain_empty(self, expo_list: list, gain_list: list) -> None:
-        if not expo_list or not gain_list:
-            msg = "List cannot be empty."
-            raise ValueError(msg)
-
-    def set_capturing_state(self, is_capturing: bool) -> None:
-        self.btn_start.setEnabled(not is_capturing)
-        self.btn_cancel.setEnabled(is_capturing)
-        if is_capturing:
-            self.progress_bar.setValue(0)
+        self.start_requested.emit()
 
     @Slot(int, int)
     def update_progress(self, current: int, total: int) -> None:
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
 
-    def set_values(self, expo_text: str, gain_text: str) -> None:
-        self.edit_seq_expo.setText(expo_text)
-        self.edit_seq_gain.setText(gain_text)
-
-    def get_values(self) -> dict:
-        return {
-            "seq_expo_list": self.edit_seq_expo.text(),
-            "seq_gain_list": self.edit_seq_gain.text(),
-        }
+    def set_capturing_state(self, is_capturing: bool) -> None:
+        self.btn_start.setEnabled(not is_capturing)
+        self.btn_cancel.setEnabled(is_capturing)
+        if is_capturing:
+            self.progress_bar.setValue(0)

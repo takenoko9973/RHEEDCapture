@@ -42,8 +42,8 @@ def mock_settings() -> types.GeneratorType:
             "root_dir": "dummy/root",
             "preview_expo": 15.5,
             "preview_gain": 2.0,
-            "seq_expo_list": "10, 20",
-            "seq_gain_list": "0, 1",
+            "seq_expo_list": [10.0, 20.0],
+            "seq_gain_list": [0, 1],
             "enable_clahe": True,
         }
         yield mock_app_settings
@@ -85,3 +85,4 @@ def test_settings_save_on_close(
     saved_data = mock_settings.save.call_args[0][0]
     assert saved_data["preview_expo"] == 99.9
     assert saved_data["enable_clahe"] is False
+    assert saved_data["seq_expo_list"] == [10.0, 20.0]

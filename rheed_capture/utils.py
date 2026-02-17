@@ -1,4 +1,5 @@
 import math
+from collections.abc import Callable
 
 
 def round_sig_figs(value: float, sig_figs: int = 2) -> float:
@@ -25,3 +26,10 @@ def round_sig_figs(value: float, sig_figs: int = 2) -> float:
     round_digits = sig_figs - 1 - order_of_magnitude
 
     return round(value, round_digits)
+
+
+def parse_numbers[T: (int, float)](
+    data_str: str, dtype: Callable[[str], T], sep: str = ","
+) -> list[T]:
+    """カンマ区切りの文字列を指定の型に変換"""
+    return [dtype(x.strip()) for x in data_str.split(sep)]

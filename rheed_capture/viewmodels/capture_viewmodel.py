@@ -3,6 +3,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.services.capture_service import CaptureService
+from rheed_capture.utils import parse_numbers
 
 
 class CaptureViewModel(QObject):
@@ -11,6 +12,10 @@ class CaptureViewModel(QObject):
     sequence_finished = Signal(bool, str)  # (成功フラグ, 保存先ディレクトリ名)
     error_occurred = Signal(str)
 
+    # UI表示更新用シグナル（パース・整形済みの綺麗な文字列をUIに返す）
+    expo_text_updated = Signal(str)
+    gain_text_updated = Signal(str)
+
     def __init__(self, camera: CameraDevice, storage: ExperimentStorage) -> None:
         super().__init__()
         self._camera = camera
@@ -18,13 +23,71 @@ class CaptureViewModel(QObject):
         self._capture_service: CaptureService | None = None
 
         # 撮影条件の状態保持
-        self._expo_list: list[float] = []
-        self._gain_list: list[int] = []
+        self._expo_list: list[float] = [10.0, 50.0, 100.0]
+        self._gain_list: list[int] = [0]
 
-    def set_conditions(self, expo_list: list[float], gain_list: list[int]) -> None:
-        """Viewから受け取った撮影条件をセットする"""
-        self._expo_list = expo_list
-        self._gain_list = gain_list
+    # ====== 設定のロード・セーブ ======
+
+    def load_settings(self, settings: dict) -> None:
+        # JSONファイルから直接リストとして読み込む
+        self._update_expo_state(settings.get("seq_expo_list", [10.0, 50.0, 100.0]))
+        self._update_gain_state(settings.get("seq_gain_list", [0]))
+
+    def get_settings_to_save(self) -> dict:
+        # リストのまま保存する
+        return {
+            "seq_expo_list": self._expo_list,
+            "seq_gain_list": self._gain_list,
+        }
+
+    # ====== 入力バリデーションと状態の更新 ======
+
+    def _empty_list_error(self) -> None:
+        msg = "リストが空です"
+        raise ValueError(msg)
+
+    @Slot(str)
+    def update_expo_from_text(self, text: str) -> None:
+        """UIで露光時間が入力された際にパースしてリストを更新する"""
+        try:
+            vals = parse_numbers(text, float)
+            if not vals:
+                self._empty_list_error()
+
+            self._update_expo_state(vals)
+        except ValueError:
+            self.error_occurred.emit(
+                "露光時間の形式が正しくありません。\nカンマ区切りの数値を入力してください。"
+            )
+            # エラー時は、UIの文字を現在保持している正しい状態の文字列に強制的にし戻しする
+            self._update_expo_state(self._expo_list)
+
+    @Slot(str)
+    def update_gain_from_text(self, text: str) -> None:
+        """UIでゲインが入力された際にパースしてリストを更新する"""
+        try:
+            vals = parse_numbers(text, int)
+            if not vals:
+                self._empty_list_error()
+
+            self._update_gain_state(vals)
+        except ValueError:
+            self.error_occurred.emit(
+                "ゲインの形式が正しくありません。\nカンマ区切りの整数を入力してください。"
+            )
+            self._update_gain_state(self._gain_list)
+
+    def _update_expo_state(self, vals: list[float]) -> None:
+        """状態を更新し、UI向けに整形された文字列を通知する"""
+        self._expo_list = vals
+        # 例: [10.0, 50.0] -> "10.0, 50.0" と整形してUIを更新
+        self.expo_text_updated.emit(", ".join(map(str, vals)))
+
+    def _update_gain_state(self, vals: list[int]) -> None:
+        self._gain_list = vals
+        self.gain_text_updated.emit(", ".join(map(str, vals)))
+
+    # ====== 撮影制御 ======
 
     @Slot()
     def start_sequence(self) -> None:

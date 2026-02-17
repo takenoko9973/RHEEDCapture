@@ -103,8 +103,6 @@ class MainWindow(QMainWindow):
         self.storage_panel.browse_requested.connect(self._on_browse_root)
         self.storage_panel.new_branch_requested.connect(self._on_new_branch)
 
-        self.sequence_panel.validation_error.connect(self._show_error)
-
     def _setup_bindings(self) -> None:
         """View と ViewModel のシグナル結線"""
         # ====== プレビュー関連の結線 ======
@@ -122,7 +120,15 @@ class MainWindow(QMainWindow):
         self.preview_vm.error_occurred.connect(self._show_error)
 
         # ====== キャプチャ（シーケンス）関連の結線 ======
-        # View -> 操作 -> MainWindowのオーケストレーションメソッドへ
+        # View(UI操作) -> ViewModel(状態の更新とバリデーション)
+        self.sequence_panel.expo_text_edited.connect(self.capture_vm.update_expo_from_text)
+        self.sequence_panel.gain_text_edited.connect(self.capture_vm.update_gain_from_text)
+
+        # ViewModel(整形済み文字列) -> View(UI表示の更新)
+        self.capture_vm.expo_text_updated.connect(self.sequence_panel.update_expo_ui)
+        self.capture_vm.gain_text_updated.connect(self.sequence_panel.update_gain_ui)
+
+        # 撮影のトリガー
         self.sequence_panel.start_requested.connect(self._on_start_sequence_requested)
         self.sequence_panel.cancel_requested.connect(self.capture_vm.cancel_sequence)
 
@@ -159,12 +165,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 5000)
 
     @Slot(list, list)
-    def _on_start_sequence_requested(self, expo_list: list[float], gain_list: list[int]) -> None:
+    def _on_start_sequence_requested(self) -> None:
         # UIをキャプチャ中の状態（ボタン無効化など）に変更
         self.sequence_panel.set_capturing_state(True)
         self.preview_panel.set_controls_enabled(False)
-
-        self.capture_vm.set_conditions(expo_list, gain_list)
 
         # workerが停止処理を完了したら、captureを開始するように
         self.preview_vm.preview_paused.connect(
@@ -197,9 +201,7 @@ class MainWindow(QMainWindow):
             self._update_storage_display()
 
         self.preview_vm.load_settings(settings)
-        self.sequence_panel.set_values(
-            settings.get("seq_expo_list", "10, 50, 100"), settings.get("seq_gain_list", "0")
-        )
+        self.capture_vm.load_settings(settings)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         # キャプチャ中は終了をブロック
@@ -211,7 +213,7 @@ class MainWindow(QMainWindow):
         settings_to_save = {}
         settings_to_save.update(self.storage_panel.get_values())
         settings_to_save.update(self.preview_vm.get_settings_to_save())
-        settings_to_save.update(self.sequence_panel.get_values())
+        settings_to_save.update(self.capture_vm.get_settings_to_save())
         AppSettings.save(settings_to_save)
 
         # バックグラウンドスレッドの停止とカメラの切断

@@ -1,7 +1,7 @@
 import numpy as np
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.views.components.histogram_viewer import HistogramPanel, HistogramWidget
+from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
 
@@ -9,7 +9,7 @@ from rheed_capture.views.components.sequence_panel import SequencePanel
 def test_preview_panel_sync(qtbot: QtBot) -> None:
     """PreviewPanel内部のスライダー・スピンボックス同期と対数変換テスト"""
     # 露光時間は 1.0(10^0) ~ 100.0(10^2) の範囲でテスト
-    panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0.0, 40.0))
+    panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
     qtbot.addWidget(panel)
 
     # =========================================================
@@ -47,19 +47,23 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
     qtbot.addWidget(panel)
 
     # 正常な入力
-    panel.edit_seq_expo.setText("10, 20")
-    panel.edit_seq_gain.setText("1")
+    panel.edit_seq_expo.setText("10, 20, 30")
+    with qtbot.waitSignal(panel.expo_text_edited, timeout=1000) as blocker:
+        # ユーザーがEnterを押すかフォーカスを外した操作をエミュレート
+        panel.edit_seq_expo.editingFinished.emit()
+    assert blocker.args[0] == "10, 20, 30"
+
+    panel.edit_seq_gain.setText("1, 30")
+    with qtbot.waitSignal(panel.expo_text_edited, timeout=1000) as blocker:
+        # ユーザーがEnterを押すかフォーカスを外した操作をエミュレート
+        panel.edit_seq_gain.editingFinished.emit()
+    assert blocker.args[0] == "1, 30"
 
     with qtbot.waitSignal(panel.start_requested, timeout=1000) as blocker:
         panel.btn_start.click()
 
-    assert blocker.args[0] == [10.0, 20.0]
-    assert blocker.args[1] == [1.0]
+    assert len(blocker.args) == 0
 
-    # 不正な入力
-    panel.edit_seq_expo.setText("invalid")
-    with qtbot.waitSignal(panel.validation_error, timeout=1000):
-        panel.btn_start.click()
 
 def test_histogram_panel_update(qtbot: QtBot) -> None:
     """HistogramPanelにデータが渡され、UIテキストが正しくフォーマットされるかテスト"""
