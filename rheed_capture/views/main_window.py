@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.settings import AppSettings
 from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.services.capture_service import CaptureService
+from rheed_capture.viewmodels.capture_viewmodel import CaptureViewModel
 from rheed_capture.viewmodels.preview_viewmodel import PreviewViewModel
 from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.image_viewer import ImageViewer
@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
+    preview_vm: PreviewViewModel
+    capture_vm: CaptureViewModel
+
     def __init__(self, camera: CameraDevice, storage: ExperimentStorage) -> None:
         super().__init__()
         self.camera = camera
@@ -42,8 +45,16 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Ready")
 
         self._setup_ui()
-        self._start_preview()
+        self._setup_viewmodels()
+        self._setup_bindings()
         self._load_settings()
+
+        self.preview_vm.start_preview()
+
+    def _setup_viewmodels(self) -> None:
+        """ViewModelのインスタンス化"""
+        self.preview_vm = PreviewViewModel(self.camera)
+        self.capture_vm = CaptureViewModel(self.camera, self.storage)
 
     def _setup_ui(self) -> None:
         main_widget = QWidget()
@@ -92,32 +103,33 @@ class MainWindow(QMainWindow):
         self.storage_panel.browse_requested.connect(self._on_browse_root)
         self.storage_panel.new_branch_requested.connect(self._on_new_branch)
 
-        self.preview_panel.exposure_changed.connect(self.camera.set_exposure)
-        self.preview_panel.gain_changed.connect(self.camera.set_gain)
-
-        self.sequence_panel.start_requested.connect(self._on_start_sequence_requested)
-        self.sequence_panel.cancel_requested.connect(self._on_cancel_sequence)
         self.sequence_panel.validation_error.connect(self._show_error)
 
-    def _start_preview(self) -> None:
-        self.preview_vm = PreviewViewModel(self.camera)
-
-        # データフロー
-        self.preview_vm.image_ready.connect(self.image_viewer.update_image)
-        self.preview_vm.histogram_ready.connect(self.histogram_panel.update_histogram)
-        self.preview_vm.error_occurred.connect(self._show_error)
-
-        # View(UI操作) -> ViewModel(状態変更)
+    def _setup_bindings(self) -> None:
+        """View と ViewModel のシグナル結線"""
+        # ====== プレビュー関連の結線 ======
+        # View -> ViewModel (操作の伝達)
         self.preview_panel.exposure_changed.connect(self.preview_vm.set_exposure)
         self.preview_panel.gain_changed.connect(self.preview_vm.set_gain)
         self.preview_panel.clahe_toggled.connect(self.preview_vm.set_clahe_enabled)
 
-        # ViewModel(状態変更) -> View(UI表示更新)
+        # ViewModel -> View (状態・データの反映)
+        self.preview_vm.image_ready.connect(self.image_viewer.update_image)
+        self.preview_vm.histogram_ready.connect(self.histogram_panel.update_histogram)
         self.preview_vm.exposure_updated.connect(self.preview_panel.update_exposure_ui)
         self.preview_vm.gain_updated.connect(self.preview_panel.update_gain_ui)
         self.preview_vm.clahe_enabled_updated.connect(self.preview_panel.update_clahe_ui)
+        self.preview_vm.error_occurred.connect(self._show_error)
 
-        self.preview_vm.start_preview()
+        # ====== キャプチャ（シーケンス）関連の結線 ======
+        # View -> 操作 -> MainWindowのオーケストレーションメソッドへ
+        self.sequence_panel.start_requested.connect(self._on_start_sequence_requested)
+        self.sequence_panel.cancel_requested.connect(self.capture_vm.cancel_sequence)
+
+        # ViewModel -> View (進捗などの反映)
+        self.capture_vm.progress_updated.connect(self.sequence_panel.update_progress)
+        self.capture_vm.sequence_finished.connect(self._on_sequence_finished)
+        self.capture_vm.error_occurred.connect(self._show_error)
 
     def _update_storage_display(self) -> None:
         self.storage_panel.update_displays(
@@ -148,33 +160,17 @@ class MainWindow(QMainWindow):
 
     @Slot(list, list)
     def _on_start_sequence_requested(self, expo_list: list[float], gain_list: list[int]) -> None:
+        # UIをキャプチャ中の状態（ボタン無効化など）に変更
         self.sequence_panel.set_capturing_state(True)
         self.preview_panel.set_controls_enabled(False)
 
-        self._current_expo_list = expo_list
-        self._current_gain_list = gain_list
+        self.capture_vm.set_conditions(expo_list, gain_list)
 
         # workerが停止処理を完了したら、captureを開始するように
         self.preview_vm.preview_paused.connect(
-            self._start_capture_service_after_pause, Qt.ConnectionType.SingleShotConnection
+            self.capture_vm.start_sequence, Qt.ConnectionType.SingleShotConnection
         )
         self.preview_vm.pause_preview()
-
-    @Slot()
-    def _start_capture_service_after_pause(self) -> None:
-        self.capture_service = CaptureService(
-            self.camera, self.storage, self._current_expo_list, self._current_gain_list
-        )
-        self.capture_service.progress_update.connect(self.sequence_panel.update_progress)
-        self.capture_service.sequence_finished.connect(self._on_sequence_finished)
-        self.capture_service.error_occurred.connect(self._show_error)
-        self.capture_service.start()
-
-    @Slot()
-    def _on_cancel_sequence(self) -> None:
-        if self.capture_service and self.capture_service.isRunning():
-            self.capture_service.cancel()
-            self.sequence_panel.btn_cancel.setEnabled(False)
 
     @Slot(bool, str)
     def _on_sequence_finished(self, success: bool, saved_dir_name: str) -> None:
@@ -206,7 +202,8 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-        if self.capture_service and self.capture_service.isRunning():
+        # キャプチャ中は終了をブロック
+        if self.capture_vm.is_running():
             QMessageBox.warning(self, "Warning", "Cannot close while capturing.")
             event.ignore()
             return
@@ -217,6 +214,8 @@ class MainWindow(QMainWindow):
         settings_to_save.update(self.sequence_panel.get_values())
         AppSettings.save(settings_to_save)
 
+        # バックグラウンドスレッドの停止とカメラの切断
         self.preview_vm.stop_preview()
         self.camera.disconnect()
+
         event.accept()
