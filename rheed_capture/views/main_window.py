@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
 from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.settings import AppSettings
 from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.viewmodels.capture_service import CaptureService
-from rheed_capture.viewmodels.preview_worker import PreviewWorker
+from rheed_capture.services.capture_service import CaptureService
+from rheed_capture.services.preview_worker import PreviewWorker
 from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel

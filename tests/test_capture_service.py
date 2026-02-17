@@ -6,7 +6,7 @@ from pytestqt.qtbot import QtBot
 
 from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.viewmodels.capture_service import CaptureService
+from rheed_capture.services.capture_service import CaptureService
 
 
 @pytest.fixture
