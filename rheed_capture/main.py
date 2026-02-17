@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import signal
 import sys
@@ -40,6 +41,10 @@ def main() -> None:
         logger.exception("起動エラー")
         # GUI起動前のエラーはコンソールに出力
         print(f"アプリケーションを起動できませんでした:\n{e}")
+
+    finally:
+        with contextlib.suppress(Exception):
+            camera.disconnect()
 
 
 if __name__ == "__main__":
