@@ -70,28 +70,32 @@ class PreviewPanel(QGroupBox):
     # 対数変換ヘルパーメソッド
     # ==========================================
     def _expo_to_slider(self, expo_val: float) -> int:
-        """実際の露光時間からスライダーの段階(0~1000)を計算"""
-        if expo_val <= self.expo_min:
+        """実際の露光時間からスライダーの段階を計算"""
+        # ms の範囲での最小値、最大値
+        expo_ms_min, expo_ms_max = math.ceil(self.expo_min), math.floor(self.expo_max)
+
+        if expo_val <= expo_ms_min:
             return 0
-        if expo_val >= self.expo_max:
+        if expo_val >= expo_ms_max:
             return self.expo_steps
 
-        log_min = math.log10(self.expo_min)
-        log_max = math.log10(self.expo_max)
+        log_min, log_max = math.log10(expo_ms_min), math.log10(expo_ms_max)
         log_val = math.log10(expo_val)
 
         t = (log_val - log_min) / (log_max - log_min)
         return round(t * self.expo_steps)
 
     def _slider_to_expo(self, slider_val: int) -> float:
-        """スライダーの段階(0~1000)から実際の露光時間(対数)を計算 (msの分解能)"""
-        if slider_val <= 0:
-            return math.ceil(self.expo_min)  # ms の範囲での最小値
-        if slider_val >= self.expo_steps:
-            return math.floor(self.expo_max)  # ms の範囲での最大値
+        """スライダーの段階から実際の露光時間(対数)を計算 (msの分解能)"""
+        # ms の範囲での最小値、最大値 (0.1ms -> 1ms、99.99ms -> 99ms)
+        expo_ms_min, expo_ms_max = math.ceil(self.expo_min), math.floor(self.expo_max)
 
-        log_min = math.log10(math.ceil(self.expo_min))
-        log_max = math.log10(math.floor(self.expo_max))
+        if slider_val <= 0:
+            return expo_ms_min
+        if slider_val >= self.expo_steps:
+            return expo_ms_max
+
+        log_min, log_max = math.log10(expo_ms_min), math.log10(expo_ms_max)
         t = slider_val / self.expo_steps
 
         log_val = log_min + t * (log_max - log_min)
