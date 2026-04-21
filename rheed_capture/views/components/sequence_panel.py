@@ -1,5 +1,5 @@
 from PySide6.QtCore import Signal, Slot
-from PySide6.QtWidgets import QFormLayout, QGroupBox, QLineEdit, QProgressBar, QPushButton
+from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QLineEdit, QProgressBar, QPushButton
 
 
 class SequencePanel(QGroupBox):
@@ -18,6 +18,8 @@ class SequencePanel(QGroupBox):
 
         self.edit_seq_expo = QLineEdit("10, 50, 100")
         self.edit_seq_gain = QLineEdit("0")
+        # 次回撮影で使用される保存先 image_xxx を表示する。
+        self.lbl_next_sequence_preview = QLabel("image_001")
         self.btn_start = QPushButton("Start Sequence Capture")
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setEnabled(False)
@@ -26,6 +28,7 @@ class SequencePanel(QGroupBox):
 
         layout.addRow("Exposures (ms):", self.edit_seq_expo)
         layout.addRow("Gains:", self.edit_seq_gain)
+        layout.addRow("Next Sequence:", self.lbl_next_sequence_preview)
         layout.addRow(self.btn_start)
         layout.addRow(self.btn_cancel)
         layout.addRow(self.progress_bar)
@@ -52,6 +55,10 @@ class SequencePanel(QGroupBox):
     @Slot()
     def _on_start_clicked(self) -> None:
         self.start_requested.emit()
+
+    @Slot(str)
+    def update_next_sequence_preview(self, text: str) -> None:
+        self.lbl_next_sequence_preview.setText(text)
 
     @Slot(int, int)
     def update_progress(self, current: int, total: int) -> None:

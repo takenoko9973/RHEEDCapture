@@ -47,10 +47,10 @@ class ExperimentStorage:
         # 今日の日付の最大のブランチ (yymmdd-n) を探す
         self._branch_number = self._search_max_branch()
         # そのブランチ内にある最大の連番 (image_nnn) を探す
-        self._sequence_counter = self._search_max_sequence()
+        self.refresh_sequence_counter_from_disk()
 
         exp_dir = self.get_current_experiment_dir()
-        logger.info("保存先設定: %s (Next Sequence: %d)", exp_dir, self._sequence_counter + 1)
+        logger.info("保存先設定: %s (Next Sequence: %d)", exp_dir, self.get_next_sequence_number())
 
     def get_current_experiment_dir(self) -> Path:
         """現在ターゲットとなっている実験ディレクトリのパスを取得 (作成はしない)"""
@@ -63,6 +63,18 @@ class ExperimentStorage:
         """現在ターゲットとなっている画像ディレクトリのパスを取得 (作成はしない)"""
         exp_dir = self.get_current_experiment_dir()
         return exp_dir / f"image_{self._sequence_counter:03d}"
+
+    def refresh_sequence_counter_from_disk(self) -> None:
+        """現在ブランチ配下を再スキャンし、内部の連番カウンタを同期する。"""
+        self._sequence_counter = self._search_max_sequence()
+
+    def get_next_sequence_dir_name(self) -> str:
+        """次回撮影時に作成されるシーケンスディレクトリ名を返す。"""
+        return f"image_{self.get_next_sequence_number():03d}"
+
+    def get_next_sequence_number(self) -> int:
+        """次回撮影時に使われるシーケンス番号を返す。"""
+        return self._sequence_counter + 1
 
     def _search_max_branch(self) -> int:
         """最大のブランチ番号 (yymmdd-n) を探す"""
@@ -83,11 +95,12 @@ class ExperimentStorage:
         if not exp_dir.exists():
             return 0  # 作成してなければ 0 を返す
 
-        pattern = re.compile(r"image_(\d{3})")
+        # image_001 のような正規のシーケンスフォルダのみ対象にする。
+        pattern = re.compile(r"^image_(\d{3})$")
 
         # 条件に合致するディレクトリのみを抽出し、接尾辞の番号をリスト化
         suffixes = [
-            int(match.group(1) or 1)
+            int(match.group(1))
             for path in Path(exp_dir).iterdir()
             if path.is_dir() and (match := pattern.match(path.name))
         ]
@@ -101,6 +114,10 @@ class ExperimentStorage:
 
     def start_new_sequence(self) -> None:
         """ここで初めてフォルダを作成する (Lazy Creation)"""
+        # 外部でフォルダ削除・追加が行われる運用に追従するため、
+        # 毎回ディスク上の最新状態を再スキャンしてから次番号を確定する。
+        self.refresh_sequence_counter_from_disk()
+
         self.root_dir.mkdir(parents=True, exist_ok=True)
         exp_dir = self.get_current_experiment_dir()
         exp_dir.mkdir(parents=True, exist_ok=True)
