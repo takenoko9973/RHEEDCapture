@@ -1,6 +1,6 @@
 import logging
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_viewmodels()
         self._setup_bindings()
+        self._setup_sequence_preview_timer()
         self._load_settings()
 
         self.preview_vm.start_preview()
@@ -137,10 +138,31 @@ class MainWindow(QMainWindow):
         self.capture_vm.sequence_finished.connect(self._on_sequence_finished)
         self.capture_vm.error_occurred.connect(self._show_error)
 
-    def _update_storage_display(self) -> None:
+    def _setup_sequence_preview_timer(self) -> None:
+        # 外部で image_xxx が削除/追加される運用に追従するため、定期的に再同期する。
+        self._sequence_preview_timer = QTimer(self)
+        self._sequence_preview_timer.setInterval(2000)
+        self._sequence_preview_timer.timeout.connect(self._on_sequence_preview_timer)
+        self._sequence_preview_timer.start()
+
+    def _update_storage_display(self, *, refresh_sequence: bool = True) -> None:
+        # set_root_dir()直後のように既に再スキャン済みの場面では、
+        # 不要なディスク走査を避けるため refresh_sequence=False を使う。
+        if refresh_sequence:
+            self.storage.refresh_sequence_counter_from_disk()
+
         self.storage_panel.update_displays(
             str(self.storage.root_dir), self.storage.get_current_experiment_dir().name
         )
+        self.sequence_panel.update_next_sequence_preview(self.storage.get_next_sequence_dir_name())
+
+    @Slot()
+    def _on_sequence_preview_timer(self) -> None:
+        # 撮影中は CaptureService 側でシーケンス番号を確定するため、ここで再スキャンしない。
+        if self.capture_vm.is_running():
+            return
+
+        self._update_storage_display()
 
     @Slot()
     def _on_browse_root(self) -> None:
@@ -149,12 +171,12 @@ class MainWindow(QMainWindow):
         )
         if dir_path:
             self.storage.set_root_dir(dir_path)
-            self._update_storage_display()
+            self._update_storage_display(refresh_sequence=False)
 
     @Slot()
     def _on_new_branch(self) -> None:
         self.storage.increment_branch()
-        self._update_storage_display()
+        self._update_storage_display(refresh_sequence=False)
 
         new_name = self.storage_panel.lbl_target_dir.text()
         QMessageBox.information(
@@ -169,6 +191,7 @@ class MainWindow(QMainWindow):
         # UIをキャプチャ中の状態（ボタン無効化など）に変更
         self.sequence_panel.set_capturing_state(True)
         self.preview_panel.set_controls_enabled(False)
+        self._sequence_preview_timer.stop()
 
         # workerが停止処理を完了したら、captureを開始するように
         self.preview_vm.preview_paused.connect(
@@ -182,6 +205,8 @@ class MainWindow(QMainWindow):
         self.preview_panel.set_controls_enabled(True)
 
         self.preview_vm.resume_preview()
+        self._update_storage_display()
+        self._sequence_preview_timer.start()
         if success:
             # ステータスバーに保存先を表示 (5000ミリ秒 = 5秒間で自動消去)
             msg = f"Capture Complete: Saved to '{saved_dir_name}'"
@@ -198,7 +223,7 @@ class MainWindow(QMainWindow):
 
         if "root_dir" in settings:
             self.storage.set_root_dir(settings["root_dir"])
-            self._update_storage_display()
+            self._update_storage_display(refresh_sequence=False)
 
         self.preview_vm.load_settings(settings)
         self.capture_vm.load_settings(settings)
@@ -215,6 +240,8 @@ class MainWindow(QMainWindow):
         settings_to_save.update(self.preview_vm.get_settings_to_save())
         settings_to_save.update(self.capture_vm.get_settings_to_save())
         AppSettings.save(settings_to_save)
+
+        self._sequence_preview_timer.stop()
 
         # バックグラウンドスレッドの停止とカメラの切断
         self.preview_vm.stop_preview()
