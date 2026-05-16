@@ -35,7 +35,7 @@ main = "rheed_capture.main:main"
 
 [tool.poe.tasks]
 # uv run poe build で実行可能
-build = "uv run nuitka --enable-plugin=pyside6 --standalone --onefile --windows-console-mode=disable --output-dir=dist -o RHEEDCapture.exe rheed_capture/main.py"
+build = "uv run nuitka --enable-plugin=pyside6 --standalone --onefile --onefile-no-compression --windows-console-mode=disable --include-windows-runtime-dlls=yes --output-dir=dist -o RHEEDCapture.exe rheed_capture/main.py"
 
 [tool.uv.sources]
 my-pyside-app = { url = "https://pypi.org/simple" }
