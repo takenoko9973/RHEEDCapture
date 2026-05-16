@@ -8,26 +8,27 @@ version = "0.1.0"
 requires-python = ">=3.12"
 
 dependencies = [
-    "numpy>=2.4.2",
+    "numpy>=2.4.5",
     "opencv-python-headless>=4.13.0.92",
-    "pypylon>=4.2.0",
-    "pyside6>=6.10.2",
-    "python-dotenv>=1.2.1",
-    "tifffile>=2026.1.28",
-    "tzdata>=2025.3",
+    "pypylon>=26.4.1",
+    "pyside6>=6.10.3",
+    "python-dotenv>=1.2.2",
+    "tifffile>=2026.5.15",
+    "tzdata>=2026.2",
 ]
 
 [dependency-groups]
 dev = [
-    "mypy>=1.19.1",
+    "mypy>=2.1.0",
     "pybind11-stubgen>=2.5.5",
     "pylance>=2.0.1",
-    "ruff>=0.14.2",
-    "ty>=0.0.17",
-    "pytest>=9.0.2",
+    "ruff>=0.15.13",
+    "ty>=0.0.37",
+    "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
-    "nuitka>=4.0.1",
-    "poethepoet>=0.38.0",
+    "nuitka>=4.1",
+    "poethepoet>=0.46.0",
+    "zstandard>=0.25.0",
 ]
 
 [project.scripts]
