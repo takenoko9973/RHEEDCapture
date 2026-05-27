@@ -31,6 +31,7 @@ def mock_storage() -> MagicMock:
     mock_dir = MagicMock(spec=Path)
     mock_dir.name = "260215"
     storage.get_current_experiment_dir.return_value = mock_dir
+    storage.get_next_sequence_dir_name.return_value = "image_001"
     storage.increment_branch.return_value = "260215-2"
     return storage
 
@@ -42,6 +43,9 @@ def mock_settings() -> types.GeneratorType:
             "root_dir": "dummy/root",
             "preview_expo": 15.5,
             "preview_gain": 2.0,
+            "show_preview_grid": True,
+            "preview_grid_rows": 8,
+            "preview_grid_cols": 8,
             "seq_expo_list": [10.0, 20.0],
             "seq_gain_list": [0, 1],
             "enable_clahe": True,
@@ -56,7 +60,9 @@ def test_main_window_initialization(
     qtbot.addWidget(window)
 
     assert window.preview_panel.spin_expo.value() == 15.5
-    assert window.sequence_panel.edit_seq_expo.text() == "10, 20"
+    assert window.preview_panel.chk_show_grid.isChecked() is True
+    assert window.preview_panel.cmb_grid_shape.currentText() == "8x8"
+    assert window.sequence_panel.edit_seq_expo.text() == "10.0, 20.0"
     window.close()
 
 
@@ -78,6 +84,8 @@ def test_settings_save_on_close(
 
     window.preview_panel.spin_expo.setValue(99.9)
     window.preview_panel.chk_processing.setChecked(False)
+    window.preview_panel.chk_show_grid.setChecked(False)
+    window.preview_panel.cmb_grid_shape.setCurrentText("2x2")
 
     window.close()
 
@@ -85,4 +93,7 @@ def test_settings_save_on_close(
     saved_data = mock_settings.save.call_args[0][0]
     assert saved_data["preview_expo"] == 99.9
     assert saved_data["enable_clahe"] is False
+    assert saved_data["show_preview_grid"] is False
+    assert saved_data["preview_grid_rows"] == 2
+    assert saved_data["preview_grid_cols"] == 2
     assert saved_data["seq_expo_list"] == [10.0, 20.0]

@@ -1,20 +1,41 @@
 import math
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QFormLayout, QGroupBox, QSlider, QSpinBox
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QSlider,
+    QSpinBox,
+    QWidget,
+)
 
 from rheed_capture.utils import round_sig_figs
+from rheed_capture.views.grid_spec import (
+    DEFAULT_GRID_SHAPE,
+    DEFAULT_GRID_SHAPE_OPTIONS,
+    ensure_option,
+    format_grid_shape,
+    normalize_grid_shape,
+    parse_grid_shape,
+)
 
 
 class PreviewPanel(QGroupBox):
     exposure_changed = Signal(float)
     gain_changed = Signal(int)
     clahe_toggled = Signal(bool)
+    grid_enabled_changed = Signal(bool)
+    grid_shape_changed = Signal(int, int)
 
     expo_steps = 1000  # 対数スライドの解像度
 
     def __init__(self, expo_bounds: tuple[float, float], gain_bounds: tuple[int, int]) -> None:
         super().__init__("Preview Settings")
+        self._grid_shape_options = DEFAULT_GRID_SHAPE_OPTIONS
         self._setup_ui(expo_bounds, gain_bounds)
 
     def _setup_ui(self, expo_bounds: tuple[float, float], gain_bounds: tuple[int, int]) -> None:
@@ -42,13 +63,27 @@ class PreviewPanel(QGroupBox):
         self.slider_gain = QSlider(Qt.Orientation.Horizontal)
         self.slider_gain.setRange(self.gain_min, self.gain_max)
 
+        # === オプション
         self.chk_processing = QCheckBox("Enable CLAHE Processing")
+        self.chk_show_grid = QCheckBox("Show Grid")
+        self.cmb_grid_shape = QComboBox()
+        self._refresh_grid_shape_options()
+        self.cmb_grid_shape.setCurrentText(format_grid_shape(*DEFAULT_GRID_SHAPE))
+        self.cmb_grid_shape.setEnabled(False)
+
+        grid_row_widget = QWidget()
+        grid_row_layout = QHBoxLayout(grid_row_widget)
+        grid_row_layout.setContentsMargins(0, 0, 0, 0)
+        grid_row_layout.setSpacing(8)
+        grid_row_layout.addWidget(self.chk_show_grid)
+        grid_row_layout.addWidget(self.cmb_grid_shape)
 
         layout.addRow("Exposure:", self.spin_expo)
         layout.addRow("", self.slider_expo)
         layout.addRow("Gain:", self.spin_gain)
         layout.addRow("", self.slider_gain)
         layout.addRow("", self.chk_processing)
+        layout.addRow("Grid:", grid_row_widget)
 
         # 内部の双方向同期シグナル結線
         # SpinBox: 直接入力時は即座に反映
@@ -65,6 +100,8 @@ class PreviewPanel(QGroupBox):
 
         # 外部へのシグナル発信
         self.chk_processing.toggled.connect(self.clahe_toggled.emit)
+        self.chk_show_grid.toggled.connect(self._on_grid_enabled_toggled)
+        self.cmb_grid_shape.currentTextChanged.connect(self._on_grid_shape_changed)
 
     # ==========================================
     # 対数変換ヘルパーメソッド
@@ -167,14 +204,59 @@ class PreviewPanel(QGroupBox):
         self.slider_gain.setValue(value)
         self.slider_gain.blockSignals(False)
 
+    # --- CLAHE ---
     @Slot(bool)
     def update_clahe_ui(self, enabled: bool) -> None:
         self.chk_processing.blockSignals(True)
         self.chk_processing.setChecked(enabled)
         self.chk_processing.blockSignals(False)
 
+    # --- Grid ---
+    @Slot(bool)
+    def _on_grid_enabled_toggled(self, enabled: bool) -> None:
+        self.cmb_grid_shape.setEnabled(enabled)
+        self.grid_enabled_changed.emit(enabled)
+
+    @Slot(str)
+    def _on_grid_shape_changed(self, text: str) -> None:
+        rows, cols = parse_grid_shape(text)
+        self.grid_shape_changed.emit(rows, cols)
+
+    def _refresh_grid_shape_options(self) -> None:
+        # 選択肢は単純な文字列一覧に変換してコンボに反映する。
+        self.cmb_grid_shape.clear()
+        self.cmb_grid_shape.addItems(
+            [format_grid_shape(rows, cols) for rows, cols in self._grid_shape_options]
+        )
+
+    def get_grid_settings_to_save(self) -> dict:
+        rows, cols = parse_grid_shape(self.cmb_grid_shape.currentText())
+        return {
+            "show_preview_grid": self.chk_show_grid.isChecked(),
+            "preview_grid_rows": rows,
+            "preview_grid_cols": cols,
+        }
+
+    def apply_grid_settings(self, enabled: bool, rows: int, cols: int) -> None:
+        # 保存値が候補外でも UI で選択できるよう、候補に動的追加してから適用する。
+        applied_shape = normalize_grid_shape(rows, cols, fallback=DEFAULT_GRID_SHAPE)
+        self._grid_shape_options = ensure_option(self._grid_shape_options, applied_shape)
+        self._refresh_grid_shape_options()
+        target_label = format_grid_shape(*applied_shape)
+
+        self.chk_show_grid.blockSignals(True)
+        self.chk_show_grid.setChecked(enabled)
+        self.chk_show_grid.blockSignals(False)
+
+        self.cmb_grid_shape.blockSignals(True)
+        self.cmb_grid_shape.setCurrentText(target_label)
+        self.cmb_grid_shape.blockSignals(False)
+        self.cmb_grid_shape.setEnabled(enabled)
+
     def set_controls_enabled(self, enabled: bool) -> None:
         self.spin_expo.setEnabled(enabled)
         self.slider_expo.setEnabled(enabled)
         self.spin_gain.setEnabled(enabled)
         self.slider_gain.setEnabled(enabled)
+        self.chk_show_grid.setEnabled(enabled)
+        self.cmb_grid_shape.setEnabled(enabled and self.chk_show_grid.isChecked())
