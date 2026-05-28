@@ -105,6 +105,22 @@ def test_preview_panel_accepts_non_square_grid_shape(qtbot: QtBot) -> None:
     assert panel.get_grid_settings_to_save()["preview_grid_cols"] == 4
 
 
+def test_preview_panel_exposure_arrow_step_tracks_current_digits(qtbot: QtBot) -> None:
+    panel = PreviewPanel(expo_bounds=(0.01, 5000.0), gain_bounds=(0, 40))
+    qtbot.addWidget(panel)
+
+    panel.spin_expo.setValue(1200.0)
+    panel.spin_expo.stepBy(1)
+    assert panel.spin_expo.value() == 1210.0
+
+    panel.spin_expo.setValue(23.0)
+    panel.spin_expo.stepBy(1)
+    assert panel.spin_expo.value() == 23.1
+
+    panel.spin_expo.stepBy(-1)
+    assert panel.spin_expo.value() == 23.0
+
+
 def test_image_viewer_grid_overlay_updates_pixmap(qtbot: QtBot) -> None:
     viewer = ImageViewer()
     qtbot.addWidget(viewer)

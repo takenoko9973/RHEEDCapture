@@ -4,7 +4,6 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -22,6 +21,7 @@ from rheed_capture.views.grid_spec import (
     normalize_grid_shape,
     parse_grid_shape,
 )
+from rheed_capture.views.widgets.exposure_spinbox import ExposureSpinBox
 
 
 class PreviewPanel(QGroupBox):
@@ -46,7 +46,7 @@ class PreviewPanel(QGroupBox):
         self.expo_min = max(self.expo_min, 0.01)  # 小数点第2まで表示するため、最小値を調整
 
         # === 露光時間UI (対数スケール)
-        self.spin_expo = QDoubleSpinBox()
+        self.spin_expo = ExposureSpinBox()
         self.spin_expo.setRange(self.expo_min, self.expo_max)
         self.spin_expo.setSuffix(" ms")
         # タイピング中は値を更新せず、Enterキー押下かフォーカス外れ時のみ更新する
