@@ -23,6 +23,7 @@ from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
 from rheed_capture.views.components.storage_panel import StoragePanel
+from rheed_capture.views.grid_spec import DEFAULT_GRID_SHAPE
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,9 @@ class MainWindow(QMainWindow):
         self.preview_panel.exposure_changed.connect(self.preview_vm.set_exposure)
         self.preview_panel.gain_changed.connect(self.preview_vm.set_gain)
         self.preview_panel.clahe_toggled.connect(self.preview_vm.set_clahe_enabled)
+        # CLAHE は worker 側の画像処理、Grid は viewer 側の表示オーバーレイとして扱う。
+        self.preview_panel.grid_enabled_changed.connect(self.image_viewer.set_grid_enabled)
+        self.preview_panel.grid_shape_changed.connect(self.image_viewer.set_grid_shape)
 
         # ViewModel -> View (状態・データの反映)
         self.preview_vm.image_ready.connect(self.image_viewer.update_image)
@@ -227,6 +231,17 @@ class MainWindow(QMainWindow):
 
         self.preview_vm.load_settings(settings)
         self.capture_vm.load_settings(settings)
+        self._apply_grid_settings(settings)
+
+    def _apply_grid_settings(self, settings: dict) -> None:
+        # Grid は Panel(操作状態) と Viewer(描画状態) の両方へ同時反映する。
+        show_grid = settings.get("show_preview_grid", False)
+        default_rows, default_cols = DEFAULT_GRID_SHAPE
+        grid_rows = settings.get("preview_grid_rows", default_rows)
+        grid_cols = settings.get("preview_grid_cols", default_cols)
+        self.preview_panel.apply_grid_settings(show_grid, grid_rows, grid_cols)
+        self.image_viewer.set_grid_enabled(show_grid)
+        self.image_viewer.set_grid_shape(grid_rows, grid_cols)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         # キャプチャ中は終了をブロック
@@ -238,6 +253,7 @@ class MainWindow(QMainWindow):
         settings_to_save = {}
         settings_to_save.update(self.storage_panel.get_values())
         settings_to_save.update(self.preview_vm.get_settings_to_save())
+        settings_to_save.update(self.preview_panel.get_grid_settings_to_save())
         settings_to_save.update(self.capture_vm.get_settings_to_save())
         AppSettings.save(settings_to_save)
 

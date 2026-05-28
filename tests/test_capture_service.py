@@ -29,7 +29,7 @@ def test_successful_capture_sequence(
 ) -> None:
     """正常な撮影シーケンスが仕様通りに実行されるかテスト"""
     exposure_list = [10.0, 100.0]
-    gain_list = [0.0, 1.0]
+    gain_list = [0, 1]
 
     service = CaptureService(mock_camera, mock_storage, exposure_list, gain_list)
 
@@ -49,7 +49,7 @@ def test_successful_capture_sequence(
 def test_capture_retry_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:
     """エラー時にリトライが行われ、3回目で失敗する場合は中断されるかテスト"""
     exposure_list = [10.0]
-    gain_list = [0.0]
+    gain_list = [0]
 
     # grab_one が常に例外を投げるように設定
     mock_camera.grab_one.side_effect = RuntimeError("Mock Camera Error")

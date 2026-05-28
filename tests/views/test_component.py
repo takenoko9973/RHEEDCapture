@@ -2,6 +2,7 @@ import numpy as np
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.views.components.histogram_viewer import HistogramPanel
+from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
 
@@ -54,7 +55,7 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
     assert blocker.args[0] == "10, 20, 30"
 
     panel.edit_seq_gain.setText("1, 30")
-    with qtbot.waitSignal(panel.expo_text_edited, timeout=1000) as blocker:
+    with qtbot.waitSignal(panel.gain_text_edited, timeout=1000) as blocker:
         # ユーザーがEnterを押すかフォーカスを外した操作をエミュレート
         panel.edit_seq_gain.editingFinished.emit()
     assert blocker.args[0] == "1, 30"
@@ -63,6 +64,55 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
         panel.btn_start.click()
 
     assert len(blocker.args) == 0
+
+
+def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:
+    panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
+    qtbot.addWidget(panel)
+
+    assert panel.chk_show_grid.isChecked() is False
+    assert panel.cmb_grid_shape.isEnabled() is False
+    assert panel.cmb_grid_shape.currentText() == "4x4"
+
+    with qtbot.waitSignal(panel.grid_enabled_changed, timeout=1000) as blocker:
+        panel.chk_show_grid.setChecked(True)
+    assert blocker.args[0] is True
+    assert panel.cmb_grid_shape.isEnabled() is True
+
+    with qtbot.waitSignal(panel.grid_shape_changed, timeout=1000) as blocker:
+        panel.cmb_grid_shape.setCurrentText("8x8")
+    assert blocker.args == [8, 8]
+
+    with qtbot.waitSignal(panel.grid_enabled_changed, timeout=1000) as blocker:
+        panel.chk_show_grid.setChecked(False)
+    assert blocker.args[0] is False
+    assert panel.cmb_grid_shape.isEnabled() is False
+
+
+def test_preview_panel_accepts_non_square_grid_shape(qtbot: QtBot) -> None:
+    panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
+    qtbot.addWidget(panel)
+
+    panel.apply_grid_settings(True, 2, 4)
+
+    assert panel.cmb_grid_shape.currentText() == "2x4"
+    assert panel.get_grid_settings_to_save()["preview_grid_rows"] == 2
+    assert panel.get_grid_settings_to_save()["preview_grid_cols"] == 4
+
+
+def test_image_viewer_grid_overlay_updates_pixmap(qtbot: QtBot) -> None:
+    viewer = ImageViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(800, 600)
+    viewer.show()
+
+    image_data = np.full((120, 160), 128, dtype=np.uint8)
+    viewer.set_grid_enabled(True)
+    viewer.set_grid_shape(1, 2)
+    viewer.update_image(image_data)
+
+    assert viewer.pixmap() is not None
+    assert viewer.pixmap().isNull() is False
 
 
 def test_histogram_panel_update(qtbot: QtBot) -> None:
@@ -80,6 +130,7 @@ def test_histogram_panel_update(qtbot: QtBot) -> None:
     panel.update_histogram(dummy_hist, dummy_mean, dummy_var)
 
     # 描画用ウィジェットに配列が渡されているか
+    assert panel.hist_widget.hist_data is not None
     assert np.array_equal(panel.hist_widget.hist_data, dummy_hist)
 
     # 統計量ラベルのテキストが指定の書式（少数第2位まで）で表示されているか
