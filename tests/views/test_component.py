@@ -1,10 +1,15 @@
 import numpy as np
+from PySide6.QtGui import QColor
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.image_viewer import ImageViewer
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
+from rheed_capture.views.preview_background import (
+    PreviewBackground,
+    PreviewBackgroundStyle,
+)
 
 
 def test_preview_panel_sync(qtbot: QtBot) -> None:
@@ -113,6 +118,29 @@ def test_image_viewer_grid_overlay_updates_pixmap(qtbot: QtBot) -> None:
 
     assert viewer.pixmap() is not None
     assert viewer.pixmap().isNull() is False
+
+
+def test_image_viewer_draws_configurable_preview_background(qtbot: QtBot) -> None:
+    viewer = ImageViewer()
+    qtbot.addWidget(viewer)
+    viewer.resize(800, 600)
+    viewer.show()
+
+    viewer.set_preview_background(
+        PreviewBackground(
+            style=PreviewBackgroundStyle.CHECKERBOARD,
+            primary_color=QColor(10, 20, 30),
+            secondary_color=QColor(40, 50, 60),
+            tile_size=16,
+        )
+    )
+    image_data = np.full((100, 160), 128, dtype=np.uint8)
+    viewer.update_image(image_data)
+
+    rendered = viewer.grab().toImage()
+
+    assert rendered.pixelColor(8, 8) == QColor(10, 20, 30)
+    assert rendered.pixelColor(24, 8) == QColor(40, 50, 60)
 
 
 def test_histogram_panel_update(qtbot: QtBot) -> None:

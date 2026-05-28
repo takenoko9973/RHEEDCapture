@@ -1,16 +1,21 @@
 import numpy as np
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPaintEvent, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
 from rheed_capture.views.grid_spec import DEFAULT_GRID_SHAPE, normalize_grid_shape
+from rheed_capture.views.preview_background import (
+    PreviewBackground,
+    PreviewBackgroundStyle,
+    build_preview_background_brush,
+)
 
 
 class ImageViewer(QLabel):
     def __init__(self) -> None:
         super().__init__("Camera not connected")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("background-color: black; color: white;")
+        self.setStyleSheet("color: white;")
 
         self.setMinimumSize(720, 540)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
@@ -19,6 +24,11 @@ class ImageViewer(QLabel):
         self._latest_image_data: np.ndarray | None = None
         self._grid_enabled = False
         self._grid_shape = DEFAULT_GRID_SHAPE
+        # 背景設定
+        self._background = PreviewBackground(
+            style=PreviewBackgroundStyle.SOLID, primary_color=QColor(112, 112, 112)
+        )
+        self._background_brush = build_preview_background_brush(self._background)
 
     @Slot(np.ndarray)
     def update_image(self, image_data: np.ndarray) -> None:
@@ -34,6 +44,17 @@ class ImageViewer(QLabel):
     def set_grid_shape(self, rows: int, cols: int) -> None:
         self._grid_shape = normalize_grid_shape(rows, cols, fallback=self._grid_shape)
         self._render_if_ready()
+
+    def set_preview_background(self, background: PreviewBackground) -> None:
+        self._background = background
+        self._background_brush = build_preview_background_brush(background)
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.fillRect(event.rect(), self._background_brush)
+        painter.end()
+        super().paintEvent(event)
 
     def _render_if_ready(self) -> None:
         # 直近フレームがある場合だけ再描画し、空状態での余計な処理を避ける。
