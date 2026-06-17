@@ -12,6 +12,7 @@ dependencies = [
     "opencv-python-headless>=4.13.0.92",
     "pypylon>=26.4.1",
     "pyside6>=6.10.3",
+    "pyserial>=3.5",
     "python-dotenv>=1.2.2",
     "tifffile>=2026.5.15",
     "tzdata>=2026.2",
@@ -49,9 +50,14 @@ packages = ["rheed_capture"]
 
 [tool.ruff]
 target-version = "py312"
-
 line-length = 100
 
+extend-exclude = ["typings"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
 # チェックするエラー
 select = ["ALL"]
 # 除外するエラー
@@ -63,6 +69,7 @@ ignore = [
     "T20",    # flake8-print
     "D1",     # docstring除外する
     "EXE",    # flake8-executable
+    "D203",
     "D205",
     "D212",
     "D400",
@@ -87,18 +94,15 @@ unfixable = [
     "ERA001", # commented-out-code : コメントアウトしたpythonコードのエラー
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**" = ["PLR2004"]
 "typings/pypylon/**" = ["N80", "ANN401"]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-third-party = ["fastapi", "pydantic", "starlette"]
 
-[tool.ruff.format]
-quote-style = "double"
-
-[tool.ruff.pylint]
+[tool.ruff.lint.pylint]
 max-args = 10
 
 [tool.pytest.ini_options]
