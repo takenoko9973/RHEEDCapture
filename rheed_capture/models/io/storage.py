@@ -51,9 +51,8 @@ class ExperimentStorage:
 
         # 今日の日付の最大のブランチ (yymmdd-n) を探す
         self._branch_number = self._search_max_branch()
-        # そのブランチ内にある最大の連番 (image_nnn) を探す
-        self.refresh_sequence_counter_from_disk()
-        self.refresh_angle_scan_counter_from_disk()
+        # そのブランチ内にある最大の連番を探す
+        self.refresh_capture_counters_from_disk()
 
         exp_dir = self.get_current_experiment_dir()
         logger.info("保存先設定: %s (Next Sequence: %d)", exp_dir, self.get_next_sequence_number())
@@ -82,6 +81,11 @@ class ExperimentStorage:
     def refresh_angle_scan_counter_from_disk(self) -> None:
         """現在ブランチ配下を再スキャンし、角度走査の連番カウンタを同期する。"""
         self._angle_scan_counter = self._search_max_angle_scan()
+
+    def refresh_capture_counters_from_disk(self) -> None:
+        """現在ブランチ配下を再スキャンし、通常/角度走査の連番を同期する。"""
+        self.refresh_sequence_counter_from_disk()
+        self.refresh_angle_scan_counter_from_disk()
 
     def get_next_sequence_dir_name(self) -> str:
         """次回撮影時に作成されるシーケンスディレクトリ名を返す。"""
@@ -145,7 +149,7 @@ class ExperimentStorage:
         """ここで初めてフォルダを作成する (Lazy Creation)"""
         # 外部でフォルダ削除・追加が行われる運用に追従するため、
         # 毎回ディスク上の最新状態を再スキャンしてから次番号を確定する。
-        self.refresh_sequence_counter_from_disk()
+        self.refresh_capture_counters_from_disk()
 
         self.root_dir.mkdir(parents=True, exist_ok=True)
         exp_dir = self.get_current_experiment_dir()
@@ -173,7 +177,7 @@ class ExperimentStorage:
 
     def start_new_angle_scan(self, scan_document: AngleScanDocument) -> tuple[str, Path]:
         """角度走査用フォルダを作成し、scan.jsonを保存する。"""
-        self.refresh_angle_scan_counter_from_disk()
+        self.refresh_capture_counters_from_disk()
 
         self.root_dir.mkdir(parents=True, exist_ok=True)
         exp_dir = self.get_current_experiment_dir()
