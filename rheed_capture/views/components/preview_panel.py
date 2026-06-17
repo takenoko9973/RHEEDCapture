@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from rheed_capture.models.io.settings import PreviewGridSettings
 from rheed_capture.utils import round_sig_figs
 from rheed_capture.views.grid_spec import (
     DEFAULT_GRID_SHAPE,
@@ -229,13 +230,13 @@ class PreviewPanel(QGroupBox):
             [format_grid_shape(rows, cols) for rows, cols in self._grid_shape_options]
         )
 
-    def get_grid_settings_to_save(self) -> dict:
+    def get_grid_settings_to_save(self) -> PreviewGridSettings:
         rows, cols = parse_grid_shape(self.cmb_grid_shape.currentText())
-        return {
-            "show_preview_grid": self.chk_show_grid.isChecked(),
-            "preview_grid_rows": rows,
-            "preview_grid_cols": cols,
-        }
+        return PreviewGridSettings(
+            show_grid=self.chk_show_grid.isChecked(),
+            rows=rows,
+            cols=cols,
+        )
 
     def apply_grid_settings(self, enabled: bool, rows: int, cols: int) -> None:
         # 保存値が候補外でも UI で選択できるよう、候補に動的追加してから適用する。

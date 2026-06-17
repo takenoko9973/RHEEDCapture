@@ -2,8 +2,11 @@ import numpy as np
 from PySide6.QtGui import QColor
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.models.hardware.motor_defaults import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.views.components.angle_scan_panel import AngleScanPanel
 from rheed_capture.views.components.histogram_viewer import HistogramPanel
 from rheed_capture.views.components.image_viewer import ImageViewer
+from rheed_capture.views.components.motor_settings_panel import MotorSettingsPanel
 from rheed_capture.views.components.preview_panel import PreviewPanel
 from rheed_capture.views.components.sequence_panel import SequencePanel
 from rheed_capture.views.preview_background import (
@@ -71,6 +74,43 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
     assert len(blocker.args) == 0
 
 
+def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
+    panel = AngleScanPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.spin_interval_deg.minimum() == 0.5
+    assert panel.spin_interval_deg.singleStep() == 0.5
+    assert panel.spin_range_deg.minimum() == 0.5
+    assert panel.spin_range_deg.maximum() == 90.0
+    assert panel.spin_motor_speed_rpm.value() == DEFAULT_MOTOR_SPEED_RPM
+    assert panel.chk_return_to_start.text() == "Return to Start"
+    assert panel.btn_direction_positive.text() == "+"
+    assert panel.btn_direction_negative.text() == "-"
+    assert panel.btn_direction_both.text() == "±"
+    assert panel.btn_direction_both.isChecked() is True
+
+
+def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:
+    panel = AngleScanPanel()
+    qtbot.addWidget(panel)
+
+    panel.update_progress(2, 5, -0.5)
+
+    assert panel.progress_bar.value() == 2
+    assert panel.progress_bar.maximum() == 5
+    assert panel.progress_bar.format() == "2/5"
+    assert panel.lbl_progress_status.text() == "Angle: -0.5 deg"
+
+
+def test_motor_settings_panel_exposes_position_units_per_deg(qtbot: QtBot) -> None:
+    panel = MotorSettingsPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.spin_position_units_per_deg.value() == 31.25
+    assert panel.spin_position_units_per_deg.minimum() > 0
+    assert panel.spin_position_units_per_deg.decimals() == 4
+
+
 def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:
     panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
     qtbot.addWidget(panel)
@@ -101,8 +141,9 @@ def test_preview_panel_accepts_non_square_grid_shape(qtbot: QtBot) -> None:
     panel.apply_grid_settings(True, 2, 4)
 
     assert panel.cmb_grid_shape.currentText() == "2x4"
-    assert panel.get_grid_settings_to_save()["preview_grid_rows"] == 2
-    assert panel.get_grid_settings_to_save()["preview_grid_cols"] == 4
+    grid_settings = panel.get_grid_settings_to_save()
+    assert grid_settings.rows == 2
+    assert grid_settings.cols == 4
 
 
 def test_preview_panel_exposure_arrow_step_tracks_current_digits(qtbot: QtBot) -> None:

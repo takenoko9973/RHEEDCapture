@@ -3,6 +3,8 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
+from rheed_capture.models.io.settings import StorageSettings
+
 
 class StoragePanel(QGroupBox):
     browse_requested = Signal()
@@ -53,5 +55,5 @@ class StoragePanel(QGroupBox):
 
         self.lbl_target_dir.setText(f"Target: {target_dir_name}")
 
-    def get_values(self) -> dict:
-        return {"root_dir": self.edit_root_dir.text()}
+    def get_settings_to_save(self) -> StorageSettings:
+        return StorageSettings(root_dir=self.edit_root_dir.text())

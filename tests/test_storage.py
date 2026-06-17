@@ -6,6 +6,11 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import tifffile
 
+from rheed_capture.models.io.scan_document import (
+    AngleScanDocument,
+    AngleScanDocumentSettings,
+    CaptureCondition,
+)
 from rheed_capture.models.io.storage import ExperimentStorage, TiffWriter
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -109,3 +114,63 @@ def test_manual_branch_increment() -> None:
 
         storage.increment_branch()
         assert storage.get_current_experiment_dir().name == f"{date_str}-2"
+
+
+def test_angle_scan_storage_uses_independent_counter_and_spec_names() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(temp_dir)
+        data = np.zeros((10, 10), dtype=np.uint16)
+        scan_document = AngleScanDocument(
+            schema_version=1,
+            scan_id="",
+            created_at="",
+            angle_scan=AngleScanDocumentSettings(
+                coordinate="relative",
+                reference="current_position_at_scan_start",
+                range_deg=0.5,
+                interval_deg=0.5,
+                direction="positive",
+                position_units_per_deg=31.25,
+                capture_angles_deg=[0.0, 0.5],
+                wait_after_move_ms=0,
+                motor_speed_rpm=4.0,
+                return_to_start=False,
+            ),
+            capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=0)],
+        )
+
+        storage.start_new_sequence()
+        scan_id, scan_dir = storage.start_new_angle_scan(scan_document)
+
+        assert storage.get_current_sequence_dir().name == "image_001"
+        assert scan_id == "as001"
+        assert scan_dir.name == "angle_scan_001"
+        assert (scan_dir / "scan.json").exists()
+
+        saved_path = storage.save_angle_scan_frame(
+            data,
+            scan_id=scan_id,
+            target_angle_deg=0.5,
+            exposure_ms=10.0,
+            gain=0,
+            metadata={"capture_mode": "angle_scan"},
+        )
+
+        assert saved_path.parent.name == "angle+000.5"
+        assert saved_path.name == "as001_angle+000.5_exp10_gain0.tiff"
+        with (scan_dir / "scan.json").open(encoding="utf-8") as f:
+            saved_scan = json.load(f)
+        assert saved_scan["scan_id"] == "as001"
+
+
+def test_angle_scan_counter_uses_max_suffix_without_reuse() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(temp_dir)
+        exp_dir = storage.get_current_experiment_dir()
+        exp_dir.mkdir(parents=True)
+        (exp_dir / "angle_scan_001").mkdir()
+        (exp_dir / "angle_scan_004").mkdir()
+
+        storage.refresh_angle_scan_counter_from_disk()
+
+        assert storage.get_next_angle_scan_dir_name() == "angle_scan_005"
