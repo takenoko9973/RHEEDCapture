@@ -9,6 +9,7 @@ from pypylon import pylon
 from PySide6.QtCore import QObject, QThread, Signal
 
 from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.models.io.frame_metadata import SequenceFrameMetadata
 from rheed_capture.models.io.storage import ExperimentStorage
 
 logger = logging.getLogger(__name__)
@@ -129,16 +130,12 @@ class CaptureService(QThread):
         if raw_data is None:
             self._raise_grab_none_error()
 
-        # メタデータ作成と保存
-        metadata = {
-            "exposure_ms": expo_ms,
-            "gain": gain,
-            "timestamp": datetime.now(JST).isoformat(),
-            "bit_depth_sensor": 12,
-            "bit_depth_saved": 16,
-            "alignment": "MsbAligned",
-        }
-        self.storage.save_frame(raw_data, expo_ms, gain, metadata)
+        metadata = SequenceFrameMetadata(
+            exposure_ms=expo_ms,
+            gain=gain,
+            timestamp=datetime.now(JST).isoformat(),
+        )
+        self.storage.save_frame(raw_data, expo_ms, gain, metadata.to_dict())
 
     def _raise_grab_none_error(self) -> Never:
         """None取得時の例外送出"""

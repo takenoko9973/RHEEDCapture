@@ -2,6 +2,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 
 from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.models.io.settings import PreviewSettings
 from rheed_capture.services.preview_worker import PreviewWorker
 
 
@@ -36,19 +37,19 @@ class PreviewViewModel(QObject):
         self._gain = 0
         self._clahe_enabled = False
 
-    def load_settings(self, settings: dict) -> None:
+    def load_settings(self, settings: PreviewSettings) -> None:
         """設定ファイルから状態を復元し、システムに適用する"""
-        self.set_exposure(settings.get("preview_expo", 50.0))
-        self.set_gain(settings.get("preview_gain", 0))
-        self.set_clahe_enabled(settings.get("enable_clahe", False))
+        self.set_exposure(settings.exposure_ms)
+        self.set_gain(settings.gain)
+        self.set_clahe_enabled(settings.enable_clahe)
 
-    def get_settings_to_save(self) -> dict:
-        """保存用の設定辞書を生成する"""
-        return {
-            "preview_expo": self._exposure,
-            "preview_gain": self._gain,
-            "enable_clahe": self._clahe_enabled,
-        }
+    def get_settings_to_save(self) -> PreviewSettings:
+        """保存用のプレビュー設定を生成する"""
+        return PreviewSettings(
+            exposure_ms=self._exposure,
+            gain=self._gain,
+            enable_clahe=self._clahe_enabled,
+        )
 
     def start_preview(self) -> None:
         """プレビュー開始"""
@@ -57,7 +58,9 @@ class PreviewViewModel(QObject):
     def stop_preview(self) -> None:
         """プレビュー停止 (終了処理)"""
         self._worker.stop()
-        self._worker.wait(2000)
+        if not self._worker.wait(2000):
+            self._worker.terminate()
+            self._worker.wait(1000)
 
     def pause_preview(self) -> None:
         """シーケンス撮影開始などのため、プレビューを一時停止する"""

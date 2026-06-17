@@ -1,6 +1,7 @@
 from PySide6.QtCore import QObject, Signal, Slot
 
 from rheed_capture.models.hardware.camera_device import CameraDevice
+from rheed_capture.models.io.settings import SequenceCaptureSettings
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.services.capture_service import CaptureService
 from rheed_capture.utils import parse_numbers
@@ -28,17 +29,17 @@ class CaptureViewModel(QObject):
 
     # ====== 設定のロード・セーブ ======
 
-    def load_settings(self, settings: dict) -> None:
-        # JSONファイルから直接リストとして読み込む
-        self._update_expo_state(settings.get("seq_expo_list", [10.0, 50.0, 100.0]))
-        self._update_gain_state(settings.get("seq_gain_list", [0]))
+    def load_settings(self, settings: SequenceCaptureSettings) -> None:
+        # 通常シーケンス撮影の設定だけを型付きオブジェクトから読む。
+        self._update_expo_state(settings.exposure_ms_list)
+        self._update_gain_state(settings.gain_list)
 
-    def get_settings_to_save(self) -> dict:
-        # リストのまま保存する
-        return {
-            "seq_expo_list": self._expo_list,
-            "seq_gain_list": self._gain_list,
-        }
+    def get_settings_to_save(self) -> SequenceCaptureSettings:
+        # JSONキーはAppSettingsData側で管理するため、ここでは意味のある値だけ返す。
+        return SequenceCaptureSettings(
+            exposure_ms_list=self._expo_list,
+            gain_list=self._gain_list,
+        )
 
     # ====== 入力バリデーションと状態の更新 ======
 
