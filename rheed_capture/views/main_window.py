@@ -244,11 +244,11 @@ class MainWindow(QMainWindow):
         self._sequence_preview_timer.timeout.connect(self._on_sequence_preview_timer)
         self._sequence_preview_timer.start()
 
-    def _update_storage_display(self, *, refresh_sequence: bool = True) -> None:
+    def _update_storage_display(self, *, refresh_counters: bool = True) -> None:
         # set_root_dir()直後のように既に再スキャン済みの場面では、
-        # 不要なディスク走査を避けるため refresh_sequence=False を使う。
-        if refresh_sequence:
-            self.storage.refresh_sequence_counter_from_disk()
+        # 不要なディスク走査を避けるため refresh_counters=False を使う。
+        if refresh_counters:
+            self.storage.refresh_capture_counters_from_disk()
 
         self.storage_panel.update_displays(
             str(self.storage.root_dir), self.storage.get_current_experiment_dir().name
@@ -273,12 +273,12 @@ class MainWindow(QMainWindow):
         )
         if dir_path:
             self.storage.set_root_dir(dir_path)
-            self._update_storage_display(refresh_sequence=False)
+            self._update_storage_display(refresh_counters=False)
 
     @Slot()
     def _on_new_branch(self) -> None:
         self.storage.increment_branch()
-        self._update_storage_display(refresh_sequence=False)
+        self._update_storage_display(refresh_counters=False)
 
         new_name = self.storage_panel.lbl_target_dir.text()
         QMessageBox.information(
@@ -354,7 +354,7 @@ class MainWindow(QMainWindow):
 
         if settings.root_dir:
             self.storage.set_root_dir(settings.root_dir)
-            self._update_storage_display(refresh_sequence=False)
+            self._update_storage_display(refresh_counters=False)
 
         self.preview_vm.load_settings(settings.preview)
         self.capture_vm.load_settings(settings.sequence_capture)

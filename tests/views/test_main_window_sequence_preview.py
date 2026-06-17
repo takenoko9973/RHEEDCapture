@@ -81,12 +81,12 @@ def test_sequence_preview_timer_skips_refresh_while_capturing(
     qtbot.addWidget(window)
     window._sequence_preview_timer.stop()  # noqa: SLF001
 
-    before = mock_storage.refresh_sequence_counter_from_disk.call_count
+    before = mock_storage.refresh_capture_counters_from_disk.call_count
     with patch.object(window.capture_vm, "is_running", return_value=True):
         window._on_sequence_preview_timer()  # noqa: SLF001
-    assert mock_storage.refresh_sequence_counter_from_disk.call_count == before
+    assert mock_storage.refresh_capture_counters_from_disk.call_count == before
 
     with patch.object(window.capture_vm, "is_running", return_value=False):
         window._on_sequence_preview_timer()  # noqa: SLF001
-    assert mock_storage.refresh_sequence_counter_from_disk.call_count == before + 1
+    assert mock_storage.refresh_capture_counters_from_disk.call_count == before + 1
     window.close()
