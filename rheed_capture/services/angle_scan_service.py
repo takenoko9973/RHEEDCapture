@@ -166,8 +166,8 @@ class AngleScanService(QThread):
 
     def _capture_at_move(self, move: AngleMove, shot_count: int) -> int:
         """1つの撮影角度で、露光時間とゲインの全組み合わせを撮影する。"""
-        self._pause_preview_before_capture()
         self._wait_settling()
+        self._pause_preview_before_capture()
 
         for expo_ms, gain in self.conditions:
             self._check_cancelled()

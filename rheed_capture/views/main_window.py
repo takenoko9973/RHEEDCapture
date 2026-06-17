@@ -326,10 +326,7 @@ class MainWindow(QMainWindow):
         self.preview_panel.set_controls_enabled(False)
         self._sequence_preview_timer.stop()
 
-        self.preview_vm.preview_paused.connect(
-            self.angle_scan_vm.start_angle_scan, Qt.ConnectionType.SingleShotConnection
-        )
-        self.preview_vm.pause_preview()
+        self.angle_scan_vm.start_angle_scan()
 
     @Slot(bool, str)
     def _on_angle_scan_finished(self, success: bool, saved_dir_name: str) -> None:

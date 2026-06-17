@@ -9,6 +9,7 @@ from pytestqt.qtbot import QtBot
 from rheed_capture.models.hardware.camera_device import CameraDevice
 from rheed_capture.models.io.storage import ExperimentStorage
 from rheed_capture.services.angle_scan_plan import (
+    AngleMove,
     angle_to_position_units,
     build_angle_list,
     build_motion_unit_deltas,
@@ -197,6 +198,39 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
         -angle_to_position_units(0.5),
     ]
     assert mock_camera.grab_one.call_count == 2
+
+
+def test_angle_scan_service_waits_before_pausing_preview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mock_camera: MagicMock
+) -> None:
+    storage = ExperimentStorage(tmp_path)
+    service = AngleScanService(
+        mock_camera,
+        storage,
+        MagicMock(),
+        [10.0],
+        [0],
+        AngleScanSettings(
+            range_deg=0.5,
+            interval_deg=0.5,
+            direction="positive",
+            settling_time_ms=100,
+            return_to_start_after_scan=False,
+            motor_speed_rpm=4.0,
+        ),
+    )
+    events: list[str] = []
+
+    def capture_stub(*_args: object) -> None:
+        events.append("capture")
+
+    monkeypatch.setattr(service, "_wait_settling", lambda: events.append("settle"))
+    monkeypatch.setattr(service, "_pause_preview_before_capture", lambda: events.append("pause"))
+    monkeypatch.setattr(service, "_capture_with_retry", capture_stub)
+
+    service._capture_at_move(AngleMove(0.0, 0, 0, True), 0)  # noqa: SLF001
+
+    assert events == ["settle", "pause", "capture"]
 
 
 @pytest.mark.parametrize(

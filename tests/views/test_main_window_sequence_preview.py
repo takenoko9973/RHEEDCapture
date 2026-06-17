@@ -90,3 +90,21 @@ def test_sequence_preview_timer_skips_refresh_while_capturing(
         window._on_sequence_preview_timer()  # noqa: SLF001
     assert mock_storage.refresh_capture_counters_from_disk.call_count == before + 1
     window.close()
+
+
+def test_start_angle_scan_does_not_pause_preview_before_service_start(
+    qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock
+) -> None:
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    window._sequence_preview_timer.stop()  # noqa: SLF001
+
+    with (
+        patch.object(window.preview_vm, "pause_preview") as pause_preview,
+        patch.object(window.angle_scan_vm, "start_angle_scan") as start_angle_scan,
+    ):
+        window._on_start_angle_scan_requested()  # noqa: SLF001
+
+    pause_preview.assert_not_called()
+    start_angle_scan.assert_called_once_with()
+    window.close()
