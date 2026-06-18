@@ -2,13 +2,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from rheed_capture.models.hardware.azd_cd.adapter import AzdCdAdapter
-from rheed_capture.models.hardware.azd_cd.driver import AzdCdConfig, AzdCdStatus
-from rheed_capture.models.hardware.azd_cd.protocol import (
+from rheed_capture.infrastructure.motor.azd_cd.adapter import AzdCdAdapter
+from rheed_capture.infrastructure.motor.azd_cd.driver import AzdCdConfig, AzdCdStatus
+from rheed_capture.infrastructure.motor.azd_cd.protocol import (
     OP_RELATIVE_POSITIONING,
     STATUS_MOVE,
 )
-from rheed_capture.models.hardware.motor_defaults import (
+from rheed_capture.infrastructure.motor.defaults import (
     motor_rpm_to_speed_units,
     motor_speed_units_per_rpm,
 )
@@ -44,7 +44,7 @@ def test_adapter_converts_rpm_before_sending_speed_to_driver() -> None:
     driver_factory.return_value.__enter__.return_value = driver
 
     with patch(
-        "rheed_capture.models.hardware.azd_cd.adapter.AzdCdDriver",
+        "rheed_capture.infrastructure.motor.azd_cd.adapter.AzdCdDriver",
         driver_factory,
     ):
         adapter = AzdCdAdapter(

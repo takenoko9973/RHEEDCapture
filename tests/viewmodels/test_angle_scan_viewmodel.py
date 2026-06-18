@@ -2,14 +2,13 @@ from unittest.mock import MagicMock, patch
 
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.models.hardware.rotation_motor import MotorConnectionConfig
-from rheed_capture.models.io.settings import (
+from rheed_capture.infrastructure.config.schema import (
     AngleScanCaptureSettings,
     AppSettingsData,
     DeviceSettings,
     MotorDeviceSettings,
 )
-from rheed_capture.viewmodels.angle_scan_viewmodel import AngleScanViewModel
+from rheed_capture.presentation.qt.viewmodels.angle_scan import AngleScanViewModel
 
 
 class _FakeSignal:
@@ -19,6 +18,7 @@ class _FakeSignal:
 
 class _FakeAngleScanService:
     progress_update = _FakeSignal()
+    frame_captured = _FakeSignal()
     scan_finished = _FakeSignal()
     error_occurred = _FakeSignal()
     preview_resume_requested = _FakeSignal()
@@ -41,7 +41,8 @@ def test_angle_scan_viewmodel_passes_device_conversion_to_motor_config(
     # QApplicationを用意するためにqtbot fixtureを受け取る。
     _ = qtbot
 
-    view_model = AngleScanViewModel(MagicMock(), MagicMock())
+    motor_factory = MagicMock(return_value=MagicMock())
+    view_model = AngleScanViewModel(MagicMock(), MagicMock(), motor_factory=motor_factory)
     view_model.load_settings(
         AppSettingsData(
             angle_scan=AngleScanCaptureSettings(motor_speed_rpm=4.0),
@@ -57,17 +58,10 @@ def test_angle_scan_viewmodel_passes_device_conversion_to_motor_config(
 
     with (
         patch(
-            "rheed_capture.viewmodels.angle_scan_viewmodel.AzdCdRotationMotor"
-        ) as mock_motor,
-        patch(
-            "rheed_capture.viewmodels.angle_scan_viewmodel.AngleScanService",
+            "rheed_capture.presentation.qt.viewmodels.angle_scan.AngleScanService",
             _FakeAngleScanService,
         ),
     ):
         view_model.start_angle_scan()
 
-    motor_config = mock_motor.call_args.args[0]
-    assert isinstance(motor_config, MotorConnectionConfig)
-    assert motor_config.port == "COM8"
-    assert motor_config.slave == 3
-    assert motor_config.position_units_per_deg == 40.0
+    motor_factory.assert_called_once_with("COM8", 3, 40.0)

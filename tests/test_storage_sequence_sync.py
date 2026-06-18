@@ -5,12 +5,12 @@ from uuid import uuid4
 
 import pytest
 
-from rheed_capture.models.io.scan_document import (
+from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
     CaptureCondition,
 )
-from rheed_capture.models.io.storage import ExperimentStorage
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
 
 @pytest.fixture

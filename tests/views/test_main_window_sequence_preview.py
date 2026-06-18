@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.settings import (
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import (
     AppSettingsData,
     PreviewSettings,
     SequenceCaptureSettings,
 )
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.views.main_window import MainWindow
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.main_window import MainWindow
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def mock_storage() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def mock_settings() -> types.GeneratorType:
-    with patch("rheed_capture.views.main_window.AppSettings") as mock_app_settings:
+    with patch("rheed_capture.presentation.qt.main_window.AppSettings") as mock_app_settings:
         mock_app_settings.load.return_value = AppSettingsData(
             root_dir="dummy/root",
             preview=PreviewSettings(exposure_ms=15.5, gain=2, enable_clahe=True),
@@ -82,13 +82,14 @@ def test_sequence_preview_timer_skips_refresh_while_capturing(
     window._sequence_preview_timer.stop()  # noqa: SLF001
 
     before = mock_storage.refresh_capture_counters_from_disk.call_count
-    with patch.object(window.capture_vm, "is_running", return_value=True):
-        window._on_sequence_preview_timer()  # noqa: SLF001
+    window.capture_coordinator.enter("sequence")
+    window._on_sequence_preview_timer()  # noqa: SLF001
     assert mock_storage.refresh_capture_counters_from_disk.call_count == before
 
+    window.capture_coordinator.leave()
     with patch.object(window.capture_vm, "is_running", return_value=False):
         window._on_sequence_preview_timer()  # noqa: SLF001
-    assert mock_storage.refresh_capture_counters_from_disk.call_count == before + 1
+    assert mock_storage.refresh_capture_counters_from_disk.call_count == before + 2
     window.close()
 
 
@@ -107,4 +108,5 @@ def test_start_angle_scan_does_not_pause_preview_before_service_start(
 
     pause_preview.assert_not_called()
     start_angle_scan.assert_called_once_with()
+    window.capture_coordinator.leave()
     window.close()

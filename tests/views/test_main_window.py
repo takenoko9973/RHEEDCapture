@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.settings import (
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import (
     AngleScanCaptureSettings,
     AppSettingsData,
     DeviceSettings,
@@ -15,8 +15,8 @@ from rheed_capture.models.io.settings import (
     PreviewSettings,
     SequenceCaptureSettings,
 )
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.views.main_window import MainWindow
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.main_window import MainWindow
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def mock_storage() -> MagicMock:
 
 @pytest.fixture(autouse=True)
 def mock_settings() -> types.GeneratorType:
-    with patch("rheed_capture.views.main_window.AppSettings") as mock_app_settings:
+    with patch("rheed_capture.presentation.qt.main_window.AppSettings") as mock_app_settings:
         mock_app_settings.load.return_value = AppSettingsData(
             root_dir="dummy/root",
             preview=PreviewSettings(
@@ -109,7 +109,7 @@ def test_main_window_initialization(
 def test_branch_update_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
-    with patch("rheed_capture.views.main_window.QMessageBox.information") as mock_msg:
+    with patch("rheed_capture.presentation.qt.main_window.QMessageBox.information") as mock_msg:
         window._on_new_branch()  # noqa: SLF001
         mock_storage.increment_branch.assert_called_once()
         mock_msg.assert_called_once()

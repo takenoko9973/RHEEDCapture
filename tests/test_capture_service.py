@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.services.capture_service import CaptureService
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.workers.capture_service import CaptureService
 
 
 @pytest.fixture
@@ -21,7 +21,9 @@ def mock_camera() -> MagicMock:
 @pytest.fixture
 def mock_storage() -> MagicMock:
     """ストレージ管理のモックフィクスチャ"""
-    return MagicMock(spec=ExperimentStorage)
+    storage = MagicMock(spec=ExperimentStorage)
+    storage.start_sequence_session.return_value.dir_name = "image_001"
+    return storage
 
 
 def test_successful_capture_sequence(
@@ -40,10 +42,10 @@ def test_successful_capture_sequence(
     assert blocker.args[0] is True, "成功シグナルがTrueであること"
 
     # 呼び出し回数の検証
-    mock_storage.start_new_sequence.assert_called_once()  # シーケンス開始シグナル
+    mock_storage.start_sequence_session.assert_called_once()
 
     assert mock_camera.grab_one.call_count == 4  # 2条件 * 2条件
-    assert mock_storage.save_frame.call_count == 4  # 保存が4回呼ばれたか
+    assert mock_storage.start_sequence_session.return_value.save_frame.call_count == 4
 
 
 def test_capture_retry_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:
@@ -63,4 +65,4 @@ def test_capture_retry_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage:
     assert blocker.args[0] is False, "失敗シグナルがFalseであること"
 
     assert mock_camera.grab_one.call_count == 3  # 最大3回リトライ
-    mock_storage.save_frame.assert_not_called()  # 保存は呼ばれない
+    mock_storage.start_sequence_session.return_value.save_frame.assert_not_called()
