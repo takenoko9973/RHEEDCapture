@@ -9,7 +9,7 @@ from rheed_capture.utils import parse_numbers
 
 class CaptureViewModel(QObject):
     # View (UI) に公開するパススルー用シグナル
-    progress_updated = Signal(int, int)  # (現在の枚数, 全体の枚数)
+    progress_updated = Signal(int, int, float, int)  # current, total, exposure_ms, gain
     frame_captured = Signal(object)
     sequence_finished = Signal(bool, str)  # (成功フラグ, 保存先ディレクトリ名)
     error_occurred = Signal(str)

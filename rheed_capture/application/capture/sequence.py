@@ -10,7 +10,7 @@ from rheed_capture.domain.capture_condition import CaptureCondition
 if TYPE_CHECKING:
     from rheed_capture.application.capture.cancellation import CancellationToken
     from rheed_capture.application.ports.storage import SequenceSession
-ProgressCallback = Callable[[int, int], None]
+ProgressCallback = Callable[[int, int, CaptureCondition], None]
 FrameCallback = Callable[[CapturedFrame], None]
 
 
@@ -48,7 +48,7 @@ class SequenceCapture:
             cancellation_token.raise_if_cancelled()
 
             if on_progress is not None:
-                on_progress(shot_count, self.total_shots)
+                on_progress(shot_count, self.total_shots, condition)
 
             captured_frame = self.frame_capturer.capture(condition)
             self.session.save_frame(captured_frame)

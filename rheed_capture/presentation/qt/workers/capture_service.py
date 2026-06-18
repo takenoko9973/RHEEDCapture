@@ -14,6 +14,7 @@ from rheed_capture.presentation.qt.workers.capture_worker import CaptureWorker
 
 if TYPE_CHECKING:
     from rheed_capture.application.capture.cancellation import CancellationToken
+    from rheed_capture.domain.capture_condition import CaptureCondition
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
     from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class CaptureService(CaptureWorker):
-    progress_update = Signal(int, int)
+    progress_update = Signal(int, int, float, int)
     sequence_finished = Signal(bool, str)
 
     def __init__(
@@ -50,9 +51,22 @@ class CaptureService(CaptureWorker):
             self._exposure_list,
             self._gain_list,
         )
+
+        def emit_progress(
+            current: int,
+            total: int,
+            condition: CaptureCondition,
+        ) -> None:
+            self.progress_update.emit(
+                current,
+                total,
+                condition.exposure_ms,
+                condition.gain,
+            )
+
         capture.run(
             cancellation_token,
-            on_progress=self.progress_update.emit,
+            on_progress=emit_progress,
             on_frame_captured=self.frame_captured.emit,
         )
 

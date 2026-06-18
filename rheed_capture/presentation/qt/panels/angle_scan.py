@@ -22,6 +22,7 @@ from rheed_capture.infrastructure.config.defaults import (
     DEFAULT_EXPOSURE_MS_VALUES,
     DEFAULT_GAIN_VALUES,
 )
+from rheed_capture.presentation.qt.widgets.capture_controls import configure_capture_buttons
 
 
 class AngleScanPanel(QGroupBox):
@@ -88,7 +89,7 @@ class AngleScanPanel(QGroupBox):
         self.lbl_next_angle_scan_preview = QLabel("angle_scan_001")
         self.btn_start = QPushButton("Start Angle Scan")
         self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setEnabled(False)
+        configure_capture_buttons(self.btn_start, self.btn_cancel)
         self.lbl_progress_status = QLabel("Angle: -")
         self.lbl_progress_status.setMinimumWidth(90)
         self.progress_bar = QProgressBar()
@@ -124,13 +125,12 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(QLabel("Gains:"), 5, 0)
         layout.addWidget(self.edit_gain, 5, 1, 1, 3)
         layout.addWidget(QLabel("Next:"), 6, 0)
-        layout.addWidget(self.lbl_next_angle_scan_preview, 6, 1)
-        layout.addWidget(self.btn_start, 6, 2)
-        layout.addWidget(self.btn_cancel, 6, 3)
-        layout.addWidget(self.progress_bar, 7, 0, 1, 3)
+        layout.addWidget(self.lbl_next_angle_scan_preview, 6, 1, 1, 3)
+        layout.addWidget(self._create_capture_button_widget(), 7, 0, 1, 4)
+        layout.addWidget(self.progress_bar, 8, 0, 1, 3)
         layout.addWidget(
             self.lbl_progress_status,
-            7,
+            8,
             3,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
         )
@@ -180,6 +180,15 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(self.btn_direction_negative)
         layout.addWidget(self.btn_direction_both)
         layout.addStretch(1)
+        return widget
+
+    def _create_capture_button_widget(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addStretch(1)
+        layout.addWidget(self.btn_start)
+        layout.addWidget(self.btn_cancel)
         return widget
 
     def _emit_direction_from_id(self, button_id: int) -> None:

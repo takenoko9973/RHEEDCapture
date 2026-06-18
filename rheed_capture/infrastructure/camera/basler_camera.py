@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 
 import numpy as np
@@ -15,6 +16,7 @@ class BaslerCamera:
 
     def __init__(self) -> None:
         self._camera = None
+        self._lock = threading.RLock()
 
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputPixelFormat = pylon.PixelType_Mono16
@@ -51,10 +53,11 @@ class BaslerCamera:
             raise CameraError(msg) from e
 
     def disconnect(self) -> None:
-        if self.is_connected():
-            self.stop_grabbing()
-            self.camera.Close()
-            self._camera = None
+        with self._lock:
+            if self.is_connected():
+                self.stop_grabbing()
+                self.camera.Close()
+                self._camera = None
 
     def is_connected(self) -> bool:
         return self._camera is not None and self._camera.IsOpen()
@@ -100,66 +103,86 @@ class BaslerCamera:
         return (min_gain, max_gain)
 
     def set_exposure(self, exposure_ms: float) -> None:
-        exposure_us = exposure_ms * 1000.0
-        self.camera.ExposureTimeAbs.SetValue(exposure_us)
+        with self._lock:
+            exposure_us = exposure_ms * 1000.0
+            self.camera.ExposureTimeAbs.SetValue(exposure_us)
 
     def get_exposure(self) -> float:
-        exposure_us = self.camera.ExposureTimeAbs.GetValue()
-        return exposure_us / 1000.0
+        with self._lock:
+            exposure_us = self.camera.ExposureTimeAbs.GetValue()
+            return exposure_us / 1000.0
 
     def set_gain(self, gain: int) -> None:
-        self.camera.GainRaw.SetValue(gain)
+        with self._lock:
+            self.camera.GainRaw.SetValue(gain)
 
     def get_gain(self) -> float:
-        return self.camera.GainRaw.GetValue()
+        with self._lock:
+            return self.camera.GainRaw.GetValue()
 
     def start_preview_grab(self) -> None:
-        if self.is_connected() and not self.camera.IsGrabbing():
-            self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
-            time.sleep(0.1)
+        with self._lock:
+            if self.is_connected() and not self.camera.IsGrabbing():
+                self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+                time.sleep(0.1)
 
     def stop_grabbing(self) -> None:
-        if self.is_connected() and self.camera.IsGrabbing():
-            self.camera.StopGrabbing()
+        with self._lock:
+            if self.is_connected() and self.camera.IsGrabbing():
+                self.camera.StopGrabbing()
 
     def grab_one(self, timeout_ms: int) -> np.ndarray | None:
-        if not self.is_connected():
-            msg = "カメラが接続されていません。"
-            raise CameraError(msg)
+        with self._lock:
+            if not self.is_connected():
+                msg = "カメラが接続されていません。"
+                raise CameraError(msg)
 
-        if self.camera.IsGrabbing():
-            msg = "現在プレビュー実行中です。StopGrabbingを呼び出してください。"
-            raise RuntimeError(msg)
+            if self.camera.IsGrabbing():
+                msg = "現在プレビュー実行中です。StopGrabbingを呼び出してください。"
+                raise RuntimeError(msg)
 
-        try:
-            with self.camera.GrabOne(timeout_ms) as result:
-                if result.GrabSucceeded():
-                    image = self.converter.Convert(result)
-                    return image.GetArray()
+            try:
+                with self.camera.GrabOne(timeout_ms) as result:
+                    if result.GrabSucceeded():
+                        image = self.converter.Convert(result)
+                        return image.GetArray()
 
-                return None
+                    return None
 
-        except pylon.GenericException as e:
-            logger.exception("画像の取得中にエラーが発生しました")
-            msg = f"カメラ画像の取得に失敗しました: {e}"
-            raise CameraError(msg) from e
+            except pylon.GenericException as e:
+                logger.exception("画像の取得中にエラーが発生しました")
+                msg = f"カメラ画像の取得に失敗しました: {e}"
+                raise CameraError(msg) from e
+
+    def _is_valid_grab_result(self, result: object) -> bool:
+        is_valid = getattr(result, "IsValid", None)
+        if callable(is_valid):
+            return bool(is_valid())
+        return result is not None
 
     def retrieve_preview_frame(self, timeout_ms: int = 1000) -> np.ndarray | None:
-        if not self.is_connected() or not self.camera.IsGrabbing():
-            return None
-
-        try:
-            with self.camera.RetrieveResult(timeout_ms, pylon.TimeoutHandling_Return) as result:
-                if result.GrabSucceeded():
-                    image = self.converter.Convert(result)
-                    return image.GetArray()
-
+        with self._lock:
+            if not self.is_connected() or not self.camera.IsGrabbing():
                 return None
 
-        except pylon.GenericException as e:
-            logger.exception("プレビュー画像の取得中にエラーが発生しました")
-            msg = f"プレビュー画像の取得に失敗しました: {e}"
-            raise CameraError(msg) from e
+            try:
+                with self.camera.RetrieveResult(
+                    timeout_ms,
+                    pylon.TimeoutHandling_Return,
+                ) as result:
+                    if not self._is_valid_grab_result(result):
+                        return None
+
+                    if result.GrabSucceeded():
+                        image = self.converter.Convert(result)
+                        return image.GetArray()
+
+                    return None
+
+            except pylon.GenericException as e:
+                logger.exception("プレビュー画像の取得中にエラーが発生しました")
+                msg = f"プレビュー画像の取得に失敗しました: {e}"
+                raise CameraError(msg) from e
 
 
 CameraDevice = BaslerCamera
