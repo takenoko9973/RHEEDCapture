@@ -1,5 +1,6 @@
 import numpy as np
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QFrame
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
@@ -72,6 +73,8 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
         panel.btn_start.click()
 
     assert len(blocker.args) == 0
+    assert panel.lbl_next_sequence_preview.frameShape() != QFrame.Shape.NoFrame
+    assert panel.lbl_next_sequence_preview.minimumWidth() >= 120
 
 
 def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
@@ -88,6 +91,8 @@ def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
     assert panel.btn_direction_negative.text() == "-"
     assert panel.btn_direction_both.text() == "±"
     assert panel.btn_direction_both.isChecked() is True
+    assert panel.lbl_next_angle_scan_preview.frameShape() != QFrame.Shape.NoFrame
+    assert panel.lbl_next_angle_scan_preview.minimumWidth() >= 120
 
 
 def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:

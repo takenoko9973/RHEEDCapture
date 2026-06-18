@@ -22,7 +22,10 @@ from rheed_capture.infrastructure.config.defaults import (
     DEFAULT_EXPOSURE_MS_VALUES,
     DEFAULT_GAIN_VALUES,
 )
-from rheed_capture.presentation.qt.widgets.capture_controls import configure_capture_buttons
+from rheed_capture.presentation.qt.widgets.capture_controls import (
+    configure_capture_buttons,
+    configure_next_capture_label,
+)
 
 
 class AngleScanPanel(QGroupBox):
@@ -87,6 +90,7 @@ class AngleScanPanel(QGroupBox):
         self.btn_direction_both.setChecked(True)
 
         self.lbl_next_angle_scan_preview = QLabel("angle_scan_001")
+        configure_next_capture_label(self.lbl_next_angle_scan_preview)
         self.btn_start = QPushButton("Start Angle Scan")
         self.btn_cancel = QPushButton("Cancel")
         configure_capture_buttons(self.btn_start, self.btn_cancel)
@@ -124,13 +128,11 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(self.edit_expo, 4, 1, 1, 3)
         layout.addWidget(QLabel("Gains:"), 5, 0)
         layout.addWidget(self.edit_gain, 5, 1, 1, 3)
-        layout.addWidget(QLabel("Next:"), 6, 0)
-        layout.addWidget(self.lbl_next_angle_scan_preview, 6, 1, 1, 3)
-        layout.addWidget(self._create_capture_button_widget(), 7, 0, 1, 4)
-        layout.addWidget(self.progress_bar, 8, 0, 1, 3)
+        layout.addWidget(self._create_capture_button_widget(), 6, 0, 1, 4)
+        layout.addWidget(self.progress_bar, 7, 0, 1, 3)
         layout.addWidget(
             self.lbl_progress_status,
-            8,
+            7,
             3,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
         )
@@ -186,6 +188,8 @@ class AngleScanPanel(QGroupBox):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel("Next:"))
+        layout.addWidget(self.lbl_next_angle_scan_preview)
         layout.addStretch(1)
         layout.addWidget(self.btn_start)
         layout.addWidget(self.btn_cancel)

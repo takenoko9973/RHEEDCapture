@@ -10,7 +10,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rheed_capture.presentation.qt.widgets.capture_controls import configure_capture_buttons
+from rheed_capture.presentation.qt.widgets.capture_controls import (
+    configure_capture_buttons,
+    configure_next_capture_label,
+)
 
 
 class SequencePanel(QGroupBox):
@@ -31,6 +34,7 @@ class SequencePanel(QGroupBox):
         self.edit_seq_gain = QLineEdit("0")
         # 次回撮影で使用される保存先 image_xxx を表示する。
         self.lbl_next_sequence_preview = QLabel("image_001")
+        configure_next_capture_label(self.lbl_next_sequence_preview)
         self.btn_start = QPushButton("Start Sequence Capture")
         self.btn_cancel = QPushButton("Cancel")
         configure_capture_buttons(self.btn_start, self.btn_cancel)
@@ -41,7 +45,6 @@ class SequencePanel(QGroupBox):
 
         layout.addRow("Exposures (ms):", self.edit_seq_expo)
         layout.addRow("Gains:", self.edit_seq_gain)
-        layout.addRow("Next:", self.lbl_next_sequence_preview)
         layout.addRow(self._create_button_row())
         layout.addRow(self._create_progress_row())
 
@@ -97,6 +100,8 @@ class SequencePanel(QGroupBox):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel("Next:"))
+        layout.addWidget(self.lbl_next_sequence_preview)
         layout.addStretch(1)
         layout.addWidget(self.btn_start)
         layout.addWidget(self.btn_cancel)
