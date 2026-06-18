@@ -12,8 +12,8 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-from rheed_capture.models.hardware.motor_defaults import (
-    DEFAULT_MOTOR_SPEED_RPM,
+from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.infrastructure.motor.defaults import (
     DEFAULT_POSITION_UNITS_PER_DEG,
     motor_rpm_to_speed_units,
 )

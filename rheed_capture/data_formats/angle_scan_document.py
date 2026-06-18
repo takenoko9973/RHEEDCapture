@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_RETRY_LIMIT
+
 
 @dataclass(frozen=True)
 class AngleScanDocumentSettings:
-    """scan.jsonに保存する角度走査条件。"""
-
     coordinate: str
     reference: str
     range_deg: float
@@ -36,8 +36,6 @@ class AngleScanDocumentSettings:
 
 @dataclass(frozen=True)
 class CaptureCondition:
-    """1つの撮影条件。"""
-
     exposure_ms: float
     gain: int
 
@@ -47,10 +45,8 @@ class CaptureCondition:
 
 @dataclass(frozen=True)
 class CaptureExecutionSettings:
-    """撮影ループとリトライの実行条件。"""
-
     loop_order: list[str] = field(default_factory=lambda: ["angle", "condition"])
-    retry_limit: int = 3
+    retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -61,8 +57,6 @@ class CaptureExecutionSettings:
 
 @dataclass(frozen=True)
 class AngleScanStorageFormat:
-    """角度走査データの保存名規則。"""
-
     angle_directory_format: str = "angle{angle:+06.1f}"
     filename_format: str = "{scan_id}_angle{angle:+06.1f}_exp{exposure:g}_gain{gain:g}.tiff"
 
@@ -75,8 +69,6 @@ class AngleScanStorageFormat:
 
 @dataclass(frozen=True)
 class AngleScanDocument:
-    """scan.json全体のスキーマ。"""
-
     schema_version: int
     scan_id: str
     created_at: str

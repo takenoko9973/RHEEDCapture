@@ -6,8 +6,6 @@ from typing import Any
 
 @dataclass(frozen=True)
 class SequenceFrameMetadata:
-    """通常シーケンスで保存するTIFFメタデータ。"""
-
     exposure_ms: float
     gain: int
     timestamp: str
@@ -28,8 +26,6 @@ class SequenceFrameMetadata:
 
 @dataclass(frozen=True)
 class AngleScanFrameMetadata:
-    """角度走査で保存するTIFFメタデータ。"""
-
     scan_id: str
     target_angle_deg: float
     exposure_ms: float

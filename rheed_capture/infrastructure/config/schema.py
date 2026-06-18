@@ -1,40 +1,52 @@
 from __future__ import annotations
 
-import json
-import logging
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any, cast
 
-from rheed_capture.models.domain.angle_scan import (
+from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.domain.angle_scan.model import (
     AngleScanDirection,
     validate_direction,
     validate_interval,
     validate_interval_within_range,
     validate_range,
 )
-from rheed_capture.models.hardware.motor_defaults import (
+from rheed_capture.infrastructure.config.defaults import (
+    DEFAULT_ANGLE_SCAN_DIRECTION,
+    DEFAULT_ANGLE_SCAN_INTERVAL_DEG,
+    DEFAULT_ANGLE_SCAN_RANGE_DEG,
+    DEFAULT_ANGLE_SCAN_RETURN_TO_START,
+    DEFAULT_ANGLE_SCAN_WAIT_AFTER_MOVE_MS,
+    DEFAULT_EXPOSURE_MS_VALUES,
+    DEFAULT_GAIN_VALUES,
+    DEFAULT_MOTOR_DRIVER,
+    DEFAULT_PREVIEW_CLAHE_ENABLED,
+    DEFAULT_PREVIEW_EXPOSURE_MS,
+    DEFAULT_PREVIEW_GAIN,
+    DEFAULT_PREVIEW_GRID_COLS,
+    DEFAULT_PREVIEW_GRID_ENABLED,
+    DEFAULT_PREVIEW_GRID_ROWS,
+)
+from rheed_capture.infrastructure.config.migrations import migrate_settings_dict
+from rheed_capture.infrastructure.motor.defaults import (
     DEFAULT_MOTOR_PORT,
     DEFAULT_MOTOR_SLAVE,
-    DEFAULT_MOTOR_SPEED_RPM,
     DEFAULT_POSITION_UNITS_PER_DEG,
 )
 
-logger = logging.getLogger(__name__)
-
 
 def _default_exposure_ms_list() -> list[float]:
-    """通常撮影と角度走査で共有する露光時間の初期値。"""
-    return [10.0, 50.0, 100.0]
+    """Sequence/Angle Scanで共有する露光時間リストの既定値。"""
+    return list(DEFAULT_EXPOSURE_MS_VALUES)
 
 
 def _default_gain_list() -> list[int]:
-    """通常撮影と角度走査で共有するゲインの初期値。"""
-    return [0]
+    """Sequence/Angle Scanで共有するゲインリストの既定値。"""
+    return list(DEFAULT_GAIN_VALUES)
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
-    """JSON由来の値がdictでなければ空dictとして扱う。"""
+    """JSON由来の任意値を、安全にdictとして扱うための正規化関数。"""
     if isinstance(value, dict):
         return cast("dict[str, Any]", value)
 
@@ -42,14 +54,14 @@ def _as_mapping(value: object) -> dict[str, Any]:
 
 
 def _require_non_negative_wait_time(wait_after_move_ms: int) -> None:
-    """撮影前待機時間の共通検証。0msは許可する。"""
+    """Angle Scanの移動後待機時間が負でないことを検証する。"""
     if wait_after_move_ms < 0:
         msg = "移動後待機時間は0以上にしてください。"
         raise ValueError(msg)
 
 
 def _require_positive_motor_speed(motor_speed_rpm: float) -> None:
-    """角度走査で使うモーター速度の共通検証。"""
+    """モータ速度が正の値であることを検証する。"""
     if motor_speed_rpm <= 0:
         msg = "モーター速度は正の値にしてください。"
         raise ValueError(msg)
@@ -57,28 +69,34 @@ def _require_positive_motor_speed(motor_speed_rpm: float) -> None:
 
 @dataclass(frozen=True)
 class PreviewSettings:
-    """プレビュー表示とプレビュー用カメラ条件。"""
+    """プレビュー表示と画像処理に関する設定モデル。"""
 
-    exposure_ms: float = 50.0
-    gain: int = 0
-    enable_clahe: bool = False
-    show_grid: bool = False
-    grid_rows: int = 4
-    grid_cols: int = 4
+    exposure_ms: float = DEFAULT_PREVIEW_EXPOSURE_MS
+    gain: int = DEFAULT_PREVIEW_GAIN
+    enable_clahe: bool = DEFAULT_PREVIEW_CLAHE_ENABLED
+    show_grid: bool = DEFAULT_PREVIEW_GRID_ENABLED
+    grid_rows: int = DEFAULT_PREVIEW_GRID_ROWS
+    grid_cols: int = DEFAULT_PREVIEW_GRID_COLS
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PreviewSettings:
+        """schema_version=1形式のdictからPreview設定を復元する。"""
+        preview = _as_mapping(data.get("preview"))
+        clahe = _as_mapping(preview.get("clahe"))
+        grid = _as_mapping(preview.get("grid"))
         defaults = cls()
+
         return cls(
-            exposure_ms=float(data.get("preview_expo", defaults.exposure_ms)),
-            gain=int(data.get("preview_gain", defaults.gain)),
-            enable_clahe=bool(data.get("enable_clahe", defaults.enable_clahe)),
-            show_grid=bool(data.get("show_preview_grid", defaults.show_grid)),
-            grid_rows=int(data.get("preview_grid_rows", defaults.grid_rows)),
-            grid_cols=int(data.get("preview_grid_cols", defaults.grid_cols)),
+            exposure_ms=float(preview.get("exposure_ms", defaults.exposure_ms)),
+            gain=int(preview.get("gain", defaults.gain)),
+            enable_clahe=bool(clahe.get("enabled", defaults.enable_clahe)),
+            show_grid=bool(grid.get("enabled", defaults.show_grid)),
+            grid_rows=int(grid.get("rows", defaults.grid_rows)),
+            grid_cols=int(grid.get("cols", defaults.grid_cols)),
         )
 
     def with_grid(self, grid: PreviewGridSettings) -> PreviewSettings:
+        """Panel側で保持するGrid設定をPreview設定へ合成する。"""
         return replace(
             self,
             show_grid=grid.show_grid,
@@ -87,19 +105,22 @@ class PreviewSettings:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """settings.jsonへ保存する新schema形式へ変換する。"""
         return {
-            "preview_expo": self.exposure_ms,
-            "preview_gain": self.gain,
-            "enable_clahe": self.enable_clahe,
-            "show_preview_grid": self.show_grid,
-            "preview_grid_rows": self.grid_rows,
-            "preview_grid_cols": self.grid_cols,
+            "exposure_ms": self.exposure_ms,
+            "gain": self.gain,
+            "clahe": {"enabled": self.enable_clahe},
+            "grid": {
+                "enabled": self.show_grid,
+                "rows": self.grid_rows,
+                "cols": self.grid_cols,
+            },
         }
 
 
 @dataclass(frozen=True)
 class PreviewGridSettings:
-    """プレビュー画像上に重ねるグリッド設定。"""
+    """ImageViewer側のGrid描画状態を保存用に受け渡す小さな値オブジェクト。"""
 
     show_grid: bool = False
     rows: int = 4
@@ -108,13 +129,14 @@ class PreviewGridSettings:
 
 @dataclass(frozen=True)
 class SequenceCaptureSettings:
-    """通常シーケンス撮影の条件。"""
+    """通常Sequence撮影の条件リスト設定。"""
 
     exposure_ms_list: list[float] = field(default_factory=_default_exposure_ms_list)
     gain_list: list[int] = field(default_factory=_default_gain_list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SequenceCaptureSettings:
+        """dictからSequence撮影設定を復元し、不足値は既定値で補う。"""
         defaults = cls()
         return cls(
             exposure_ms_list=list(data.get("exposure_ms_list", defaults.exposure_ms_list)),
@@ -122,6 +144,7 @@ class SequenceCaptureSettings:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """settings.jsonへ保存するSequence設定dictへ変換する。"""
         return {
             "exposure_ms_list": self.exposure_ms_list,
             "gain_list": self.gain_list,
@@ -130,18 +153,19 @@ class SequenceCaptureSettings:
 
 @dataclass(frozen=True)
 class AngleScanCaptureSettings:
-    """角度走査撮影の条件。"""
+    """Angle Scan撮影の条件、走査範囲、モータ動作に関する設定。"""
 
     exposure_ms_list: list[float] = field(default_factory=_default_exposure_ms_list)
     gain_list: list[int] = field(default_factory=_default_gain_list)
-    range_deg: float = 5.0
-    interval_deg: float = 0.5
-    direction: AngleScanDirection = "both"
-    wait_after_move_ms: int = 1000
+    range_deg: float = DEFAULT_ANGLE_SCAN_RANGE_DEG
+    interval_deg: float = DEFAULT_ANGLE_SCAN_INTERVAL_DEG
+    direction: AngleScanDirection = DEFAULT_ANGLE_SCAN_DIRECTION
+    wait_after_move_ms: int = DEFAULT_ANGLE_SCAN_WAIT_AFTER_MOVE_MS
     motor_speed_rpm: float = DEFAULT_MOTOR_SPEED_RPM
-    return_to_start: bool = False
+    return_to_start: bool = DEFAULT_ANGLE_SCAN_RETURN_TO_START
 
     def __post_init__(self) -> None:
+        """Domain側の角度制約とモータ設定制約を検証する。"""
         validate_range(self.range_deg)
         validate_interval(self.interval_deg)
         validate_interval_within_range(self.range_deg, self.interval_deg)
@@ -151,8 +175,8 @@ class AngleScanCaptureSettings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AngleScanCaptureSettings:
+        """dictからAngle Scan設定を復元し、不足値は既定値で補う。"""
         defaults = cls()
-
         return cls(
             exposure_ms_list=list(data.get("exposure_ms_list", defaults.exposure_ms_list)),
             gain_list=list(data.get("gain_list", defaults.gain_list)),
@@ -162,14 +186,13 @@ class AngleScanCaptureSettings:
                 "AngleScanDirection",
                 str(data.get("direction", defaults.direction)),
             ),
-            wait_after_move_ms=int(
-                data.get("wait_after_move_ms", defaults.wait_after_move_ms)
-            ),
+            wait_after_move_ms=int(data.get("wait_after_move_ms", defaults.wait_after_move_ms)),
             motor_speed_rpm=float(data.get("motor_speed_rpm", defaults.motor_speed_rpm)),
             return_to_start=bool(data.get("return_to_start", defaults.return_to_start)),
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """settings.jsonへ保存するAngle Scan設定dictへ変換する。"""
         return {
             "exposure_ms_list": self.exposure_ms_list,
             "gain_list": self.gain_list,
@@ -184,109 +207,109 @@ class AngleScanCaptureSettings:
 
 @dataclass(frozen=True)
 class MotorDeviceSettings:
-    """モーター装置の通信条件と角度換算条件。"""
+    """AZD-CDモータ接続と角度換算キャリブレーションの設定。"""
 
     port: str = DEFAULT_MOTOR_PORT
     slave: int = DEFAULT_MOTOR_SLAVE
     position_units_per_deg: float = DEFAULT_POSITION_UNITS_PER_DEG
+    driver: str = DEFAULT_MOTOR_DRIVER
 
     def __post_init__(self) -> None:
+        """角度からモータ位置単位へ変換する係数を検証する。"""
         if self.position_units_per_deg <= 0:
             msg = "1degあたりのモーター位置単位は正の値にしてください。"
             raise ValueError(msg)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MotorDeviceSettings:
+        """新schemaのdevice.motor dictからモータ設定を復元する。"""
+        connection = _as_mapping(data.get("connection"))
+        calibration = _as_mapping(data.get("calibration"))
+
         return cls(
-            port=str(data.get("port", DEFAULT_MOTOR_PORT)),
-            slave=int(data.get("slave", DEFAULT_MOTOR_SLAVE)),
+            port=str(connection.get("port", DEFAULT_MOTOR_PORT)),
+            slave=int(connection.get("slave_id", DEFAULT_MOTOR_SLAVE)),
             position_units_per_deg=float(
-                data.get("position_units_per_deg", DEFAULT_POSITION_UNITS_PER_DEG)
+                calibration.get("position_units_per_deg", DEFAULT_POSITION_UNITS_PER_DEG)
             ),
+            driver=str(data.get("driver", DEFAULT_MOTOR_DRIVER)),
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """settings.jsonへ保存するdevice.motor dictへ変換する。"""
         return {
-            "port": self.port,
-            "slave": self.slave,
-            "position_units_per_deg": self.position_units_per_deg,
+            "driver": self.driver,
+            "connection": {
+                "type": "serial",
+                "port": self.port,
+                "slave_id": self.slave,
+            },
+            "calibration": {
+                "position_units_per_deg": self.position_units_per_deg,
+            },
         }
 
 
 @dataclass(frozen=True)
 class DeviceSettings:
-    """アプリが扱う外部装置の設定。"""
+    """外部装置設定をまとめるルート設定モデル。"""
 
     motor: MotorDeviceSettings = field(default_factory=MotorDeviceSettings)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DeviceSettings:
+        """device dictから外部装置設定を復元する。"""
         return cls(motor=MotorDeviceSettings.from_dict(_as_mapping(data.get("motor"))))
 
     def to_dict(self) -> dict[str, Any]:
+        """settings.jsonへ保存するdevice dictへ変換する。"""
         return {"motor": self.motor.to_dict()}
 
 
 @dataclass(frozen=True)
 class StorageSettings:
-    """保存先ディレクトリの設定。"""
+    """保存先UIが扱うroot directory設定。"""
 
     root_dir: str = ""
 
 
 @dataclass(frozen=True)
 class AppSettingsData:
-    """settings.json全体のスキーマ。"""
+    """アプリ全体の設定を束ね、旧形式移行と新形式保存を担当するモデル。"""
 
     root_dir: str = ""
     preview: PreviewSettings = field(default_factory=PreviewSettings)
     sequence_capture: SequenceCaptureSettings = field(default_factory=SequenceCaptureSettings)
     angle_scan: AngleScanCaptureSettings = field(default_factory=AngleScanCaptureSettings)
     device: DeviceSettings = field(default_factory=DeviceSettings)
+    schema_version: int = 1
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AppSettingsData:
+        """旧形式を必要に応じて移行し、AppSettingsDataへ復元する。"""
+        migrated = migrate_settings_dict(data)
+        output = _as_mapping(migrated.get("output"))
+
         return cls(
-            root_dir=str(data.get("root_dir", "")),
-            preview=PreviewSettings.from_dict(data),
+            root_dir=str(output.get("root_dir", "")),
+            preview=PreviewSettings.from_dict(migrated),
             sequence_capture=SequenceCaptureSettings.from_dict(
-                _as_mapping(data.get("sequence_capture"))
+                _as_mapping(migrated.get("sequence_capture"))
             ),
             angle_scan=AngleScanCaptureSettings.from_dict(
-                _as_mapping(data.get("angle_scan"))
+                _as_mapping(migrated.get("angle_scan"))
             ),
-            device=DeviceSettings.from_dict(_as_mapping(data.get("device"))),
+            device=DeviceSettings.from_dict(_as_mapping(migrated.get("device"))),
+            schema_version=1,
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """settings.jsonへ保存するschema_version=1形式へ変換する。"""
         return {
-            "root_dir": self.root_dir,
-            **self.preview.to_dict(),
+            "schema_version": self.schema_version,
+            "output": {"root_dir": self.root_dir},
+            "preview": self.preview.to_dict(),
             "sequence_capture": self.sequence_capture.to_dict(),
             "angle_scan": self.angle_scan.to_dict(),
             "device": self.device.to_dict(),
         }
-
-
-class AppSettings:
-    FILE_PATH = Path("settings.json")
-
-    @classmethod
-    def save(cls, settings: AppSettingsData) -> None:
-        try:
-            with cls.FILE_PATH.open("w", encoding="utf-8") as f:
-                json.dump(settings.to_dict(), f, ensure_ascii=False, indent=4)
-        except Exception:
-            logger.exception("設定の保存に失敗しました")
-
-    @classmethod
-    def load(cls) -> AppSettingsData:
-        if not cls.FILE_PATH.exists():
-            return AppSettingsData()
-
-        try:
-            with cls.FILE_PATH.open(encoding="utf-8") as f:
-                return AppSettingsData.from_dict(json.load(f))
-        except Exception:
-            logger.exception("設定の読み込みに失敗しました")
-            return AppSettingsData()

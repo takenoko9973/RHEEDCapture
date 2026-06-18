@@ -1,33 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import cast
 
-from rheed_capture.models.hardware.motor_defaults import (
-    DEFAULT_MOTOR_SPEED_RPM,
+from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.infrastructure.motor.azd_cd import AzdCdAdapter, AzdCdConfig, CompletionMode
+from rheed_capture.infrastructure.motor.defaults import (
     DEFAULT_POSITION_UNITS_PER_DEG,
 )
-
-from .azd_cd import AzdCdAdapter, AzdCdConfig, CompletionMode
-
-
-class RotationMotor(Protocol):
-    """角度走査サービスが必要とするモーター操作の最小インターフェース。"""
-
-    def move_relative_units(
-        self,
-        position_units: int,
-        motor_speed_rpm: float = DEFAULT_MOTOR_SPEED_RPM,
-        *,
-        timeout: float = 10.0,
-    ) -> object | None:
-        """指定位置単位だけ相対移動し、完了まで待つ。"""
 
 
 @dataclass(frozen=True)
 class MotorConnectionConfig:
-    """アプリ側で保持するAZD-CD接続設定。"""
-
     port: str
     slave: int
 
@@ -43,8 +27,6 @@ class MotorConnectionConfig:
 
 
 class AzdCdRotationMotor:
-    """同梱したAZD-CD Adapterを使う回転モーター制御ラッパー。"""
-
     def __init__(self, config: MotorConnectionConfig) -> None:
         if not config.port.strip():
             msg = "モーターのCOMポートを入力してください。"
@@ -54,7 +36,6 @@ class AzdCdRotationMotor:
         self._adapter = self._create_adapter(config)
 
     def _create_adapter(self, config: MotorConnectionConfig) -> AzdCdAdapter:
-        # adapter以下にはUIや保存設定を渡さず、通信に必要な値だけを渡す。
         motor_config = AzdCdConfig(
             port=config.port,
             slave=config.slave,
@@ -75,7 +56,6 @@ class AzdCdRotationMotor:
         *,
         timeout: float = 10.0,
     ) -> object | None:
-        # 角度換算は走査計画側で完了済み。ここではunit単位の移動だけを中継する。
         return self._adapter.move_relative_units(
             position_units,
             motor_speed_rpm,
