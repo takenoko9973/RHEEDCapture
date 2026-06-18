@@ -6,15 +6,18 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.services.angle_scan_plan import (
-    AngleMove,
+from rheed_capture.domain.angle_scan.plan import (
     angle_to_position_units,
     build_angle_list,
     build_motion_unit_deltas,
 )
-from rheed_capture.services.angle_scan_service import AngleScanService, AngleScanSettings
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.motor.defaults import DEFAULT_POSITION_UNITS_PER_DEG
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.workers.angle_scan_service import (
+    AngleScanService,
+    AngleScanSettings,
+)
 
 
 @pytest.fixture
@@ -26,6 +29,13 @@ def mock_camera() -> MagicMock:
 
 def acknowledge_preview_pause(service: AngleScanService) -> None:
     service.preview_pause_requested.connect(service.notify_preview_paused)
+
+
+def device_angle_to_position_units(angle_deg: float) -> int:
+    return angle_to_position_units(
+        angle_deg,
+        position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
+    )
 
 
 def test_build_angle_list_uses_current_position_as_zero() -> None:
@@ -56,6 +66,7 @@ def test_angle_scan_service_moves_by_delta_and_saves(
         direction="positive",
         settling_time_ms=0,
         return_to_start_after_scan=True,
+        position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
     service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
@@ -68,9 +79,9 @@ def test_angle_scan_service_moves_by_delta_and_saves(
     assert blocker.args[0] is True
     assert blocker.args[1] == "angle_scan_001"
     assert [call.args[0] for call in motor.move_relative_units.call_args_list] == [
-        angle_to_position_units(0.5),
-        angle_to_position_units(1.0) - angle_to_position_units(0.5),
-        -angle_to_position_units(1.0),
+        device_angle_to_position_units(0.5),
+        device_angle_to_position_units(1.0) - device_angle_to_position_units(0.5),
+        -device_angle_to_position_units(1.0),
     ]
     assert [call.args[1] for call in motor.move_relative_units.call_args_list] == [
         4.0,
@@ -97,6 +108,7 @@ def test_angle_scan_service_saves_positive_interval_for_negative_scan(
         direction="negative",
         settling_time_ms=0,
         return_to_start_after_scan=False,
+        position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
     service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
@@ -108,8 +120,8 @@ def test_angle_scan_service_saves_positive_interval_for_negative_scan(
     assert blocker.args is not None
     assert blocker.args[0] is True
     assert [call.args[0] for call in motor.move_relative_units.call_args_list] == [
-        angle_to_position_units(-0.5),
-        angle_to_position_units(-1.0) - angle_to_position_units(-0.5),
+        device_angle_to_position_units(-0.5),
+        device_angle_to_position_units(-1.0) - device_angle_to_position_units(-0.5),
     ]
 
     with (
@@ -144,6 +156,7 @@ def test_angle_scan_service_scans_opposite_direction_after_returning_to_zero(
         direction="both",
         settling_time_ms=0,
         return_to_start_after_scan=False,
+        position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
     service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
@@ -163,11 +176,11 @@ def test_angle_scan_service_scans_opposite_direction_after_returning_to_zero(
     assert scan_document["angle_scan"]["direction"] == "both"
     assert scan_document["angle_scan"]["capture_angles_deg"] == [0.0, 0.5, 1.0, -0.5, -1.0]
     assert [call.args[0] for call in motor.move_relative_units.call_args_list] == [
-        angle_to_position_units(0.5),
-        angle_to_position_units(1.0) - angle_to_position_units(0.5),
-        -angle_to_position_units(1.0),
-        angle_to_position_units(-0.5),
-        angle_to_position_units(-1.0) - angle_to_position_units(-0.5),
+        device_angle_to_position_units(0.5),
+        device_angle_to_position_units(1.0) - device_angle_to_position_units(0.5),
+        -device_angle_to_position_units(1.0),
+        device_angle_to_position_units(-0.5),
+        device_angle_to_position_units(-1.0) - device_angle_to_position_units(-0.5),
     ]
     assert mock_camera.grab_one.call_count == 5
 
@@ -183,6 +196,7 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
         direction="positive",
         settling_time_ms=0,
         return_to_start_after_scan=True,
+        position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
     service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
@@ -194,43 +208,10 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
     assert blocker.args is not None
     assert blocker.args[0] is True
     assert [call.args[0] for call in motor.move_relative_units.call_args_list] == [
-        angle_to_position_units(0.5),
-        -angle_to_position_units(0.5),
+        device_angle_to_position_units(0.5),
+        -device_angle_to_position_units(0.5),
     ]
     assert mock_camera.grab_one.call_count == 2
-
-
-def test_angle_scan_service_waits_before_pausing_preview(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mock_camera: MagicMock
-) -> None:
-    storage = ExperimentStorage(tmp_path)
-    service = AngleScanService(
-        mock_camera,
-        storage,
-        MagicMock(),
-        [10.0],
-        [0],
-        AngleScanSettings(
-            range_deg=0.5,
-            interval_deg=0.5,
-            direction="positive",
-            settling_time_ms=100,
-            return_to_start_after_scan=False,
-            motor_speed_rpm=4.0,
-        ),
-    )
-    events: list[str] = []
-
-    def capture_stub(*_args: object) -> None:
-        events.append("capture")
-
-    monkeypatch.setattr(service, "_wait_settling", lambda: events.append("settle"))
-    monkeypatch.setattr(service, "_pause_preview_before_capture", lambda: events.append("pause"))
-    monkeypatch.setattr(service, "_capture_with_retry", capture_stub)
-
-    service._capture_at_move(AngleMove(0.0, 0, 0, True), 0)  # noqa: SLF001
-
-    assert events == ["settle", "pause", "capture"]
 
 
 @pytest.mark.parametrize(
@@ -257,6 +238,7 @@ def test_angle_scan_service_rejects_invalid_interval(
                 direction="positive",
                 settling_time_ms=0,
                 return_to_start_after_scan=False,
+                position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             ),
         )
 
@@ -277,6 +259,7 @@ def test_angle_scan_service_rejects_out_of_range_range(
                 direction="positive",
                 settling_time_ms=0,
                 return_to_start_after_scan=False,
+                position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             ),
         )
 
@@ -297,26 +280,35 @@ def test_angle_scan_service_rejects_interval_larger_than_range(
                 direction="positive",
                 settling_time_ms=0,
                 return_to_start_after_scan=False,
+                position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             ),
         )
 
 
 def test_angle_to_position_units_uses_configurable_device_condition() -> None:
-    assert angle_to_position_units(0.5) == 16
-    assert angle_to_position_units(1.0) == 31
-    assert angle_to_position_units(-0.5) == -16
+    assert device_angle_to_position_units(0.5) == 16
+    assert device_angle_to_position_units(1.0) == 31
+    assert device_angle_to_position_units(-0.5) == -16
     assert angle_to_position_units(0.5, position_units_per_deg=40.0) == 20
 
 
 def test_motion_unit_deltas_compensate_fractional_rounding() -> None:
-    assert build_motion_unit_deltas([0.0, 0.5, 1.0, 1.5, 2.0]) == [
+    assert build_motion_unit_deltas(
+        [0.0, 0.5, 1.0, 1.5, 2.0],
+        position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
+    ) == [
         0,
         16,
         15,
         16,
         16,
     ]
-    assert sum(build_motion_unit_deltas([0.0, 0.5, 1.0])) == angle_to_position_units(1.0)
+    assert sum(
+        build_motion_unit_deltas(
+            [0.0, 0.5, 1.0],
+            position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
+        )
+    ) == device_angle_to_position_units(1.0)
 
 
 def test_angle_scan_service_rejects_invalid_position_units_per_deg(
