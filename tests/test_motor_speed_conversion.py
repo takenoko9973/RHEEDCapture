@@ -4,7 +4,11 @@ import pytest
 
 from rheed_capture.bootstrap import create_motor_factory
 from rheed_capture.infrastructure.motor.azd_cd.adapter import AzdCdAdapter
-from rheed_capture.infrastructure.motor.azd_cd.driver import AzdCdConfig, AzdCdStatus
+from rheed_capture.infrastructure.motor.azd_cd.driver import (
+    AzdCdConfig,
+    AzdCdDriver,
+    AzdCdStatus,
+)
 from rheed_capture.infrastructure.motor.azd_cd.protocol import (
     OP_RELATIVE_POSITIONING,
     STATUS_MOVE,
@@ -60,6 +64,29 @@ def test_adapter_converts_rpm_before_sending_speed_to_driver() -> None:
     driver.set_position_units.assert_called_once_with(10)
     driver.start_on.assert_called_once_with()
     driver.start_off.assert_called_once_with()
+
+
+def test_driver_formats_missing_serial_port_error_for_ui() -> None:
+    serial_module = MagicMock()
+    serial_module.EIGHTBITS = 8
+    serial_module.PARITY_EVEN = "E"
+    serial_module.STOPBITS_ONE = 1
+    serial_module.Serial.side_effect = FileNotFoundError(2, "指定されたファイルが見つかりません。")
+
+    with (
+        patch(
+            "rheed_capture.infrastructure.motor.azd_cd.driver.importlib.import_module",
+            return_value=serial_module,
+        ),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        AzdCdDriver(AzdCdConfig(port="COM7", slave=2))
+
+    assert str(exc_info.value) == (
+        "モーターのCOMポート 'COM7' を開けませんでした。"
+        "接続先のポート番号を確認してください。"
+        "実機なしで動作確認する場合は Motor Port に MOCK を入力してください。"
+    )
 
 
 def test_mock_rotation_motor_tracks_position_and_move_log(
