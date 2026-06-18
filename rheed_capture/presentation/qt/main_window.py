@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QCloseEvent
@@ -14,22 +15,31 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.settings import AppSettings, AppSettingsData, PreviewSettings
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.viewmodels.angle_scan_viewmodel import AngleScanViewModel
-from rheed_capture.viewmodels.capture_viewmodel import CaptureViewModel
-from rheed_capture.viewmodels.preview_viewmodel import PreviewViewModel
-from rheed_capture.views.components.angle_scan_panel import AngleScanPanel
-from rheed_capture.views.components.histogram_viewer import HistogramPanel
-from rheed_capture.views.components.image_viewer import ImageViewer
-from rheed_capture.views.components.motor_settings_panel import MotorSettingsPanel
-from rheed_capture.views.components.preview_panel import PreviewPanel
-from rheed_capture.views.components.sequence_panel import SequencePanel
-from rheed_capture.views.components.storage_panel import StoragePanel
-from rheed_capture.views.grid_spec import DEFAULT_GRID_SHAPE
+from rheed_capture.application.ports.motor import RotationMotor
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.json_store import AppSettings
+from rheed_capture.infrastructure.config.schema import AppSettingsData, PreviewSettings
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.capture_coordinator import (
+    CaptureCoordinator,
+    CaptureCoordinatorHooks,
+)
+from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
+from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
+from rheed_capture.presentation.qt.panels.preview import PreviewPanel
+from rheed_capture.presentation.qt.panels.sequence import SequencePanel
+from rheed_capture.presentation.qt.panels.storage import StoragePanel
+from rheed_capture.presentation.qt.viewmodels.angle_scan import AngleScanViewModel
+from rheed_capture.presentation.qt.viewmodels.preview import PreviewViewModel
+from rheed_capture.presentation.qt.viewmodels.sequence import CaptureViewModel
+from rheed_capture.presentation.qt.widgets.grid_spec import DEFAULT_GRID_SHAPE
+from rheed_capture.presentation.qt.widgets.histogram_viewer import HistogramPanel
+from rheed_capture.presentation.qt.widgets.image_viewer import ImageViewer
 
 logger = logging.getLogger(__name__)
+
+BRANCH_STATUS_MESSAGE_MS = 5000
+CAPTURE_COMPLETE_STATUS_MESSAGE_MS = 10000
 
 
 class MainWindow(QMainWindow):
@@ -37,10 +47,17 @@ class MainWindow(QMainWindow):
     capture_vm: CaptureViewModel
     angle_scan_vm: AngleScanViewModel
 
-    def __init__(self, camera: CameraDevice, storage: ExperimentStorage) -> None:
+    def __init__(
+        self,
+        camera: CameraDevice,
+        storage: ExperimentStorage,
+        motor_factory: Callable[[str, int, float], RotationMotor] | None = None,
+    ) -> None:
         super().__init__()
         self.camera = camera
         self.storage = storage
+        self._motor_factory = motor_factory
+        self.capture_coordinator = CaptureCoordinator()
         self.capture_service = None
 
         self.setWindowTitle("RHEED Capture System")
@@ -54,6 +71,7 @@ class MainWindow(QMainWindow):
         self._setup_viewmodels()
         self._setup_bindings()
         self._setup_sequence_preview_timer()
+        self._setup_capture_coordinator()
         self._load_settings()
 
         self.preview_vm.start_preview()
@@ -62,7 +80,29 @@ class MainWindow(QMainWindow):
         """ViewModelのインスタンス化"""
         self.preview_vm = PreviewViewModel(self.camera)
         self.capture_vm = CaptureViewModel(self.camera, self.storage)
-        self.angle_scan_vm = AngleScanViewModel(self.camera, self.storage)
+        self.angle_scan_vm = AngleScanViewModel(
+            self.camera,
+            self.storage,
+            motor_factory=self._motor_factory,
+        )
+
+    def _setup_capture_coordinator(self) -> None:
+        """撮影開始・終了時の共通UI操作をCoordinatorへ登録する。"""
+        self.capture_coordinator.bind(
+            CaptureCoordinatorHooks(
+                set_sequence_capturing=self.sequence_panel.set_capturing_state,
+                set_angle_scan_capturing=self.angle_scan_panel.set_capturing_state,
+                set_sequence_enabled=self.sequence_panel.setEnabled,
+                set_angle_scan_enabled=self.angle_scan_panel.setEnabled,
+                set_motor_settings_enabled=self.motor_settings_panel.setEnabled,
+                set_preview_controls_enabled=self.preview_panel.set_controls_enabled,
+                stop_sequence_preview_timer=self._sequence_preview_timer.stop,
+                start_sequence_preview_timer=self._sequence_preview_timer.start,
+                pause_preview=self.preview_vm.pause_preview,
+                resume_preview=self.preview_vm.resume_preview,
+                refresh_storage_display=self._update_storage_display,
+            )
+        )
 
     def _setup_ui(self) -> None:
         main_widget = QWidget()
@@ -166,6 +206,7 @@ class MainWindow(QMainWindow):
         self.sequence_panel.cancel_requested.connect(self.capture_vm.cancel_sequence)
 
         self.capture_vm.progress_updated.connect(self.sequence_panel.update_progress)
+        self.capture_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
         self.capture_vm.sequence_finished.connect(self._on_sequence_finished)
         self.capture_vm.error_occurred.connect(self._show_error)
 
@@ -210,6 +251,7 @@ class MainWindow(QMainWindow):
         self.angle_scan_panel.start_requested.connect(self._on_start_angle_scan_requested)
         self.angle_scan_panel.cancel_requested.connect(self.angle_scan_vm.cancel_angle_scan)
         self.angle_scan_vm.progress_updated.connect(self.angle_scan_panel.update_progress)
+        self.angle_scan_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
         self.angle_scan_vm.angle_scan_finished.connect(self._on_angle_scan_finished)
         self.angle_scan_vm.error_occurred.connect(self._show_error)
         self._setup_angle_scan_preview_bindings()
@@ -261,7 +303,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_sequence_preview_timer(self) -> None:
         # 撮影中は CaptureService 側でシーケンス番号を確定するため、ここで再スキャンしない。
-        if self.capture_vm.is_running() or self.angle_scan_vm.is_running():
+        if self.capture_coordinator.is_capturing():
             return
 
         self._update_storage_display()
@@ -286,61 +328,39 @@ class MainWindow(QMainWindow):
         )
 
         msg = f"Branch Updated: Next capture will be saved in '{new_name}'"
-        self.statusBar().showMessage(msg, 5000)
+        self.statusBar().showMessage(msg, BRANCH_STATUS_MESSAGE_MS)
 
     @Slot(list, list)
     def _on_start_sequence_requested(self) -> None:
-        # UIをキャプチャ中の状態（ボタン無効化など）に変更
-        self.sequence_panel.set_capturing_state(True)
-        self.angle_scan_panel.setEnabled(False)
-        self.motor_settings_panel.setEnabled(False)
-        self.preview_panel.set_controls_enabled(False)
-        self._sequence_preview_timer.stop()
-
-        # workerが停止処理を完了したら、captureを開始するように
-        self.preview_vm.preview_paused.connect(
-            self.capture_vm.start_sequence, Qt.ConnectionType.SingleShotConnection
+        self.capture_coordinator.begin_sequence(
+            self._arm_sequence_start_after_preview_pause
         )
-        self.preview_vm.pause_preview()
+
+    def _arm_sequence_start_after_preview_pause(self) -> None:
+        """PreviewWorkerの停止完了を待ってからSequence Workerを開始する。"""
+        self.preview_vm.preview_paused.connect(
+            self.capture_vm.start_sequence,
+            Qt.ConnectionType.SingleShotConnection,
+        )
 
     @Slot(bool, str)
     def _on_sequence_finished(self, success: bool, saved_dir_name: str) -> None:
-        self.sequence_panel.set_capturing_state(False)
-        self.angle_scan_panel.setEnabled(True)
-        self.motor_settings_panel.setEnabled(True)
-        self.preview_panel.set_controls_enabled(True)
-
-        self.preview_vm.resume_preview()
-        self._update_storage_display()
-        self._sequence_preview_timer.start()
+        self.capture_coordinator.leave()
         if success:
-            # ステータスバーに保存先を表示 (5000ミリ秒 = 5秒間で自動消去)
+            # 完了通知は撮影結果をユーザーが確認できる程度に長めに表示する。
             msg = f"Capture Complete: Saved to '{saved_dir_name}'"
-            self.status_bar.showMessage(msg, 10000)
+            self.status_bar.showMessage(msg, CAPTURE_COMPLETE_STATUS_MESSAGE_MS)
 
     @Slot()
     def _on_start_angle_scan_requested(self) -> None:
-        self.angle_scan_panel.set_capturing_state(True)
-        self.sequence_panel.setEnabled(False)
-        self.motor_settings_panel.setEnabled(False)
-        self.preview_panel.set_controls_enabled(False)
-        self._sequence_preview_timer.stop()
-
-        self.angle_scan_vm.start_angle_scan()
+        self.capture_coordinator.begin_angle_scan(self.angle_scan_vm.start_angle_scan)
 
     @Slot(bool, str)
     def _on_angle_scan_finished(self, success: bool, saved_dir_name: str) -> None:
-        self.angle_scan_panel.set_capturing_state(False)
-        self.sequence_panel.setEnabled(True)
-        self.motor_settings_panel.setEnabled(True)
-        self.preview_panel.set_controls_enabled(True)
-
-        self.preview_vm.resume_preview()
-        self._update_storage_display()
-        self._sequence_preview_timer.start()
+        self.capture_coordinator.leave()
         if success:
             msg = f"Angle Scan Complete: Saved to '{saved_dir_name}'"
-            self.status_bar.showMessage(msg, 10000)
+            self.status_bar.showMessage(msg, CAPTURE_COMPLETE_STATUS_MESSAGE_MS)
 
     @Slot(str)
     def _show_error(self, message: str) -> None:
@@ -370,7 +390,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         # キャプチャ中は終了をブロック
-        if self.capture_vm.is_running() or self.angle_scan_vm.is_running():
+        if self.capture_coordinator.is_capturing():
             QMessageBox.warning(self, "Warning", "Cannot close while capturing.")
             event.ignore()
             return

@@ -1,15 +1,16 @@
 from PySide6.QtCore import QObject, Signal, Slot
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.settings import SequenceCaptureSettings
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.services.capture_service import CaptureService
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import SequenceCaptureSettings
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.workers.capture_service import CaptureService
 from rheed_capture.utils import parse_numbers
 
 
 class CaptureViewModel(QObject):
     # View (UI) に公開するパススルー用シグナル
     progress_updated = Signal(int, int)  # (現在の枚数, 全体の枚数)
+    frame_captured = Signal(object)
     sequence_finished = Signal(bool, str)  # (成功フラグ, 保存先ディレクトリ名)
     error_occurred = Signal(str)
 
@@ -24,8 +25,9 @@ class CaptureViewModel(QObject):
         self._capture_service: CaptureService | None = None
 
         # 撮影条件の状態保持
-        self._expo_list: list[float] = [10.0, 50.0, 100.0]
-        self._gain_list: list[int] = [0]
+        defaults = SequenceCaptureSettings()
+        self._expo_list = defaults.exposure_ms_list
+        self._gain_list = defaults.gain_list
 
     # ====== 設定のロード・セーブ ======
 
@@ -100,6 +102,7 @@ class CaptureViewModel(QObject):
 
         # 内部スレッドのシグナルをViewModelのシグナルに中継する
         self._capture_service.progress_update.connect(self.progress_updated)
+        self._capture_service.frame_captured.connect(self.frame_captured)
         self._capture_service.sequence_finished.connect(self.sequence_finished)
         self._capture_service.error_occurred.connect(self.error_occurred)
 

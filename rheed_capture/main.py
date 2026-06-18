@@ -6,9 +6,7 @@ import sys
 from dotenv import load_dotenv
 from PySide6.QtWidgets import QApplication
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.views.main_window import MainWindow
+from rheed_capture.bootstrap import create_main_window
 
 load_dotenv()
 
@@ -19,22 +17,15 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     app = QApplication(sys.argv)
+    window = None
 
     # Ctrl+C で終了できるように (Pyside6 では Ctrl+C で終了できない)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     try:
-        # 1. モデル(ハードウェアとストレージ)の初期化
-        camera = CameraDevice()
-        camera.connect()
-
-        storage = ExperimentStorage(root_dir="./Data_Root")
-
-        # 2. UIの初期化と表示 (依存性を注入)
-        window = MainWindow(camera, storage)
+        window = create_main_window()
         window.show()
 
-        # 3. イベントループ開始
         sys.exit(app.exec())
 
     except Exception as e:
@@ -43,8 +34,9 @@ def main() -> None:
         print(f"アプリケーションを起動できませんでした:\n{e}")
 
     finally:
-        with contextlib.suppress(Exception):
-            camera.disconnect()
+        if window is not None:
+            with contextlib.suppress(Exception):
+                window.camera.disconnect()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
-from rheed_capture.models.io.settings import StorageSettings
+from rheed_capture.infrastructure.config.schema import StorageSettings
 
 
 class StoragePanel(QGroupBox):

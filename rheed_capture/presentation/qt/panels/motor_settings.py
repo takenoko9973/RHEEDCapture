@@ -1,7 +1,11 @@
 from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import QDoubleSpinBox, QFormLayout, QGroupBox, QLineEdit, QSpinBox
 
-from rheed_capture.models.hardware.motor_defaults import DEFAULT_POSITION_UNITS_PER_DEG
+from rheed_capture.infrastructure.motor.defaults import (
+    DEFAULT_MOTOR_PORT,
+    DEFAULT_MOTOR_SLAVE,
+    DEFAULT_POSITION_UNITS_PER_DEG,
+)
 
 
 class MotorSettingsPanel(QGroupBox):
@@ -16,11 +20,11 @@ class MotorSettingsPanel(QGroupBox):
     def _setup_ui(self) -> None:
         layout = QFormLayout(self)
 
-        self.edit_motor_port = QLineEdit("COM7")
+        self.edit_motor_port = QLineEdit(DEFAULT_MOTOR_PORT)
 
         self.spin_motor_slave = QSpinBox()
         self.spin_motor_slave.setRange(1, 247)
-        self.spin_motor_slave.setValue(2)
+        self.spin_motor_slave.setValue(DEFAULT_MOTOR_SLAVE)
 
         self.spin_position_units_per_deg = QDoubleSpinBox()
         self.spin_position_units_per_deg.setRange(0.0001, 1_000_000.0)

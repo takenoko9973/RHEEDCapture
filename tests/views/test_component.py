@@ -2,14 +2,14 @@ import numpy as np
 from PySide6.QtGui import QColor
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.models.hardware.motor_defaults import DEFAULT_MOTOR_SPEED_RPM
-from rheed_capture.views.components.angle_scan_panel import AngleScanPanel
-from rheed_capture.views.components.histogram_viewer import HistogramPanel
-from rheed_capture.views.components.image_viewer import ImageViewer
-from rheed_capture.views.components.motor_settings_panel import MotorSettingsPanel
-from rheed_capture.views.components.preview_panel import PreviewPanel
-from rheed_capture.views.components.sequence_panel import SequencePanel
-from rheed_capture.views.preview_background import (
+from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
+from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
+from rheed_capture.presentation.qt.panels.preview import PreviewPanel
+from rheed_capture.presentation.qt.panels.sequence import SequencePanel
+from rheed_capture.presentation.qt.widgets.histogram_viewer import HistogramPanel
+from rheed_capture.presentation.qt.widgets.image_viewer import ImageViewer
+from rheed_capture.presentation.qt.widgets.preview_background import (
     PreviewBackground,
     PreviewBackgroundStyle,
 )

@@ -14,8 +14,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rheed_capture.models.domain.angle_scan import MAX_SCAN_ANGLE_DEG, MIN_ANGLE_INTERVAL_DEG
-from rheed_capture.models.hardware.motor_defaults import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.domain.angle_scan.model import MAX_SCAN_ANGLE_DEG, MIN_ANGLE_INTERVAL_DEG
+from rheed_capture.infrastructure.config.defaults import (
+    DEFAULT_ANGLE_SCAN_RANGE_DEG,
+    DEFAULT_ANGLE_SCAN_WAIT_AFTER_MOVE_MS,
+    DEFAULT_EXPOSURE_MS_VALUES,
+    DEFAULT_GAIN_VALUES,
+)
 
 
 class AngleScanPanel(QGroupBox):
@@ -45,10 +51,10 @@ class AngleScanPanel(QGroupBox):
         self._connect_signals()
 
     def _create_controls(self) -> None:
-        self.edit_expo = QLineEdit("10, 50, 100")
-        self.edit_gain = QLineEdit("0")
+        self.edit_expo = QLineEdit(self._format_default_values(DEFAULT_EXPOSURE_MS_VALUES))
+        self.edit_gain = QLineEdit(self._format_default_values(DEFAULT_GAIN_VALUES))
 
-        self.spin_range_deg = self._create_scan_range_spinbox(5.0)
+        self.spin_range_deg = self._create_scan_range_spinbox(DEFAULT_ANGLE_SCAN_RANGE_DEG)
         self.spin_interval_deg = QDoubleSpinBox()
         self.spin_interval_deg.setRange(MIN_ANGLE_INTERVAL_DEG, 360.0)
         self.spin_interval_deg.setDecimals(1)
@@ -58,7 +64,7 @@ class AngleScanPanel(QGroupBox):
         self.spin_settling_ms = QDoubleSpinBox()
         self.spin_settling_ms.setRange(0, 600_000)
         self.spin_settling_ms.setDecimals(0)
-        self.spin_settling_ms.setValue(1000)
+        self.spin_settling_ms.setValue(DEFAULT_ANGLE_SCAN_WAIT_AFTER_MOVE_MS)
         self.spin_settling_ms.setSingleStep(100)
         self.spin_settling_ms.setToolTip("Wait after each motor move before capture.")
 
@@ -87,6 +93,10 @@ class AngleScanPanel(QGroupBox):
         self.lbl_progress_status.setMinimumWidth(90)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
+
+    def _format_default_values(self, values: tuple[float, ...] | tuple[int, ...]) -> str:
+        """設定デフォルトの条件リストを、編集欄のカンマ区切り文字列へ変換する。"""
+        return ", ".join(f"{value:g}" for value in values)
 
     def _populate_layout(self, layout: QGridLayout) -> None:
         layout.addWidget(QLabel("Range (deg):"), 0, 0)

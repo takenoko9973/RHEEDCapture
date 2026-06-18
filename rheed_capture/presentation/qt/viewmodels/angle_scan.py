@@ -1,27 +1,25 @@
+from collections.abc import Callable
 from typing import cast
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from rheed_capture.models.domain.angle_scan import (
+from rheed_capture.application.ports.motor import RotationMotor
+from rheed_capture.domain.angle_scan.model import (
+    AngleScanDirection,
     validate_direction,
     validate_interval,
     validate_interval_within_range,
     validate_range,
 )
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.hardware.rotation_motor import (
-    AzdCdRotationMotor,
-    MotorConnectionConfig,
-)
-from rheed_capture.models.io.settings import (
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import (
     AngleScanCaptureSettings,
-    AngleScanDirection,
     AppSettingsData,
     DeviceSettings,
     MotorDeviceSettings,
 )
-from rheed_capture.models.io.storage import ExperimentStorage
-from rheed_capture.services.angle_scan_service import (
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.presentation.qt.workers.angle_scan_service import (
     AngleScanService,
     AngleScanSettings,
 )
@@ -33,6 +31,7 @@ class AngleScanViewModel(QObject):
 
     # ===== 走査実行状態の通知 =====
     progress_updated = Signal(int, int, float)
+    frame_captured = Signal(object)
     angle_scan_finished = Signal(bool, str)
     error_occurred = Signal(str)
 
@@ -55,15 +54,23 @@ class AngleScanViewModel(QObject):
     preview_resume_requested = Signal()
     preview_pause_requested = Signal()
 
-    def __init__(self, camera: CameraDevice, storage: ExperimentStorage) -> None:
+    def __init__(
+        self,
+        camera: CameraDevice,
+        storage: ExperimentStorage,
+        motor_factory: Callable[[str, int, float], RotationMotor] | None = None,
+    ) -> None:
         super().__init__()
         self._camera = camera
         self._storage = storage
+        self._motor_factory = motor_factory
         self._angle_scan_service: AngleScanService | None = None
 
+        scan_defaults = AngleScanCaptureSettings()
+
         # 撮影条件。通常撮影と同じく露光時間とゲインの全組み合わせを使う。
-        self._expo_list: list[float] = [10.0, 50.0, 100.0]
-        self._gain_list: list[int] = [0]
+        self._expo_list = scan_defaults.exposure_ms_list
+        self._gain_list = scan_defaults.gain_list
 
         # モーター装置設定。通信先と角度換算は装置側の条件として保存する。
         motor_defaults = MotorDeviceSettings()
@@ -72,7 +79,6 @@ class AngleScanViewModel(QObject):
         self._position_units_per_deg = motor_defaults.position_units_per_deg
 
         # 角度走査設定。開始時のモーター現在位置を常に相対0degとして扱う。
-        scan_defaults = AngleScanCaptureSettings()
         self._range_deg = scan_defaults.range_deg
         self._interval_deg = scan_defaults.interval_deg
         self._scan_direction: AngleScanDirection = scan_defaults.direction
@@ -256,12 +262,10 @@ class AngleScanViewModel(QObject):
     def start_angle_scan(self) -> None:
         """現在のUI状態からモーターと角度走査サービスを作成して開始する。"""
         try:
-            motor = AzdCdRotationMotor(
-                MotorConnectionConfig(
-                    port=self._motor_port,
-                    slave=self._motor_slave,
-                    position_units_per_deg=self._position_units_per_deg,
-                )
+            motor = self._require_motor_factory()(
+                self._motor_port,
+                self._motor_slave,
+                self._position_units_per_deg,
             )
             settings = AngleScanSettings(
                 range_deg=self._range_deg,
@@ -298,9 +302,17 @@ class AngleScanViewModel(QObject):
         self._connect_angle_scan_service(self._angle_scan_service)
         self._angle_scan_service.start()
 
+    def _require_motor_factory(self) -> Callable[[str, int, float], RotationMotor]:
+        if self._motor_factory is None:
+            msg = "モーター生成処理が設定されていません。"
+            raise RuntimeError(msg)
+
+        return self._motor_factory
+
     def _connect_angle_scan_service(self, service: AngleScanService) -> None:
         """サービスの通知をViewModelの信号へ中継する。"""
         service.progress_update.connect(self.progress_updated)
+        service.frame_captured.connect(self.frame_captured)
         service.scan_finished.connect(self.angle_scan_finished)
         service.error_occurred.connect(self.error_occurred)
         service.preview_resume_requested.connect(self.preview_resume_requested)

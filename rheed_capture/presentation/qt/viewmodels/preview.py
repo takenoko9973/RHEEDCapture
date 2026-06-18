@@ -1,9 +1,9 @@
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 
-from rheed_capture.models.hardware.camera_device import CameraDevice
-from rheed_capture.models.io.settings import PreviewSettings
-from rheed_capture.services.preview_worker import PreviewWorker
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import PreviewSettings
+from rheed_capture.presentation.qt.workers.preview_worker import PreviewWorker
 
 
 class PreviewViewModel(QObject):
@@ -97,3 +97,7 @@ class PreviewViewModel(QObject):
         self._clahe_enabled = enabled
         self._worker.set_processing_enabled(enabled)
         self.clahe_enabled_updated.emit(enabled)
+
+    @Slot(object)
+    def process_captured_frame(self, frame: object) -> None:
+        self._worker.pipeline.process_frame(frame)

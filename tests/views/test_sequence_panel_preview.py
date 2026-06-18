@@ -1,6 +1,6 @@
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.views.components.sequence_panel import SequencePanel
+from rheed_capture.presentation.qt.panels.sequence import SequencePanel
 
 
 def test_sequence_panel_next_preview_label_updates(qtbot: QtBot) -> None:

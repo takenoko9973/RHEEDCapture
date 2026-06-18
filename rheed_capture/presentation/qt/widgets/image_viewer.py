@@ -3,8 +3,8 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QColor, QImage, QPainter, QPaintEvent, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
-from rheed_capture.views.grid_spec import DEFAULT_GRID_SHAPE, normalize_grid_shape
-from rheed_capture.views.preview_background import (
+from rheed_capture.presentation.qt.widgets.grid_spec import DEFAULT_GRID_SHAPE, normalize_grid_shape
+from rheed_capture.presentation.qt.widgets.preview_background import (
     PreviewBackground,
     PreviewBackgroundStyle,
     build_preview_background_brush,

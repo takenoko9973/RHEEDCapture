@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rheed_capture.models.io.settings import PreviewGridSettings
-from rheed_capture.utils import round_sig_figs
-from rheed_capture.views.grid_spec import (
+from rheed_capture.infrastructure.config.schema import PreviewGridSettings
+from rheed_capture.presentation.qt.widgets.exposure_spinbox import ExposureSpinBox
+from rheed_capture.presentation.qt.widgets.grid_spec import (
     DEFAULT_GRID_SHAPE,
     DEFAULT_GRID_SHAPE_OPTIONS,
     ensure_option,
@@ -22,7 +22,7 @@ from rheed_capture.views.grid_spec import (
     normalize_grid_shape,
     parse_grid_shape,
 )
-from rheed_capture.views.widgets.exposure_spinbox import ExposureSpinBox
+from rheed_capture.utils import round_sig_figs
 
 
 class PreviewPanel(QGroupBox):
