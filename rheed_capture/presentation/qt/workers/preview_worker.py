@@ -3,9 +3,14 @@ import time
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
+from rheed_capture.application.ports.camera import CameraError
 from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.presentation.qt.preview.processor import PreviewPipeline
+
+PREVIEW_RETRIEVE_POLL_TIMEOUT_MS = 100
+PREVIEW_IDLE_SLEEP_SEC = 0.02
+PREVIEW_PAUSED_SLEEP_SEC = 0.1
 
 
 class PreviewWorker(QThread):
@@ -41,17 +46,26 @@ class PreviewWorker(QThread):
                 self.preview_paused.emit()
 
             if self._is_paused:
-                time.sleep(0.1)
+                time.sleep(PREVIEW_PAUSED_SLEEP_SEC)
                 continue
 
-            self.camera_device.start_preview_grab()
-            expo_time = self.camera_device.get_exposure()
-            raw_image = self.camera_device.retrieve_preview_frame(
-                timeout_ms=int(expo_time + DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS)
-            )
+            try:
+                self.camera_device.start_preview_grab()
+                exposure_ms = self.camera_device.get_exposure()
+                timeout_ms = min(
+                    int(exposure_ms + DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS),
+                    PREVIEW_RETRIEVE_POLL_TIMEOUT_MS,
+                )
+                raw_image = self.camera_device.retrieve_preview_frame(timeout_ms=timeout_ms)
+            except CameraError as e:
+                self.error_occurred.emit(str(e))
+                time.sleep(PREVIEW_PAUSED_SLEEP_SEC)
+                continue
 
             if raw_image is not None:
                 self.raw_frame_ready.emit(raw_image)
+            else:
+                time.sleep(PREVIEW_IDLE_SLEEP_SEC)
 
     def stop(self) -> None:
         self._is_running = False

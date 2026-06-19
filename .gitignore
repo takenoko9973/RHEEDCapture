@@ -14,4 +14,5 @@ wheels/
 .venv
 .env
 
+data/
 settings.json

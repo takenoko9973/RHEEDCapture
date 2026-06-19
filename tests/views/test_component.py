@@ -1,5 +1,6 @@
 import numpy as np
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QFrame
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
@@ -72,6 +73,8 @@ def test_sequence_panel_validation(qtbot: QtBot) -> None:
         panel.btn_start.click()
 
     assert len(blocker.args) == 0
+    assert panel.lbl_next_sequence_preview.frameShape() != QFrame.Shape.NoFrame
+    assert panel.lbl_next_sequence_preview.minimumWidth() >= 120
 
 
 def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
@@ -88,6 +91,8 @@ def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
     assert panel.btn_direction_negative.text() == "-"
     assert panel.btn_direction_both.text() == "±"
     assert panel.btn_direction_both.isChecked() is True
+    assert panel.lbl_next_angle_scan_preview.frameShape() != QFrame.Shape.NoFrame
+    assert panel.lbl_next_angle_scan_preview.minimumWidth() >= 120
 
 
 def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:
@@ -102,6 +107,18 @@ def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:
     assert panel.lbl_progress_status.text() == "Angle: -0.5 deg"
 
 
+def test_sequence_panel_progress_shows_current_condition(qtbot: QtBot) -> None:
+    panel = SequencePanel()
+    qtbot.addWidget(panel)
+
+    panel.update_progress(2, 5, 50.0, 0)
+
+    assert panel.progress_bar.value() == 2
+    assert panel.progress_bar.maximum() == 5
+    assert panel.progress_bar.format() == "2/5"
+    assert panel.lbl_progress_status.text() == "Condition: 50 ms, gain 0"
+
+
 def test_motor_settings_panel_exposes_position_units_per_deg(qtbot: QtBot) -> None:
     panel = MotorSettingsPanel()
     qtbot.addWidget(panel)
@@ -109,6 +126,7 @@ def test_motor_settings_panel_exposes_position_units_per_deg(qtbot: QtBot) -> No
     assert panel.spin_position_units_per_deg.value() == 31.25
     assert panel.spin_position_units_per_deg.minimum() > 0
     assert panel.spin_position_units_per_deg.decimals() == 4
+    assert "MOCK" in panel.edit_motor_port.toolTip()
 
 
 def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:

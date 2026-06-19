@@ -66,12 +66,14 @@ class _Motor:
 def test_sequence_capture_sorts_conditions_saves_all_and_reports_progress() -> None:
     frame_capturer = _FakeFrameCapturer()
     session = _SequenceSession()
-    progress: list[tuple[int, int]] = []
+    progress: list[tuple[int, int, float, int]] = []
 
     capture = SequenceCapture(frame_capturer, session, [100.0, 10.0], [2, 0])
     capture.run(
         CancellationToken(),
-        on_progress=lambda current, total: progress.append((current, total)),
+        on_progress=lambda current, total, condition: progress.append(
+            (current, total, condition.exposure_ms, condition.gain)
+        ),
     )
 
     assert [(c.exposure_ms, c.gain) for c in frame_capturer.conditions] == [
@@ -81,7 +83,12 @@ def test_sequence_capture_sorts_conditions_saves_all_and_reports_progress() -> N
         (100.0, 2),
     ]
     assert len(session.saved) == 4
-    assert progress == [(1, 4), (2, 4), (3, 4), (4, 4)]
+    assert progress == [
+        (1, 4, 10.0, 0),
+        (2, 4, 10.0, 2),
+        (3, 4, 100.0, 0),
+        (4, 4, 100.0, 2),
+    ]
 
 
 def test_sequence_capture_stops_when_cancelled() -> None:

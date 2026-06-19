@@ -157,18 +157,27 @@ class AzdCdDriver:
         """pyserialのSerialインスタンスを作る。"""
         serial_module = importlib.import_module("serial")
 
-        serial_port = serial_module.Serial(
-            port=config.port,
-            baudrate=config.baudrate,
-            bytesize=serial_module.EIGHTBITS,
-            parity=self._serial_parity(serial_module, config.parity),
-            stopbits=self._serial_stopbits(serial_module, config.stopbits),
-            timeout=config.timeout,
-            write_timeout=config.timeout,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        )
+        try:
+            serial_port = serial_module.Serial(
+                port=config.port,
+                baudrate=config.baudrate,
+                bytesize=serial_module.EIGHTBITS,
+                parity=self._serial_parity(serial_module, config.parity),
+                stopbits=self._serial_stopbits(serial_module, config.stopbits),
+                timeout=config.timeout,
+                write_timeout=config.timeout,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
+            )
+        except (OSError, RuntimeError) as e:
+            msg = (
+                f"モーターのCOMポート '{config.port}' を開けませんでした。"
+                "接続先のポート番号を確認してください。"
+                "実機なしで動作確認する場合は Motor Port に MOCK を入力してください。"
+            )
+            raise RuntimeError(msg) from e
+
         return cast("SerialPort", serial_port)
 
     def _serial_parity(self, serial_module: ModuleType, parity: str) -> str:

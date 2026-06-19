@@ -21,6 +21,7 @@ class MotorSettingsPanel(QGroupBox):
         layout = QFormLayout(self)
 
         self.edit_motor_port = QLineEdit(DEFAULT_MOTOR_PORT)
+        self.edit_motor_port.setToolTip("Use COM port such as COM7, or MOCK for simulation.")
 
         self.spin_motor_slave = QSpinBox()
         self.spin_motor_slave.setRange(1, 247)
