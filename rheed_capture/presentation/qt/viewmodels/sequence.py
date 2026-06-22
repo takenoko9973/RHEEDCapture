@@ -1,22 +1,33 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QObject, Signal, Slot
 
-from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
-from rheed_capture.infrastructure.config.schema import SequenceCaptureSettings
-from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.domain.capture_condition import CaptureCondition
+from rheed_capture.infrastructure.config.schema import (
+    AppSettingsData,
+    SequenceCaptureSettings,
+    filter_existing_float_values,
+    filter_existing_int_values,
+)
 from rheed_capture.presentation.qt.workers.capture_service import CaptureService
-from rheed_capture.utils import parse_numbers
+
+if TYPE_CHECKING:
+    from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+    from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
 
 class CaptureViewModel(QObject):
-    # View (UI) に公開するパススルー用シグナル
-    progress_updated = Signal(int, int, float, int)  # current, total, exposure_ms, gain
+    """Sequence撮影の候補値、選択値、撮影開始を仲介するViewModel。"""
+
+    progress_updated = Signal(int, int, float, int)
     frame_captured = Signal(object)
-    sequence_finished = Signal(bool, str)  # (成功フラグ, 保存先ディレクトリ名)
+    sequence_finished = Signal(bool, str)
     error_occurred = Signal(str)
 
-    # UI表示更新用シグナル（パース・整形済みの綺麗な文字列をUIに返す）
-    expo_text_updated = Signal(str)
-    gain_text_updated = Signal(str)
+    exposure_values_updated = Signal(object, object)
+    gain_values_updated = Signal(object, object)
 
     def __init__(self, camera: CameraDevice, storage: ExperimentStorage) -> None:
         super().__init__()
@@ -24,96 +35,113 @@ class CaptureViewModel(QObject):
         self._storage = storage
         self._capture_service: CaptureService | None = None
 
-        # 撮影条件の状態保持
-        defaults = SequenceCaptureSettings()
-        self._expo_list = defaults.exposure_ms_list
-        self._gain_list = defaults.gain_list
+        defaults = AppSettingsData()
+        # 候補値はSettingsタブと共有、選択値はSequence専用として保持する。
+        self._exposure_ms_values = defaults.exposure_ms_values
+        self._gain_values = defaults.gain_values
+        self._selected_exposure_ms_values = (
+            defaults.sequence_capture.selected_exposure_ms_values
+        )
+        self._selected_gain_values = defaults.sequence_capture.selected_gain_values
 
-    # ====== 設定のロード・セーブ ======
-
-    def load_settings(self, settings: SequenceCaptureSettings) -> None:
-        # 通常シーケンス撮影の設定だけを型付きオブジェクトから読む。
-        self._update_expo_state(settings.exposure_ms_list)
-        self._update_gain_state(settings.gain_list)
+    def load_settings(self, settings: AppSettingsData) -> None:
+        self.update_candidate_values(settings.exposure_ms_values, settings.gain_values)
+        self.update_selected_exposure_ms_values(
+            settings.sequence_capture.selected_exposure_ms_values
+        )
+        self.update_selected_gain_values(settings.sequence_capture.selected_gain_values)
 
     def get_settings_to_save(self) -> SequenceCaptureSettings:
-        # JSONキーはAppSettingsData側で管理するため、ここでは意味のある値だけ返す。
         return SequenceCaptureSettings(
-            exposure_ms_list=self._expo_list,
-            gain_list=self._gain_list,
+            selected_exposure_ms_values=self._selected_exposure_ms_values,
+            selected_gain_values=self._selected_gain_values,
         )
 
-    # ====== 入力バリデーションと状態の更新 ======
+    @Slot(object, object)
+    def update_candidate_values(
+        self,
+        exposure_ms_values: list[float],
+        gain_values: list[int],
+    ) -> None:
+        """候補値の変更をSequence側の選択状態へ反映する。"""
+        self._exposure_ms_values = list(exposure_ms_values)
+        self._gain_values = list(gain_values)
+        # 候補から消えた値は選択状態から除外する。別候補の自動選択はしない。
+        self._selected_exposure_ms_values = filter_existing_float_values(
+            self._selected_exposure_ms_values,
+            set(self._exposure_ms_values),
+        )
+        self._selected_gain_values = filter_existing_int_values(
+            self._selected_gain_values,
+            set(self._gain_values),
+        )
+        self._emit_value_state()
 
-    def _empty_list_error(self) -> None:
-        msg = "リストが空です"
-        raise ValueError(msg)
+    @Slot(list)
+    def update_selected_exposure_ms_values(self, selected_values: list[float]) -> None:
+        """露光時間チップのクリック結果を保存可能な選択値へ正規化する。"""
+        self._selected_exposure_ms_values = filter_existing_float_values(
+            [float(value) for value in selected_values],
+            set(self._exposure_ms_values),
+        )
+        self.exposure_values_updated.emit(
+            self._exposure_ms_values,
+            self._selected_exposure_ms_values,
+        )
 
-    @Slot(str)
-    def update_expo_from_text(self, text: str) -> None:
-        """UIで露光時間が入力された際にパースしてリストを更新する"""
-        try:
-            vals = parse_numbers(text, float)
-            if not vals:
-                self._empty_list_error()
-
-            self._update_expo_state(vals)
-        except ValueError:
-            self.error_occurred.emit(
-                "露光時間の形式が正しくありません。\nカンマ区切りの数値を入力してください。"
-            )
-            # エラー時は、UIの文字を現在保持している正しい状態の文字列に強制的にし戻しする
-            self._update_expo_state(self._expo_list)
-
-    @Slot(str)
-    def update_gain_from_text(self, text: str) -> None:
-        """UIでゲインが入力された際にパースしてリストを更新する"""
-        try:
-            vals = parse_numbers(text, int)
-            if not vals:
-                self._empty_list_error()
-
-            self._update_gain_state(vals)
-        except ValueError:
-            self.error_occurred.emit(
-                "ゲインの形式が正しくありません。\nカンマ区切りの整数を入力してください。"
-            )
-            self._update_gain_state(self._gain_list)
-
-    def _update_expo_state(self, vals: list[float]) -> None:
-        """状態を更新し、UI向けに整形された文字列を通知する"""
-        self._expo_list = vals
-        # 例: [10.0, 50.0] -> "10.0, 50.0" と整形してUIを更新
-        self.expo_text_updated.emit(", ".join(map(str, vals)))
-
-    def _update_gain_state(self, vals: list[int]) -> None:
-        self._gain_list = vals
-        self.gain_text_updated.emit(", ".join(map(str, vals)))
-
-    # ====== 撮影制御 ======
+    @Slot(list)
+    def update_selected_gain_values(self, selected_values: list[int]) -> None:
+        """ゲインチップのクリック結果を保存可能な選択値へ正規化する。"""
+        self._selected_gain_values = filter_existing_int_values(
+            [int(value) for value in selected_values],
+            set(self._gain_values),
+        )
+        self.gain_values_updated.emit(self._gain_values, self._selected_gain_values)
 
     @Slot()
     def start_sequence(self) -> None:
-        """撮影スレッドを生成して開始"""
-        # スレッドのインスタンス化 (実行のたびに作り直す設計を維持)
-        self._capture_service = CaptureService(
-            self._camera, self._storage, self._expo_list, self._gain_list
-        )
+        try:
+            # 撮影開始直前に、選択値の直積を最終的な撮影条件へ解決する。
+            conditions = self._build_capture_conditions()
+        except ValueError as e:
+            self.error_occurred.emit(str(e))
+            self.sequence_finished.emit(False, "")
+            return
 
-        # 内部スレッドのシグナルをViewModelのシグナルに中継する
+        self._capture_service = CaptureService(self._camera, self._storage, conditions)
         self._capture_service.progress_update.connect(self.progress_updated)
         self._capture_service.frame_captured.connect(self.frame_captured)
         self._capture_service.sequence_finished.connect(self.sequence_finished)
         self._capture_service.error_occurred.connect(self.error_occurred)
-
         self._capture_service.start()
 
     @Slot()
     def cancel_sequence(self) -> None:
-        """撮影のキャンセルを要求する"""
         if self.is_running() and self._capture_service:
             self._capture_service.cancel()
 
     def is_running(self) -> bool:
-        """撮影スレッドが実行中かどうかを判定する"""
         return self._capture_service is not None and self._capture_service.isRunning()
+
+    def _build_capture_conditions(self) -> list[CaptureCondition]:
+        """選択された露光時間とゲインの直積から撮影条件を生成する。"""
+        if not self._selected_exposure_ms_values:
+            msg = "露光時間が選択されていません。\n1つ以上の露光時間を選択してください。"
+            raise ValueError(msg)
+        if not self._selected_gain_values:
+            msg = "ゲインが選択されていません。\n1つ以上のゲインを選択してください。"
+            raise ValueError(msg)
+
+        return [
+            CaptureCondition(exposure_ms=exposure_ms, gain=gain)
+            for exposure_ms in self._selected_exposure_ms_values
+            for gain in self._selected_gain_values
+        ]
+
+    def _emit_value_state(self) -> None:
+        """候補値と選択値をセットでViewへ通知する。"""
+        self.exposure_values_updated.emit(
+            self._exposure_ms_values,
+            self._selected_exposure_ms_values,
+        )
+        self.gain_values_updated.emit(self._gain_values, self._selected_gain_values)

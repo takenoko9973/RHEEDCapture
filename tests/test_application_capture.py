@@ -11,7 +11,7 @@ from rheed_capture.application.capture.angle_scan import (
 from rheed_capture.application.capture.cancellation import CancellationToken, CaptureCancelled
 from rheed_capture.application.capture.frame_capturer import CapturedFrame
 from rheed_capture.application.capture.sequence import SequenceCapture
-from rheed_capture.domain.capture_condition import CaptureCondition  # noqa: TC001
+from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.motor.defaults import DEFAULT_POSITION_UNITS_PER_DEG
 
 
@@ -68,7 +68,16 @@ def test_sequence_capture_sorts_conditions_saves_all_and_reports_progress() -> N
     session = _SequenceSession()
     progress: list[tuple[int, int, float, int]] = []
 
-    capture = SequenceCapture(frame_capturer, session, [100.0, 10.0], [2, 0])
+    capture = SequenceCapture(
+        frame_capturer,
+        session,
+        [
+            CaptureCondition(exposure_ms=10.0, gain=0),
+            CaptureCondition(exposure_ms=10.0, gain=2),
+            CaptureCondition(exposure_ms=100.0, gain=0),
+            CaptureCondition(exposure_ms=100.0, gain=2),
+        ],
+    )
     capture.run(
         CancellationToken(),
         on_progress=lambda current, total, condition: progress.append(
@@ -96,7 +105,11 @@ def test_sequence_capture_stops_when_cancelled() -> None:
     session = _SequenceSession()
     token = CancellationToken()
     token.cancel()
-    capture = SequenceCapture(frame_capturer, session, [10.0], [0])
+    capture = SequenceCapture(
+        frame_capturer,
+        session,
+        [CaptureCondition(exposure_ms=10.0, gain=0)],
+    )
 
     with pytest.raises(CaptureCancelled):
         capture.run(token)
@@ -114,8 +127,7 @@ def test_angle_scan_capture_moves_by_plan_saves_angles_and_returns_to_start() ->
         frame_capturer,
         session,
         motor,
-        [10.0],
-        [0],
+        [CaptureCondition(exposure_ms=10.0, gain=0)],
         AngleScanSettings(
             range_deg=1.0,
             interval_deg=0.5,
@@ -158,8 +170,7 @@ def test_angle_scan_capture_waits_before_preview_pause(
         TrackingFrameCapturer(),
         _AngleScanSession(),
         _Motor(),
-        [10.0],
-        [0],
+        [CaptureCondition(exposure_ms=10.0, gain=0)],
         AngleScanSettings(
             range_deg=0.5,
             interval_deg=0.5,
@@ -186,8 +197,7 @@ def test_angle_scan_capture_does_not_capture_internal_zero_on_both_scan() -> Non
         frame_capturer,
         session,
         _Motor(),
-        [10.0],
-        [0],
+        [CaptureCondition(exposure_ms=10.0, gain=0)],
         AngleScanSettings(
             range_deg=0.5,
             interval_deg=0.5,

@@ -25,6 +25,7 @@ from rheed_capture.presentation.qt.capture_coordinator import (
     CaptureCoordinatorHooks,
 )
 from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
+from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
 from rheed_capture.presentation.qt.panels.preview import PreviewPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
@@ -122,6 +123,7 @@ class MainWindow(QMainWindow):
         )
         self.sequence_panel = SequencePanel()
         self.angle_scan_panel = AngleScanPanel()
+        self.capture_chips_panel = CaptureChipsPanel()
         self.motor_settings_panel = MotorSettingsPanel()
         self.capture_tabs = QTabWidget()
         self.capture_tabs.addTab(self.sequence_panel, "Sequence")
@@ -149,6 +151,7 @@ class MainWindow(QMainWindow):
         settings_layout = QVBoxLayout(settings_tab)
         settings_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.addWidget(self.capture_chips_panel)
         settings_layout.addWidget(self.motor_settings_panel)
 
         self.control_tabs.addTab(capture_tab, "Capture")
@@ -196,11 +199,17 @@ class MainWindow(QMainWindow):
 
     def _setup_sequence_bindings(self) -> None:
         """通常シーケンス撮影の結線。"""
-        self.sequence_panel.expo_text_edited.connect(self.capture_vm.update_expo_from_text)
-        self.sequence_panel.gain_text_edited.connect(self.capture_vm.update_gain_from_text)
-
-        self.capture_vm.expo_text_updated.connect(self.sequence_panel.update_expo_ui)
-        self.capture_vm.gain_text_updated.connect(self.sequence_panel.update_gain_ui)
+        # パネルはチップの選択値だけを通知する。
+        self.sequence_panel.exposure_selection_changed.connect(
+            self.capture_vm.update_selected_exposure_ms_values
+        )
+        self.sequence_panel.gain_selection_changed.connect(
+            self.capture_vm.update_selected_gain_values
+        )
+        self.capture_vm.exposure_values_updated.connect(
+            self.sequence_panel.update_exposure_values
+        )
+        self.capture_vm.gain_values_updated.connect(self.sequence_panel.update_gain_values)
 
         self.sequence_panel.start_requested.connect(self._on_start_sequence_requested)
         self.sequence_panel.cancel_requested.connect(self.capture_vm.cancel_sequence)
@@ -212,8 +221,13 @@ class MainWindow(QMainWindow):
 
     def _setup_angle_scan_bindings(self) -> None:
         """角度走査撮影の結線。"""
-        self.angle_scan_panel.expo_text_edited.connect(self.angle_scan_vm.update_expo_from_text)
-        self.angle_scan_panel.gain_text_edited.connect(self.angle_scan_vm.update_gain_from_text)
+        # Angle Scanの選択状態は専用ViewModelで保持する。
+        self.angle_scan_panel.exposure_selection_changed.connect(
+            self.angle_scan_vm.update_selected_exposure_ms_values
+        )
+        self.angle_scan_panel.gain_selection_changed.connect(
+            self.angle_scan_vm.update_selected_gain_values
+        )
         self.angle_scan_panel.range_angle_changed.connect(self.angle_scan_vm.update_range_angle)
         self.angle_scan_panel.interval_angle_changed.connect(
             self.angle_scan_vm.update_interval_angle
@@ -227,8 +241,12 @@ class MainWindow(QMainWindow):
         )
         self.angle_scan_panel.scan_direction_changed.connect(self.angle_scan_vm.update_scan_direction)
 
-        self.angle_scan_vm.expo_text_updated.connect(self.angle_scan_panel.update_expo_ui)
-        self.angle_scan_vm.gain_text_updated.connect(self.angle_scan_panel.update_gain_ui)
+        self.angle_scan_vm.exposure_values_updated.connect(
+            self.angle_scan_panel.update_exposure_values
+        )
+        self.angle_scan_vm.gain_values_updated.connect(
+            self.angle_scan_panel.update_gain_values
+        )
         self.angle_scan_vm.range_angle_updated.connect(
             self.angle_scan_panel.update_range_angle_ui
         )
@@ -258,6 +276,12 @@ class MainWindow(QMainWindow):
 
     def _setup_motor_settings_bindings(self) -> None:
         """モーター装置設定の結線。"""
+        # 候補値変更は両撮影モードへ反映する。
+        self.capture_chips_panel.exposure_values_changed.connect(
+            self._on_exposure_values_changed
+        )
+        self.capture_chips_panel.gain_values_changed.connect(self._on_gain_values_changed)
+        self.capture_chips_panel.error_occurred.connect(self._show_error)
         self.motor_settings_panel.motor_port_edited.connect(self.angle_scan_vm.update_motor_port)
         self.motor_settings_panel.motor_slave_changed.connect(self.angle_scan_vm.update_motor_slave)
         self.motor_settings_panel.position_units_per_deg_changed.connect(
@@ -374,9 +398,25 @@ class MainWindow(QMainWindow):
             self._update_storage_display(refresh_counters=False)
 
         self.preview_vm.load_settings(settings.preview)
-        self.capture_vm.load_settings(settings.sequence_capture)
+        # 候補値を表示してから、各撮影ViewModelへ選択状態を流す。
+        self.capture_chips_panel.set_values(settings.exposure_ms_values, settings.gain_values)
+        self.capture_vm.load_settings(settings)
         self.angle_scan_vm.load_settings(settings)
         self._apply_grid_settings(settings.preview)
+
+    @Slot(list)
+    def _on_exposure_values_changed(self, exposure_ms_values: list[float]) -> None:
+        """露光時間候補の変更を、両撮影モードのチップ候補へ伝播する。"""
+        gain_values = self.capture_chips_panel.gain_values()
+        self.capture_vm.update_candidate_values(exposure_ms_values, gain_values)
+        self.angle_scan_vm.update_candidate_values(exposure_ms_values, gain_values)
+
+    @Slot(list)
+    def _on_gain_values_changed(self, gain_values: list[int]) -> None:
+        """ゲイン候補の変更を、両撮影モードのチップ候補へ伝播する。"""
+        exposure_ms_values = self.capture_chips_panel.exposure_ms_values()
+        self.capture_vm.update_candidate_values(exposure_ms_values, gain_values)
+        self.angle_scan_vm.update_candidate_values(exposure_ms_values, gain_values)
 
     def _apply_grid_settings(self, settings: PreviewSettings) -> None:
         # Grid は Panel(操作状態) と Viewer(描画状態) の両方へ同時反映する。
@@ -400,6 +440,9 @@ class MainWindow(QMainWindow):
         )
         settings_to_save = AppSettingsData(
             root_dir=self.storage_panel.get_settings_to_save().root_dir,
+            # 候補値と撮影モード別の選択状態をまとめて保存する。
+            exposure_ms_values=self.capture_chips_panel.exposure_ms_values(),
+            gain_values=self.capture_chips_panel.gain_values(),
             preview=preview_settings,
             sequence_capture=self.capture_vm.get_settings_to_save(),
             angle_scan=self.angle_scan_vm.get_angle_scan_settings(),

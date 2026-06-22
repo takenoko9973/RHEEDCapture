@@ -5,6 +5,7 @@ from pytestqt.qtbot import QtBot
 
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
 from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
+from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
 from rheed_capture.presentation.qt.panels.preview import PreviewPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
@@ -51,23 +52,20 @@ def test_preview_panel_sync(qtbot: QtBot) -> None:
     assert blocker.args[0] == 15
 
 
-def test_sequence_panel_validation(qtbot: QtBot) -> None:
-    """SequencePanelの入力バリデーションテスト"""
+def test_sequence_panel_chip_selection(qtbot: QtBot) -> None:
+    """SequencePanelのチップ選択テスト"""
     panel = SequencePanel()
     qtbot.addWidget(panel)
+    panel.update_exposure_values([10.0, 20.0], [10.0])
+    panel.update_gain_values([0, 1], [0])
 
-    # 正常な入力
-    panel.edit_seq_expo.setText("10, 20, 30")
-    with qtbot.waitSignal(panel.expo_text_edited, timeout=1000) as blocker:
-        # ユーザーがEnterを押すかフォーカスを外した操作をエミュレート
-        panel.edit_seq_expo.editingFinished.emit()
-    assert blocker.args[0] == "10, 20, 30"
+    with qtbot.waitSignal(panel.exposure_selection_changed, timeout=1000) as blocker:
+        panel.exposure_selector._buttons[20.0].click()  # noqa: SLF001
+    assert blocker.args[0] == [10.0, 20.0]
 
-    panel.edit_seq_gain.setText("1, 30")
-    with qtbot.waitSignal(panel.gain_text_edited, timeout=1000) as blocker:
-        # ユーザーがEnterを押すかフォーカスを外した操作をエミュレート
-        panel.edit_seq_gain.editingFinished.emit()
-    assert blocker.args[0] == "1, 30"
+    with qtbot.waitSignal(panel.gain_selection_changed, timeout=1000) as blocker:
+        panel.gain_selector._buttons[0].click()  # noqa: SLF001
+    assert blocker.args[0] == []
 
     with qtbot.waitSignal(panel.start_requested, timeout=1000) as blocker:
         panel.btn_start.click()
@@ -87,12 +85,36 @@ def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
     assert panel.spin_range_deg.maximum() == 90.0
     assert panel.spin_motor_speed_rpm.value() == DEFAULT_MOTOR_SPEED_RPM
     assert panel.chk_return_to_start.text() == "Return to Start"
+    assert panel.capture_settings_separator.frameShape() == QFrame.Shape.HLine
     assert panel.btn_direction_positive.text() == "+"
     assert panel.btn_direction_negative.text() == "-"
     assert panel.btn_direction_both.text() == "±"
     assert panel.btn_direction_both.isChecked() is True
+    panel.update_exposure_values([10.0], [10.0])
+    panel.update_gain_values([0], [0])
+    assert panel.exposure_selector._buttons[10.0].text() == "10"  # noqa: SLF001
+    assert panel.gain_selector._buttons[0].text() == "0"  # noqa: SLF001
     assert panel.lbl_next_angle_scan_preview.frameShape() != QFrame.Shape.NoFrame
     assert panel.lbl_next_angle_scan_preview.minimumWidth() >= 120
+
+
+def test_capture_chips_panel_uses_comma_separated_inputs(qtbot: QtBot) -> None:
+    panel = CaptureChipsPanel()
+    qtbot.addWidget(panel)
+    panel.set_values([10.0, 50.0], [0, 5])
+
+    assert panel.edit_exposure_values.text() == "10, 50"
+    assert panel.edit_gain_values.text() == "0, 5"
+
+    panel.edit_exposure_values.setText("10, 50, 100")
+    with qtbot.waitSignal(panel.exposure_values_changed, timeout=1000) as blocker:
+        panel.edit_exposure_values.editingFinished.emit()
+    assert blocker.args[0] == [10.0, 50.0, 100.0]
+
+    panel.edit_gain_values.setText("0, G5")
+    with qtbot.waitSignal(panel.error_occurred, timeout=1000):
+        panel.edit_gain_values.editingFinished.emit()
+    assert panel.edit_gain_values.text() == "0, 5"
 
 
 def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:

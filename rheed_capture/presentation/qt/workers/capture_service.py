@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 class CaptureService(CaptureWorker):
+    """SequenceCaptureをQtスレッド上で実行するService。"""
+
     progress_update = Signal(int, int, float, int)
     sequence_finished = Signal(bool, str)
 
@@ -29,15 +31,14 @@ class CaptureService(CaptureWorker):
         self,
         camera_device: CameraDevice,
         storage: ExperimentStorage,
-        exposure_list: list[float],
-        gain_list: list[int],
+        conditions: list[CaptureCondition],
         parent: QObject | None = None,
     ) -> None:
         self.camera = camera_device
         self.storage = storage
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
-        self._exposure_list = exposure_list
-        self._gain_list = gain_list
+        # 開始後にUI側の選択が変わっても、今回の撮影条件は固定する。
+        self._conditions = list(conditions)
         super().__init__(self._run_sequence_capture, parent=parent)
         self.finished.connect(self.sequence_finished)
 
@@ -45,11 +46,11 @@ class CaptureService(CaptureWorker):
         logger.info("撮影シーケンスを開始します...")
 
         session = self.storage.start_sequence_session()
+        # Application層には解決済み条件だけを渡す。
         capture = SequenceCapture(
             FrameCapturer(self.camera, max_retries=self.max_retries),
             session,
-            self._exposure_list,
-            self._gain_list,
+            self._conditions,
         )
 
         def emit_progress(

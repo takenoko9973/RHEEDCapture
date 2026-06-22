@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -25,13 +24,13 @@ from rheed_capture.domain.angle_scan.plan import (
     MotorAngleCalibration,
     build_angle_scan_plan,
 )
-from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_RETRY_LIMIT
 
 if TYPE_CHECKING:
     from rheed_capture.application.capture.cancellation import CancellationToken
     from rheed_capture.application.ports.motor import RotationMotor
     from rheed_capture.application.ports.storage import AngleScanSession
+    from rheed_capture.domain.capture_condition import CaptureCondition
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -83,8 +82,7 @@ class AngleScanCapture:
         frame_capturer: FrameCapture,
         session: AngleScanSession,
         motor: RotationMotor,
-        exposure_list: list[float],
-        gain_list: list[int],
+        conditions: list[CaptureCondition],
         settings: AngleScanSettings,
     ) -> None:
         self.frame_capturer = frame_capturer
@@ -94,10 +92,12 @@ class AngleScanCapture:
 
         self.calibration = MotorAngleCalibration(settings.position_units_per_deg)
         self.plan = self._build_plan(settings)
-        self.conditions = [
-            CaptureCondition(exposure_ms=exposure_ms, gain=gain)
-            for exposure_ms, gain in itertools.product(sorted(exposure_list), sorted(gain_list))
-        ]
+        # 呼び出し元のリスト変更が撮影中に影響しないよう、開始時点の条件をコピーする。
+        self.conditions = list(conditions)
+        if not self.conditions:
+            # 空条件では総撮影枚数もscan.jsonの意味も成立しないため、実行前に止める。
+            msg = "撮影条件がありません。"
+            raise ValueError(msg)
         self.total_shots = len(self.plan.capture_angles) * len(self.conditions)
         self._current_target_units = 0
 
@@ -242,14 +242,13 @@ def build_angle_scan_document(
     )
 
 
-def build_angle_scan_document_from_lists(
+def build_angle_scan_document_from_conditions(
     *,
     settings: AngleScanSettings,
-    exposure_list: list[float],
-    gain_list: list[int],
+    conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
 ) -> AngleScanDocument:
-    """Presentation側が角度計画ロジックを持たずにscan.jsonモデルを事前生成する。"""
+    """角度計画と撮影条件からscan.jsonモデルを事前生成する。"""
     calibration = MotorAngleCalibration(settings.position_units_per_deg)
     plan = build_angle_scan_plan(
         range_deg=settings.range_deg,
@@ -257,11 +256,6 @@ def build_angle_scan_document_from_lists(
         direction=settings.direction,
         calibration=calibration,
     )
-
-    conditions = [
-        CaptureCondition(exposure_ms=exposure_ms, gain=gain)
-        for exposure_ms, gain in itertools.product(sorted(exposure_list), sorted(gain_list))
-    ]
 
     return build_angle_scan_document(
         settings=settings,

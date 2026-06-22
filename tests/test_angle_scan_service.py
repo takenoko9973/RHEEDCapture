@@ -11,6 +11,7 @@ from rheed_capture.domain.angle_scan.plan import (
     build_angle_list,
     build_motion_unit_deltas,
 )
+from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.motor.defaults import DEFAULT_POSITION_UNITS_PER_DEG
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
@@ -36,6 +37,10 @@ def device_angle_to_position_units(angle_deg: float) -> int:
         angle_deg,
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
     )
+
+
+def capture_conditions() -> list[CaptureCondition]:
+    return [CaptureCondition(exposure_ms=10.0, gain=0)]
 
 
 def test_build_angle_list_uses_current_position_as_zero() -> None:
@@ -69,7 +74,7 @@ def test_angle_scan_service_moves_by_delta_and_saves(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
+    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -111,7 +116,7 @@ def test_angle_scan_service_saves_positive_interval_for_negative_scan(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
+    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -159,7 +164,7 @@ def test_angle_scan_service_scans_opposite_direction_after_returning_to_zero(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
+    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -199,7 +204,7 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, [10.0], [0], settings)
+    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -230,8 +235,7 @@ def test_angle_scan_service_rejects_invalid_interval(
             mock_camera,
             ExperimentStorage(tmp_path),
             MagicMock(),
-            [10.0],
-            [0],
+            capture_conditions(),
             AngleScanSettings(
                 range_deg=1.0,
                 interval_deg=interval_deg,
@@ -251,8 +255,7 @@ def test_angle_scan_service_rejects_out_of_range_range(
             mock_camera,
             ExperimentStorage(tmp_path),
             MagicMock(),
-            [10.0],
-            [0],
+            capture_conditions(),
             AngleScanSettings(
                 range_deg=90.5,
                 interval_deg=0.5,
@@ -272,8 +275,7 @@ def test_angle_scan_service_rejects_interval_larger_than_range(
             mock_camera,
             ExperimentStorage(tmp_path),
             MagicMock(),
-            [10.0],
-            [0],
+            capture_conditions(),
             AngleScanSettings(
                 range_deg=1.0,
                 interval_deg=1.5,
@@ -319,8 +321,7 @@ def test_angle_scan_service_rejects_invalid_position_units_per_deg(
             mock_camera,
             ExperimentStorage(tmp_path),
             MagicMock(),
-            [10.0],
-            [0],
+            capture_conditions(),
             AngleScanSettings(
                 range_deg=1.0,
                 interval_deg=0.5,

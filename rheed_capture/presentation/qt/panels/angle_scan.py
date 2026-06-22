@@ -3,11 +3,11 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QDoubleSpinBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QProgressBar,
     QPushButton,
     QToolButton,
@@ -19,21 +19,22 @@ from rheed_capture.domain.angle_scan.model import MAX_SCAN_ANGLE_DEG, MIN_ANGLE_
 from rheed_capture.infrastructure.config.defaults import (
     DEFAULT_ANGLE_SCAN_RANGE_DEG,
     DEFAULT_ANGLE_SCAN_WAIT_AFTER_MOVE_MS,
-    DEFAULT_EXPOSURE_MS_VALUES,
-    DEFAULT_GAIN_VALUES,
 )
 from rheed_capture.presentation.qt.widgets.capture_controls import (
     configure_capture_buttons,
     configure_next_capture_label,
 )
+from rheed_capture.presentation.qt.widgets.chip_selector import ChipSelector, ChipValue
 
 
 class AngleScanPanel(QGroupBox):
+    """Angle Scan撮影の操作パネル。"""
+
     start_requested = Signal()
     cancel_requested = Signal()
 
-    expo_text_edited = Signal(str)
-    gain_text_edited = Signal(str)
+    exposure_selection_changed = Signal(list)
+    gain_selection_changed = Signal(list)
     range_angle_changed = Signal(float)
     interval_angle_changed = Signal(float)
     settling_time_changed = Signal(int)
@@ -55,8 +56,8 @@ class AngleScanPanel(QGroupBox):
         self._connect_signals()
 
     def _create_controls(self) -> None:
-        self.edit_expo = QLineEdit(self._format_default_values(DEFAULT_EXPOSURE_MS_VALUES))
-        self.edit_gain = QLineEdit(self._format_default_values(DEFAULT_GAIN_VALUES))
+        self.exposure_selector = ChipSelector()
+        self.gain_selector = ChipSelector()
 
         self.spin_range_deg = self._create_scan_range_spinbox(DEFAULT_ANGLE_SCAN_RANGE_DEG)
         self.spin_interval_deg = QDoubleSpinBox()
@@ -96,12 +97,12 @@ class AngleScanPanel(QGroupBox):
         configure_capture_buttons(self.btn_start, self.btn_cancel)
         self.lbl_progress_status = QLabel("Angle: -")
         self.lbl_progress_status.setMinimumWidth(90)
+        # 回転設定と撮影条件設定を分ける水平線。
+        self.capture_settings_separator = QFrame()
+        self.capture_settings_separator.setFrameShape(QFrame.Shape.HLine)
+        self.capture_settings_separator.setFrameShadow(QFrame.Shadow.Sunken)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
-
-    def _format_default_values(self, values: tuple[float, ...] | tuple[int, ...]) -> str:
-        """設定デフォルトの条件リストを、編集欄のカンマ区切り文字列へ変換する。"""
-        return ", ".join(f"{value:g}" for value in values)
 
     def _populate_layout(self, layout: QGridLayout) -> None:
         layout.addWidget(QLabel("Range (deg):"), 0, 0)
@@ -115,19 +116,13 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(QLabel("Direction:"), 2, 0)
         layout.addWidget(self._create_direction_widget(), 2, 1, 1, 3)
 
-        layout.addWidget(
-            self.chk_return_to_start,
-            3,
-            0,
-            1,
-            2,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-        )
-
-        layout.addWidget(QLabel("Exposures (ms):"), 4, 0)
-        layout.addWidget(self.edit_expo, 4, 1, 1, 3)
-        layout.addWidget(QLabel("Gains:"), 5, 0)
-        layout.addWidget(self.edit_gain, 5, 1, 1, 3)
+        # ここから下は撮影条件。
+        layout.addWidget(self.capture_settings_separator, 3, 0, 1, 4)
+        # チップ内には単位を出さない。
+        layout.addWidget(QLabel("Exposure (ms):"), 4, 0)
+        layout.addWidget(self.exposure_selector, 4, 1, 1, 3)
+        layout.addWidget(QLabel("Gain:"), 5, 0)
+        layout.addWidget(self.gain_selector, 5, 1, 1, 3)
         layout.addWidget(self._create_capture_button_widget(), 6, 0, 1, 4)
         layout.addWidget(self.progress_bar, 7, 0, 1, 3)
         layout.addWidget(
@@ -140,12 +135,8 @@ class AngleScanPanel(QGroupBox):
         layout.setColumnStretch(3, 1)
 
     def _connect_signals(self) -> None:
-        self.edit_expo.editingFinished.connect(
-            lambda: self.expo_text_edited.emit(self.edit_expo.text())
-        )
-        self.edit_gain.editingFinished.connect(
-            lambda: self.gain_text_edited.emit(self.edit_gain.text())
-        )
+        self.exposure_selector.selection_changed.connect(self.exposure_selection_changed.emit)
+        self.gain_selector.selection_changed.connect(self.gain_selection_changed.emit)
         self.spin_range_deg.valueChanged.connect(self.range_angle_changed.emit)
         self.spin_interval_deg.valueChanged.connect(self.interval_angle_changed.emit)
         self.spin_settling_ms.valueChanged.connect(
@@ -182,6 +173,8 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(self.btn_direction_negative)
         layout.addWidget(self.btn_direction_both)
         layout.addStretch(1)
+        # 復帰設定は回転方向の近くにまとめる。
+        layout.addWidget(self.chk_return_to_start)
         return widget
 
     def _create_capture_button_widget(self) -> QWidget:
@@ -206,13 +199,23 @@ class AngleScanPanel(QGroupBox):
     def _id_to_direction(button_id: int) -> str:
         return {1: "positive", 2: "negative", 3: "both"}[button_id]
 
-    @Slot(str)
-    def update_expo_ui(self, text: str) -> None:
-        self.edit_expo.setText(text)
+    @Slot(object, object)
+    def update_exposure_values(
+        self,
+        values: list[ChipValue],
+        selected_values: list[ChipValue],
+    ) -> None:
+        """候補値と選択値を受け取り、露光時間チップを再描画する。"""
+        self.exposure_selector.set_values(values, selected_values)
 
-    @Slot(str)
-    def update_gain_ui(self, text: str) -> None:
-        self.edit_gain.setText(text)
+    @Slot(object, object)
+    def update_gain_values(
+        self,
+        values: list[ChipValue],
+        selected_values: list[ChipValue],
+    ) -> None:
+        """候補値と選択値を受け取り、ゲインチップを再描画する。"""
+        self.gain_selector.set_values(values, selected_values)
 
     @Slot(float)
     def update_range_angle_ui(self, value: float) -> None:
@@ -254,6 +257,9 @@ class AngleScanPanel(QGroupBox):
     def set_capturing_state(self, is_capturing: bool) -> None:
         self.btn_start.setEnabled(not is_capturing)
         self.btn_cancel.setEnabled(is_capturing)
+        # 撮影中は条件変更を止める。
+        self.exposure_selector.setEnabled(not is_capturing)
+        self.gain_selector.setEnabled(not is_capturing)
         if is_capturing:
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0/%m")
