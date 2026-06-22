@@ -46,10 +46,12 @@ def mock_settings() -> types.GeneratorType:
     with patch("rheed_capture.presentation.qt.main_window.AppSettings") as mock_app_settings:
         mock_app_settings.load.return_value = AppSettingsData(
             root_dir="dummy/root",
+            exposure_ms_values=[10.0, 20.0],
+            gain_values=[0, 1],
             preview=PreviewSettings(exposure_ms=15.5, gain=2, enable_clahe=True),
             sequence_capture=SequenceCaptureSettings(
-                exposure_ms_list=[10.0, 20.0],
-                gain_list=[0, 1],
+                selected_exposure_ms_values=[10.0, 20.0],
+                selected_gain_values=[0, 1],
             ),
         )
         yield mock_app_settings

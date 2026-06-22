@@ -50,6 +50,8 @@ def mock_settings() -> types.GeneratorType:
     with patch("rheed_capture.presentation.qt.main_window.AppSettings") as mock_app_settings:
         mock_app_settings.load.return_value = AppSettingsData(
             root_dir="dummy/root",
+            exposure_ms_values=[10.0, 20.0],
+            gain_values=[0, 1],
             preview=PreviewSettings(
                 exposure_ms=15.5,
                 gain=2,
@@ -59,12 +61,12 @@ def mock_settings() -> types.GeneratorType:
                 grid_cols=8,
             ),
             sequence_capture=SequenceCaptureSettings(
-                exposure_ms_list=[10.0, 20.0],
-                gain_list=[0, 1],
+                selected_exposure_ms_values=[10.0, 20.0],
+                selected_gain_values=[0, 1],
             ),
             angle_scan=AngleScanCaptureSettings(
-                exposure_ms_list=[10.0, 20.0],
-                gain_list=[0, 1],
+                selected_exposure_ms_values=[10.0],
+                selected_gain_values=[0],
                 range_deg=5.0,
                 direction="both",
                 motor_speed_rpm=4.0,
@@ -89,8 +91,12 @@ def test_main_window_initialization(
     assert window.preview_panel.spin_expo.value() == 15.5
     assert window.preview_panel.chk_show_grid.isChecked() is True
     assert window.preview_panel.cmb_grid_shape.currentText() == "8x8"
-    assert window.sequence_panel.edit_seq_expo.text() == "10.0, 20.0"
-    assert window.angle_scan_panel.edit_expo.text() == "10.0, 20.0"
+    assert window.capture_chips_panel.edit_exposure_values.text() == "10, 20"
+    assert window.capture_chips_panel.edit_gain_values.text() == "0, 1"
+    assert window.sequence_panel.exposure_selector.selected_values() == [10.0, 20.0]
+    assert window.sequence_panel.gain_selector.selected_values() == [0, 1]
+    assert window.angle_scan_panel.exposure_selector.selected_values() == [10.0]
+    assert window.angle_scan_panel.gain_selector.selected_values() == [0]
     assert window.angle_scan_panel.spin_range_deg.value() == 5.0
     assert window.angle_scan_panel.btn_direction_both.isChecked() is True
     assert window.angle_scan_panel.spin_motor_speed_rpm.value() == 4.0
@@ -137,8 +143,10 @@ def test_settings_save_on_close(
     assert saved_data.preview.show_grid is False
     assert saved_data.preview.grid_rows == 2
     assert saved_data.preview.grid_cols == 2
-    assert saved_data.sequence_capture.exposure_ms_list == [10.0, 20.0]
-    assert saved_data.angle_scan.exposure_ms_list == [10.0, 20.0]
+    assert saved_data.exposure_ms_values == [10.0, 20.0]
+    assert saved_data.gain_values == [0, 1]
+    assert saved_data.sequence_capture.selected_exposure_ms_values == [10.0, 20.0]
+    assert saved_data.angle_scan.selected_exposure_ms_values == [10.0]
     assert saved_data.angle_scan.range_deg == 5.0
     assert saved_data.angle_scan.direction == "both"
     assert saved_data.angle_scan.motor_speed_rpm == 4.0

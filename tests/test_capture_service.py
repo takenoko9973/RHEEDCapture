@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.workers.capture_service import CaptureService
@@ -30,10 +31,14 @@ def test_successful_capture_sequence(
     qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock
 ) -> None:
     """正常な撮影シーケンスが仕様通りに実行されるかテスト"""
-    exposure_list = [10.0, 100.0]
-    gain_list = [0, 1]
+    conditions = [
+        CaptureCondition(exposure_ms=10.0, gain=0),
+        CaptureCondition(exposure_ms=10.0, gain=1),
+        CaptureCondition(exposure_ms=100.0, gain=0),
+        CaptureCondition(exposure_ms=100.0, gain=1),
+    ]
 
-    service = CaptureService(mock_camera, mock_storage, exposure_list, gain_list)
+    service = CaptureService(mock_camera, mock_storage, conditions)
 
     with qtbot.waitSignal(service.sequence_finished, timeout=5000) as blocker:
         service.start()
@@ -50,13 +55,12 @@ def test_successful_capture_sequence(
 
 def test_capture_retry_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:
     """エラー時にリトライが行われ、3回目で失敗する場合は中断されるかテスト"""
-    exposure_list = [10.0]
-    gain_list = [0]
+    conditions = [CaptureCondition(exposure_ms=10.0, gain=0)]
 
     # grab_one が常に例外を投げるように設定
     mock_camera.grab_one.side_effect = RuntimeError("Mock Camera Error")
 
-    service = CaptureService(mock_camera, mock_storage, exposure_list, gain_list)
+    service = CaptureService(mock_camera, mock_storage, conditions)
 
     with qtbot.waitSignal(service.sequence_finished, timeout=5000) as blocker:
         service.start()
