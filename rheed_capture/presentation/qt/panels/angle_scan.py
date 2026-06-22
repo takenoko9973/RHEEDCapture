@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QDoubleSpinBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -27,6 +28,8 @@ from rheed_capture.presentation.qt.widgets.chip_selector import ChipSelector, Ch
 
 
 class AngleScanPanel(QGroupBox):
+    """Angle Scan撮影の操作パネル。"""
+
     start_requested = Signal()
     cancel_requested = Signal()
 
@@ -94,6 +97,10 @@ class AngleScanPanel(QGroupBox):
         configure_capture_buttons(self.btn_start, self.btn_cancel)
         self.lbl_progress_status = QLabel("Angle: -")
         self.lbl_progress_status.setMinimumWidth(90)
+        # 回転設定と撮影条件設定を分ける水平線。
+        self.capture_settings_separator = QFrame()
+        self.capture_settings_separator.setFrameShape(QFrame.Shape.HLine)
+        self.capture_settings_separator.setFrameShadow(QFrame.Shadow.Sunken)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
 
@@ -109,15 +116,9 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(QLabel("Direction:"), 2, 0)
         layout.addWidget(self._create_direction_widget(), 2, 1, 1, 3)
 
-        layout.addWidget(
-            self.chk_return_to_start,
-            3,
-            0,
-            1,
-            2,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-        )
-
+        # ここから下は撮影条件。
+        layout.addWidget(self.capture_settings_separator, 3, 0, 1, 4)
+        # チップ内には単位を出さない。
         layout.addWidget(QLabel("Exposure (ms):"), 4, 0)
         layout.addWidget(self.exposure_selector, 4, 1, 1, 3)
         layout.addWidget(QLabel("Gain:"), 5, 0)
@@ -172,6 +173,8 @@ class AngleScanPanel(QGroupBox):
         layout.addWidget(self.btn_direction_negative)
         layout.addWidget(self.btn_direction_both)
         layout.addStretch(1)
+        # 復帰設定は回転方向の近くにまとめる。
+        layout.addWidget(self.chk_return_to_start)
         return widget
 
     def _create_capture_button_widget(self) -> QWidget:
@@ -202,6 +205,7 @@ class AngleScanPanel(QGroupBox):
         values: list[ChipValue],
         selected_values: list[ChipValue],
     ) -> None:
+        """候補値と選択値を受け取り、露光時間チップを再描画する。"""
         self.exposure_selector.set_values(values, selected_values)
 
     @Slot(object, object)
@@ -210,6 +214,7 @@ class AngleScanPanel(QGroupBox):
         values: list[ChipValue],
         selected_values: list[ChipValue],
     ) -> None:
+        """候補値と選択値を受け取り、ゲインチップを再描画する。"""
         self.gain_selector.set_values(values, selected_values)
 
     @Slot(float)
@@ -252,6 +257,7 @@ class AngleScanPanel(QGroupBox):
     def set_capturing_state(self, is_capturing: bool) -> None:
         self.btn_start.setEnabled(not is_capturing)
         self.btn_cancel.setEnabled(is_capturing)
+        # 撮影中は条件変更を止める。
         self.exposure_selector.setEnabled(not is_capturing)
         self.gain_selector.setEnabled(not is_capturing)
         if is_capturing:

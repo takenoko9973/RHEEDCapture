@@ -85,6 +85,7 @@ def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
     assert panel.spin_range_deg.maximum() == 90.0
     assert panel.spin_motor_speed_rpm.value() == DEFAULT_MOTOR_SPEED_RPM
     assert panel.chk_return_to_start.text() == "Return to Start"
+    assert panel.capture_settings_separator.frameShape() == QFrame.Shape.HLine
     assert panel.btn_direction_positive.text() == "+"
     assert panel.btn_direction_negative.text() == "-"
     assert panel.btn_direction_both.text() == "±"
