@@ -92,8 +92,10 @@ class AngleScanCapture:
 
         self.calibration = MotorAngleCalibration(settings.position_units_per_deg)
         self.plan = self._build_plan(settings)
+        # 呼び出し元のリスト変更が撮影中に影響しないよう、開始時点の条件をコピーする。
         self.conditions = list(conditions)
         if not self.conditions:
+            # 空条件では総撮影枚数もscan.jsonの意味も成立しないため、実行前に止める。
             msg = "撮影条件がありません。"
             raise ValueError(msg)
         self.total_shots = len(self.plan.capture_angles) * len(self.conditions)
@@ -246,7 +248,7 @@ def build_angle_scan_document_from_conditions(
     conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
 ) -> AngleScanDocument:
-    """Presentation側が角度計画ロジックを持たずにscan.jsonモデルを事前生成する。"""
+    """角度計画と撮影条件からscan.jsonモデルを事前生成する。"""
     calibration = MotorAngleCalibration(settings.position_units_per_deg)
     plan = build_angle_scan_plan(
         range_deg=settings.range_deg,

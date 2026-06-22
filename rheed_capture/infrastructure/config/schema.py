@@ -35,14 +35,17 @@ from rheed_capture.infrastructure.motor.defaults import (
 
 
 def _default_exposure_ms_values() -> list[float]:
+    """Settings画面の露光時間候補リストの既定値。"""
     return list(DEFAULT_EXPOSURE_MS_VALUES)
 
 
 def _default_gain_values() -> list[int]:
+    """Settings画面のゲイン候補リストの既定値。"""
     return list(DEFAULT_GAIN_VALUES)
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
+    """JSON由来の任意値をdictとして安全に扱うための正規化。"""
     if isinstance(value, dict):
         return cast("dict[str, Any]", value)
 
@@ -65,10 +68,12 @@ def filter_existing_float_values(
     selected_values: list[float],
     valid_values: set[float],
 ) -> list[float]:
+    """候補リストから消えた露光時間を選択状態から除外する。"""
     return [value for value in selected_values if value in valid_values]
 
 
 def filter_existing_int_values(selected_values: list[int], valid_values: set[int]) -> list[int]:
+    """候補リストから消えたゲインを選択状態から除外する。"""
     return [value for value in selected_values if value in valid_values]
 
 
@@ -317,6 +322,7 @@ class AppSettingsData:
         exposure_set = set(exposure_ms_values)
         gain_set = set(gain_values)
 
+        # 候補から削除された値は選択状態から取り除く。
         return cls(
             root_dir=str(output.get("root_dir", "")),
             exposure_ms_values=exposure_ms_values,

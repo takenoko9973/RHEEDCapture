@@ -199,6 +199,7 @@ class MainWindow(QMainWindow):
 
     def _setup_sequence_bindings(self) -> None:
         """通常シーケンス撮影の結線。"""
+        # パネルはチップの選択値だけを通知する。
         self.sequence_panel.exposure_selection_changed.connect(
             self.capture_vm.update_selected_exposure_ms_values
         )
@@ -220,6 +221,7 @@ class MainWindow(QMainWindow):
 
     def _setup_angle_scan_bindings(self) -> None:
         """角度走査撮影の結線。"""
+        # Angle Scanの選択状態は専用ViewModelで保持する。
         self.angle_scan_panel.exposure_selection_changed.connect(
             self.angle_scan_vm.update_selected_exposure_ms_values
         )
@@ -274,6 +276,7 @@ class MainWindow(QMainWindow):
 
     def _setup_motor_settings_bindings(self) -> None:
         """モーター装置設定の結線。"""
+        # 候補値変更は両撮影モードへ反映する。
         self.capture_chips_panel.exposure_values_changed.connect(
             self._on_exposure_values_changed
         )
@@ -395,6 +398,7 @@ class MainWindow(QMainWindow):
             self._update_storage_display(refresh_counters=False)
 
         self.preview_vm.load_settings(settings.preview)
+        # 候補値を表示してから、各撮影ViewModelへ選択状態を流す。
         self.capture_chips_panel.set_values(settings.exposure_ms_values, settings.gain_values)
         self.capture_vm.load_settings(settings)
         self.angle_scan_vm.load_settings(settings)
@@ -402,12 +406,14 @@ class MainWindow(QMainWindow):
 
     @Slot(list)
     def _on_exposure_values_changed(self, exposure_ms_values: list[float]) -> None:
+        """露光時間候補の変更を、両撮影モードのチップ候補へ伝播する。"""
         gain_values = self.capture_chips_panel.gain_values()
         self.capture_vm.update_candidate_values(exposure_ms_values, gain_values)
         self.angle_scan_vm.update_candidate_values(exposure_ms_values, gain_values)
 
     @Slot(list)
     def _on_gain_values_changed(self, gain_values: list[int]) -> None:
+        """ゲイン候補の変更を、両撮影モードのチップ候補へ伝播する。"""
         exposure_ms_values = self.capture_chips_panel.exposure_ms_values()
         self.capture_vm.update_candidate_values(exposure_ms_values, gain_values)
         self.angle_scan_vm.update_candidate_values(exposure_ms_values, gain_values)
@@ -434,6 +440,7 @@ class MainWindow(QMainWindow):
         )
         settings_to_save = AppSettingsData(
             root_dir=self.storage_panel.get_settings_to_save().root_dir,
+            # 候補値と撮影モード別の選択状態をまとめて保存する。
             exposure_ms_values=self.capture_chips_panel.exposure_ms_values(),
             gain_values=self.capture_chips_panel.gain_values(),
             preview=preview_settings,

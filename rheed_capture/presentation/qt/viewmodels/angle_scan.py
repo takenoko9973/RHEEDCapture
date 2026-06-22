@@ -70,6 +70,7 @@ class AngleScanViewModel(QObject):
 
         defaults = AppSettingsData()
         scan_defaults = defaults.angle_scan
+        # 候補値はSettingsタブと共有、選択値はAngle Scan専用として保持する。
         self._exposure_ms_values = defaults.exposure_ms_values
         self._gain_values = defaults.gain_values
         self._selected_exposure_ms_values = scan_defaults.selected_exposure_ms_values
@@ -133,8 +134,10 @@ class AngleScanViewModel(QObject):
         exposure_ms_values: list[float],
         gain_values: list[int],
     ) -> None:
+        """候補値の変更をAngle Scan側の選択状態へ反映する。"""
         self._exposure_ms_values = list(exposure_ms_values)
         self._gain_values = list(gain_values)
+        # 候補から消えた値は選択状態から除外する。別候補の自動選択はしない。
         self._selected_exposure_ms_values = filter_existing_float_values(
             self._selected_exposure_ms_values,
             set(self._exposure_ms_values),
@@ -147,6 +150,7 @@ class AngleScanViewModel(QObject):
 
     @Slot(list)
     def update_selected_exposure_ms_values(self, selected_values: list[float]) -> None:
+        """露光時間チップのクリック結果を保存可能な選択値へ正規化する。"""
         self._selected_exposure_ms_values = filter_existing_float_values(
             [float(value) for value in selected_values],
             set(self._exposure_ms_values),
@@ -158,6 +162,7 @@ class AngleScanViewModel(QObject):
 
     @Slot(list)
     def update_selected_gain_values(self, selected_values: list[int]) -> None:
+        """ゲインチップのクリック結果を保存可能な選択値へ正規化する。"""
         self._selected_gain_values = filter_existing_int_values(
             [int(value) for value in selected_values],
             set(self._gain_values),
@@ -245,6 +250,7 @@ class AngleScanViewModel(QObject):
     @Slot()
     def start_angle_scan(self) -> None:
         try:
+            # UIの選択値をService層へ渡す前に、最終的なCaptureConditionへ解決する。
             conditions = self._build_capture_conditions()
             motor = self._require_motor_factory()(
                 self._motor_port,
@@ -266,6 +272,7 @@ class AngleScanViewModel(QObject):
             return
 
         try:
+            # AngleScanServiceより下では、チップ候補や選択値ではなく撮影条件だけを扱う。
             self._angle_scan_service = AngleScanService(
                 self._camera,
                 self._storage,
@@ -310,6 +317,7 @@ class AngleScanViewModel(QObject):
         return self._angle_scan_service is not None and self._angle_scan_service.isRunning()
 
     def _build_capture_conditions(self) -> list[CaptureCondition]:
+        """選択された露光時間とゲインの直積から撮影条件を生成する。"""
         if not self._selected_exposure_ms_values:
             msg = "露光時間が選択されていません。\n1つ以上の露光時間を選択してください。"
             raise ValueError(msg)
@@ -324,6 +332,7 @@ class AngleScanViewModel(QObject):
         ]
 
     def _emit_value_state(self) -> None:
+        """候補値と選択値をセットでViewへ通知する。"""
         self.exposure_values_updated.emit(
             self._exposure_ms_values,
             self._selected_exposure_ms_values,

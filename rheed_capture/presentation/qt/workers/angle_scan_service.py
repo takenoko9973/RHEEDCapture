@@ -36,6 +36,8 @@ class AngleScanSettings(ApplicationAngleScanSettings):
 
 
 class AngleScanService(CaptureWorker):
+    """AngleScanCaptureをQtスレッド上で実行するService。"""
+
     progress_update = Signal(int, int, float)
     scan_finished = Signal(bool, str)
 
@@ -52,8 +54,10 @@ class AngleScanService(CaptureWorker):
         self.storage = storage
         self.motor = motor
         self.settings = settings
+        # 開始後にUI側の選択が変わっても、今回のscan.jsonと撮影条件は固定する。
         self._conditions = list(conditions)
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
+        # scan.jsonはセッション開始時に必要なため、角度計画と条件を事前に文書化する。
         self._scan_document = build_angle_scan_document_from_conditions(
             settings=self.settings,
             conditions=self._conditions,
@@ -66,6 +70,7 @@ class AngleScanService(CaptureWorker):
         logger.info("角度走査撮影を開始します...")
 
         session = self.storage.start_angle_scan_session(self._scan_document)
+        # Application層には解決済み条件だけを渡す。
         capture = AngleScanCapture(
             FrameCapturer(self.camera, max_retries=self.max_retries),
             session,

@@ -32,6 +32,7 @@ class ChipSelector(QWidget):
         values: Sequence[ChipValue],
         selected_values: Sequence[ChipValue],
     ) -> None:
+        """候補値と選択値をまとめて再描画する。"""
         self._clear_buttons()
         self._values = list(values)
         value_set = set(self._values)
@@ -39,12 +40,14 @@ class ChipSelector(QWidget):
 
         self._updating = True
         for value in self._values:
+            # ボタン内には単位や接頭辞を付けず、数値だけを出す。
             text = self._format_value(value)
             button = QToolButton()
             button.setText(text)
             button.setCheckable(True)
             button.setChecked(value in self._selected_values)
             button.setToolTip(text)
+            # lambdaのデフォルト引数にvalueを束縛し、ループ末尾の値だけを参照しないようにする。
             button.toggled.connect(
                 lambda checked, value=value: self._on_toggled(value, checked)
             )
@@ -53,6 +56,7 @@ class ChipSelector(QWidget):
         self._updating = False
 
     def selected_values(self) -> list[ChipValue]:
+        """外部から現在の選択状態を読むため、内部リストのコピーを返す。"""
         return list(self._selected_values)
 
     def setEnabled(self, enabled: bool) -> None:  # noqa: N802
@@ -73,11 +77,13 @@ class ChipSelector(QWidget):
                 if selected_value != value
             ]
 
+        # 選択順はクリック順ではなく候補リスト順に揃える。
         order = {value: index for index, value in enumerate(self._values)}
         self._selected_values.sort(key=lambda selected_value: order[selected_value])
         self.selection_changed.emit(self.selected_values())
 
     def _clear_buttons(self) -> None:
+        """候補値が差し替わったとき、古いボタンをレイアウトから確実に外す。"""
         for button in self._buttons.values():
             self._layout.removeWidget(button)
             button.deleteLater()
@@ -85,4 +91,5 @@ class ChipSelector(QWidget):
 
     @staticmethod
     def _format_value(value: ChipValue) -> str:
+        """整数相当のfloatを`10.0`ではなく`10`として表示する。"""
         return f"{value:g}"

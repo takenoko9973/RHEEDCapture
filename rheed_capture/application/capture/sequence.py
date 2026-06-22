@@ -24,8 +24,10 @@ class SequenceCapture:
     ) -> None:
         self.frame_capturer = frame_capturer
         self.session = session
+        # 呼び出し元のリスト変更が撮影中に影響しないよう、開始時点の条件をコピーする。
         self.conditions = list(conditions)
         if not self.conditions:
+            # 空条件のまま進むと成功扱いで空セッションが作られるため、実行前に止める。
             msg = "撮影条件がありません。"
             raise ValueError(msg)
 

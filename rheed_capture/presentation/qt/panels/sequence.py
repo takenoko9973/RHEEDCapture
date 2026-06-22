@@ -17,6 +17,8 @@ from rheed_capture.presentation.qt.widgets.chip_selector import ChipSelector, Ch
 
 
 class SequencePanel(QGroupBox):
+    """Sequence撮影の操作パネル。"""
+
     start_requested = Signal()
     cancel_requested = Signal()
 
@@ -43,6 +45,7 @@ class SequencePanel(QGroupBox):
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
 
+        # チップ内には単位を出さない。
         layout.addRow("Exposure (ms):", self.exposure_selector)
         layout.addRow("Gain:", self.gain_selector)
         layout.addRow(self._create_button_row())
@@ -59,6 +62,7 @@ class SequencePanel(QGroupBox):
         values: list[ChipValue],
         selected_values: list[ChipValue],
     ) -> None:
+        """候補値と選択値を受け取り、露光時間チップを再描画する。"""
         self.exposure_selector.set_values(values, selected_values)
 
     @Slot(object, object)
@@ -67,6 +71,7 @@ class SequencePanel(QGroupBox):
         values: list[ChipValue],
         selected_values: list[ChipValue],
     ) -> None:
+        """候補値と選択値を受け取り、ゲインチップを再描画する。"""
         self.gain_selector.set_values(values, selected_values)
 
     @Slot()
@@ -93,6 +98,7 @@ class SequencePanel(QGroupBox):
     def set_capturing_state(self, is_capturing: bool) -> None:
         self.btn_start.setEnabled(not is_capturing)
         self.btn_cancel.setEnabled(is_capturing)
+        # 撮影中は条件変更を止める。
         self.exposure_selector.setEnabled(not is_capturing)
         self.gain_selector.setEnabled(not is_capturing)
         if is_capturing:
