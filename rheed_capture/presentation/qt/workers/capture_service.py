@@ -29,15 +29,13 @@ class CaptureService(CaptureWorker):
         self,
         camera_device: CameraDevice,
         storage: ExperimentStorage,
-        exposure_list: list[float],
-        gain_list: list[int],
+        conditions: list[CaptureCondition],
         parent: QObject | None = None,
     ) -> None:
         self.camera = camera_device
         self.storage = storage
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
-        self._exposure_list = exposure_list
-        self._gain_list = gain_list
+        self._conditions = list(conditions)
         super().__init__(self._run_sequence_capture, parent=parent)
         self.finished.connect(self.sequence_finished)
 
@@ -48,8 +46,7 @@ class CaptureService(CaptureWorker):
         capture = SequenceCapture(
             FrameCapturer(self.camera, max_retries=self.max_retries),
             session,
-            self._exposure_list,
-            self._gain_list,
+            self._conditions,
         )
 
         def emit_progress(

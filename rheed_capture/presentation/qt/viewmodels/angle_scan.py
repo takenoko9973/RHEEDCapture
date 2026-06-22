@@ -1,9 +1,9 @@
-from collections.abc import Callable
-from typing import cast
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from rheed_capture.application.ports.motor import RotationMotor
 from rheed_capture.domain.angle_scan.model import (
     AngleScanDirection,
     validate_direction,
@@ -11,33 +11,38 @@ from rheed_capture.domain.angle_scan.model import (
     validate_interval_within_range,
     validate_range,
 )
-from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.config.schema import (
     AngleScanCaptureSettings,
     AppSettingsData,
     DeviceSettings,
     MotorDeviceSettings,
+    filter_existing_float_values,
+    filter_existing_int_values,
 )
-from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.workers.angle_scan_service import (
     AngleScanService,
     AngleScanSettings,
 )
-from rheed_capture.utils import parse_numbers
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from rheed_capture.application.ports.motor import RotationMotor
+    from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+    from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
 
 class AngleScanViewModel(QObject):
     """角度走査UIの状態管理と、角度走査サービスの起動を担当するViewModel。"""
 
-    # ===== 走査実行状態の通知 =====
     progress_updated = Signal(int, int, float)
     frame_captured = Signal(object)
     angle_scan_finished = Signal(bool, str)
     error_occurred = Signal(str)
 
-    # ===== 入力値を整形してViewへ戻すための通知 =====
-    expo_text_updated = Signal(str)
-    gain_text_updated = Signal(str)
+    exposure_values_updated = Signal(object, object)
+    gain_values_updated = Signal(object, object)
     motor_port_updated = Signal(str)
     motor_slave_updated = Signal(int)
     motor_speed_updated = Signal(float)
@@ -48,9 +53,6 @@ class AngleScanViewModel(QObject):
     return_to_start_updated = Signal(bool)
     scan_direction_updated = Signal(str)
 
-    # ===== プレビュー制御要求 =====
-    # 実際にPreviewViewModelを操作するのはMainWindow。
-    # ここでは角度走査サービスからの要求をUI層へ中継するだけにして、依存方向を保つ。
     preview_resume_requested = Signal()
     preview_pause_requested = Signal()
 
@@ -66,19 +68,18 @@ class AngleScanViewModel(QObject):
         self._motor_factory = motor_factory
         self._angle_scan_service: AngleScanService | None = None
 
-        scan_defaults = AngleScanCaptureSettings()
+        defaults = AppSettingsData()
+        scan_defaults = defaults.angle_scan
+        self._exposure_ms_values = defaults.exposure_ms_values
+        self._gain_values = defaults.gain_values
+        self._selected_exposure_ms_values = scan_defaults.selected_exposure_ms_values
+        self._selected_gain_values = scan_defaults.selected_gain_values
 
-        # 撮影条件。通常撮影と同じく露光時間とゲインの全組み合わせを使う。
-        self._expo_list = scan_defaults.exposure_ms_list
-        self._gain_list = scan_defaults.gain_list
-
-        # モーター装置設定。通信先と角度換算は装置側の条件として保存する。
         motor_defaults = MotorDeviceSettings()
         self._motor_port = motor_defaults.port
         self._motor_slave = motor_defaults.slave
         self._position_units_per_deg = motor_defaults.position_units_per_deg
 
-        # 角度走査設定。開始時のモーター現在位置を常に相対0degとして扱う。
         self._range_deg = scan_defaults.range_deg
         self._interval_deg = scan_defaults.interval_deg
         self._scan_direction: AngleScanDirection = scan_defaults.direction
@@ -87,12 +88,14 @@ class AngleScanViewModel(QObject):
         self._return_to_start = scan_defaults.return_to_start
 
     def load_settings(self, settings: AppSettingsData) -> None:
-        """保存済み設定を読み込み、内部状態とUI表示を同期する。"""
         scan_settings = settings.angle_scan
         motor_settings = settings.device.motor
 
-        self._update_expo_state(scan_settings.exposure_ms_list)
-        self._update_gain_state(scan_settings.gain_list)
+        self.update_candidate_values(settings.exposure_ms_values, settings.gain_values)
+        self.update_selected_exposure_ms_values(
+            scan_settings.selected_exposure_ms_values
+        )
+        self.update_selected_gain_values(scan_settings.selected_gain_values)
         self.update_motor_port(motor_settings.port)
         self.update_motor_slave(motor_settings.slave)
         self.update_position_units_per_deg(motor_settings.position_units_per_deg)
@@ -104,10 +107,9 @@ class AngleScanViewModel(QObject):
         self.update_return_to_start(scan_settings.return_to_start)
 
     def get_angle_scan_settings(self) -> AngleScanCaptureSettings:
-        """アプリ終了時に保存する角度走査設定を返す。"""
         return AngleScanCaptureSettings(
-            exposure_ms_list=self._expo_list,
-            gain_list=self._gain_list,
+            selected_exposure_ms_values=self._selected_exposure_ms_values,
+            selected_gain_values=self._selected_gain_values,
             range_deg=self._range_deg,
             interval_deg=self._interval_deg,
             direction=self._scan_direction,
@@ -117,7 +119,6 @@ class AngleScanViewModel(QObject):
         )
 
     def get_device_settings(self) -> DeviceSettings:
-        """角度走査で使用するモーター装置設定を返す。"""
         return DeviceSettings(
             motor=MotorDeviceSettings(
                 port=self._motor_port,
@@ -126,66 +127,55 @@ class AngleScanViewModel(QObject):
             )
         )
 
-    def _empty_list_error(self) -> None:
-        """露光時間やゲインの入力が空だった場合に共通エラーを出す。"""
-        msg = "リストが空です"
-        raise ValueError(msg)
+    @Slot(object, object)
+    def update_candidate_values(
+        self,
+        exposure_ms_values: list[float],
+        gain_values: list[int],
+    ) -> None:
+        self._exposure_ms_values = list(exposure_ms_values)
+        self._gain_values = list(gain_values)
+        self._selected_exposure_ms_values = filter_existing_float_values(
+            self._selected_exposure_ms_values,
+            set(self._exposure_ms_values),
+        )
+        self._selected_gain_values = filter_existing_int_values(
+            self._selected_gain_values,
+            set(self._gain_values),
+        )
+        self._emit_value_state()
 
-    @Slot(str)
-    def update_expo_from_text(self, text: str) -> None:
-        """露光時間リストの入力を解析し、正しければ状態へ反映する。"""
-        try:
-            vals = parse_numbers(text, float)
-            if not vals:
-                self._empty_list_error()
+    @Slot(list)
+    def update_selected_exposure_ms_values(self, selected_values: list[float]) -> None:
+        self._selected_exposure_ms_values = filter_existing_float_values(
+            [float(value) for value in selected_values],
+            set(self._exposure_ms_values),
+        )
+        self.exposure_values_updated.emit(
+            self._exposure_ms_values,
+            self._selected_exposure_ms_values,
+        )
 
-            self._update_expo_state(vals)
-        except ValueError:
-            self.error_occurred.emit(
-                "角度走査の露光時間の形式が正しくありません。\nカンマ区切りの数値を入力してください。"
-            )
-            self._update_expo_state(self._expo_list)
-
-    @Slot(str)
-    def update_gain_from_text(self, text: str) -> None:
-        """ゲインリストの入力を解析し、正しければ状態へ反映する。"""
-        try:
-            vals = parse_numbers(text, int)
-            if not vals:
-                self._empty_list_error()
-
-            self._update_gain_state(vals)
-        except ValueError:
-            self.error_occurred.emit(
-                "角度走査のゲインの形式が正しくありません。\nカンマ区切りの整数を入力してください。"
-            )
-            self._update_gain_state(self._gain_list)
-
-    def _update_expo_state(self, vals: list[float]) -> None:
-        """露光時間リストを更新し、Viewへ正規化済みテキストを返す。"""
-        self._expo_list = vals
-        self.expo_text_updated.emit(", ".join(map(str, vals)))
-
-    def _update_gain_state(self, vals: list[int]) -> None:
-        """ゲインリストを更新し、Viewへ正規化済みテキストを返す。"""
-        self._gain_list = vals
-        self.gain_text_updated.emit(", ".join(map(str, vals)))
+    @Slot(list)
+    def update_selected_gain_values(self, selected_values: list[int]) -> None:
+        self._selected_gain_values = filter_existing_int_values(
+            [int(value) for value in selected_values],
+            set(self._gain_values),
+        )
+        self.gain_values_updated.emit(self._gain_values, self._selected_gain_values)
 
     @Slot(str)
     def update_motor_port(self, value: str) -> None:
-        """COMポート名を更新する。空白は保存前に取り除く。"""
         self._motor_port = value.strip()
         self.motor_port_updated.emit(self._motor_port)
 
     @Slot(int)
     def update_motor_slave(self, value: int) -> None:
-        """ModbusスレーブIDを更新する。"""
         self._motor_slave = value
         self.motor_slave_updated.emit(value)
 
     @Slot(float)
     def update_motor_speed(self, value: float) -> None:
-        """角度走査中のモーター速度[rpm]を更新する。"""
         if value <= 0:
             self.error_occurred.emit("モーター速度は正の値にしてください。")
             self.motor_speed_updated.emit(self._motor_speed_rpm)
@@ -196,7 +186,6 @@ class AngleScanViewModel(QObject):
 
     @Slot(float)
     def update_position_units_per_deg(self, value: float) -> None:
-        """1degあたりのモーター位置単位を更新する。"""
         if value <= 0:
             self.error_occurred.emit("1degあたりのモーター位置単位は正の値にしてください。")
             self.position_units_per_deg_updated.emit(self._position_units_per_deg)
@@ -207,7 +196,6 @@ class AngleScanViewModel(QObject):
 
     @Slot(float)
     def update_range_angle(self, value: float) -> None:
-        """現在位置からの走査範囲を更新する。"""
         try:
             validate_range(value)
             validate_interval_within_range(value, self._interval_deg)
@@ -221,7 +209,6 @@ class AngleScanViewModel(QObject):
 
     @Slot(float)
     def update_interval_angle(self, value: float) -> None:
-        """撮影角度の間隔を更新する。"""
         try:
             validate_interval(value)
             validate_interval_within_range(self._range_deg, value)
@@ -235,19 +222,16 @@ class AngleScanViewModel(QObject):
 
     @Slot(int)
     def update_settling_time_ms(self, value: int) -> None:
-        """モーター移動後、撮影前に待つ時間を更新する。"""
         self._settling_time_ms = value
         self.settling_time_updated.emit(value)
 
     @Slot(bool)
     def update_return_to_start(self, value: bool) -> None:
-        """走査完了後に開始位置へ戻るかどうかを更新する。"""
         self._return_to_start = value
         self.return_to_start_updated.emit(value)
 
     @Slot(str)
     def update_scan_direction(self, value: str) -> None:
-        """走査方向を更新する。"""
         try:
             validate_direction(value)
         except ValueError as e:
@@ -260,8 +244,8 @@ class AngleScanViewModel(QObject):
 
     @Slot()
     def start_angle_scan(self) -> None:
-        """現在のUI状態からモーターと角度走査サービスを作成して開始する。"""
         try:
+            conditions = self._build_capture_conditions()
             motor = self._require_motor_factory()(
                 self._motor_port,
                 self._motor_slave,
@@ -276,11 +260,7 @@ class AngleScanViewModel(QObject):
                 motor_speed_rpm=self._motor_speed_rpm,
                 position_units_per_deg=self._position_units_per_deg,
             )
-        except ValueError as e:
-            self.error_occurred.emit(str(e))
-            self.angle_scan_finished.emit(False, "")
-            return
-        except RuntimeError as e:
+        except (ValueError, RuntimeError) as e:
             self.error_occurred.emit(str(e))
             self.angle_scan_finished.emit(False, "")
             return
@@ -290,8 +270,7 @@ class AngleScanViewModel(QObject):
                 self._camera,
                 self._storage,
                 motor,
-                self._expo_list,
-                self._gain_list,
+                conditions,
                 settings,
             )
         except ValueError as e:
@@ -310,7 +289,6 @@ class AngleScanViewModel(QObject):
         return self._motor_factory
 
     def _connect_angle_scan_service(self, service: AngleScanService) -> None:
-        """サービスの通知をViewModelの信号へ中継する。"""
         service.progress_update.connect(self.progress_updated)
         service.frame_captured.connect(self.frame_captured)
         service.scan_finished.connect(self.angle_scan_finished)
@@ -320,16 +298,34 @@ class AngleScanViewModel(QObject):
 
     @Slot()
     def notify_preview_paused(self) -> None:
-        """PreviewWorkerの停止完了を、待機中の角度走査サービスへ伝える。"""
         if self._angle_scan_service:
             self._angle_scan_service.notify_preview_paused()
 
     @Slot()
     def cancel_angle_scan(self) -> None:
-        """実行中の角度走査にキャンセルを要求する。"""
         if self.is_running() and self._angle_scan_service:
             self._angle_scan_service.cancel()
 
     def is_running(self) -> bool:
-        """角度走査サービスが実行中かどうかを返す。"""
         return self._angle_scan_service is not None and self._angle_scan_service.isRunning()
+
+    def _build_capture_conditions(self) -> list[CaptureCondition]:
+        if not self._selected_exposure_ms_values:
+            msg = "露光時間が選択されていません。\n1つ以上の露光時間を選択してください。"
+            raise ValueError(msg)
+        if not self._selected_gain_values:
+            msg = "ゲインが選択されていません。\n1つ以上のゲインを選択してください。"
+            raise ValueError(msg)
+
+        return [
+            CaptureCondition(exposure_ms=exposure_ms, gain=gain)
+            for exposure_ms in self._selected_exposure_ms_values
+            for gain in self._selected_gain_values
+        ]
+
+    def _emit_value_state(self) -> None:
+        self.exposure_values_updated.emit(
+            self._exposure_ms_values,
+            self._selected_exposure_ms_values,
+        )
+        self.gain_values_updated.emit(self._gain_values, self._selected_gain_values)

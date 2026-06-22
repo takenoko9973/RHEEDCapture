@@ -3,7 +3,7 @@ from __future__ import annotations
 from rheed_capture.domain.angle_scan.model import MIN_ANGLE_INTERVAL_DEG, AngleScanDirection
 
 DEFAULT_EXPOSURE_MS_VALUES: tuple[float, ...] = (10.0, 50.0, 100.0)
-DEFAULT_GAIN_VALUES: tuple[int, ...] = (0,)
+DEFAULT_GAIN_VALUES: tuple[int, ...] = (0, 5, 10)
 
 DEFAULT_PREVIEW_EXPOSURE_MS = 50.0
 DEFAULT_PREVIEW_GAIN = 0

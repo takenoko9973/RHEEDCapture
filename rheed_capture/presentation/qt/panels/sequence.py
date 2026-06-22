@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QProgressBar,
     QPushButton,
     QWidget,
@@ -14,14 +13,15 @@ from rheed_capture.presentation.qt.widgets.capture_controls import (
     configure_capture_buttons,
     configure_next_capture_label,
 )
+from rheed_capture.presentation.qt.widgets.chip_selector import ChipSelector, ChipValue
 
 
 class SequencePanel(QGroupBox):
     start_requested = Signal()
     cancel_requested = Signal()
 
-    expo_text_edited = Signal(str)
-    gain_text_edited = Signal(str)
+    exposure_selection_changed = Signal(list)
+    gain_selection_changed = Signal(list)
 
     def __init__(self) -> None:
         super().__init__("Sequence Capture")
@@ -30,8 +30,8 @@ class SequencePanel(QGroupBox):
     def _setup_ui(self) -> None:
         layout = QFormLayout(self)
 
-        self.edit_seq_expo = QLineEdit("10, 50, 100")
-        self.edit_seq_gain = QLineEdit("0")
+        self.exposure_selector = ChipSelector()
+        self.gain_selector = ChipSelector()
         # 次回撮影で使用される保存先 image_xxx を表示する。
         self.lbl_next_sequence_preview = QLabel("image_001")
         configure_next_capture_label(self.lbl_next_sequence_preview)
@@ -43,29 +43,31 @@ class SequencePanel(QGroupBox):
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
 
-        layout.addRow("Exposures (ms):", self.edit_seq_expo)
-        layout.addRow("Gains:", self.edit_seq_gain)
+        layout.addRow("Exposure (ms):", self.exposure_selector)
+        layout.addRow("Gain:", self.gain_selector)
         layout.addRow(self._create_button_row())
         layout.addRow(self._create_progress_row())
 
-        # QLineEditの編集完了(Enterキー押下 or フォーカスが外れた時)にシグナルを発火
-        self.edit_seq_expo.editingFinished.connect(
-            lambda: self.expo_text_edited.emit(self.edit_seq_expo.text())
-        )
-        self.edit_seq_gain.editingFinished.connect(
-            lambda: self.gain_text_edited.emit(self.edit_seq_gain.text())
-        )
-
+        self.exposure_selector.selection_changed.connect(self.exposure_selection_changed.emit)
+        self.gain_selector.selection_changed.connect(self.gain_selection_changed.emit)
         self.btn_start.clicked.connect(self._on_start_clicked)
         self.btn_cancel.clicked.connect(self.cancel_requested.emit)
 
-    @Slot(str)
-    def update_expo_ui(self, text: str) -> None:
-        self.edit_seq_expo.setText(text)
+    @Slot(object, object)
+    def update_exposure_values(
+        self,
+        values: list[ChipValue],
+        selected_values: list[ChipValue],
+    ) -> None:
+        self.exposure_selector.set_values(values, selected_values)
 
-    @Slot(str)
-    def update_gain_ui(self, text: str) -> None:
-        self.edit_seq_gain.setText(text)
+    @Slot(object, object)
+    def update_gain_values(
+        self,
+        values: list[ChipValue],
+        selected_values: list[ChipValue],
+    ) -> None:
+        self.gain_selector.set_values(values, selected_values)
 
     @Slot()
     def _on_start_clicked(self) -> None:
@@ -91,6 +93,8 @@ class SequencePanel(QGroupBox):
     def set_capturing_state(self, is_capturing: bool) -> None:
         self.btn_start.setEnabled(not is_capturing)
         self.btn_cancel.setEnabled(is_capturing)
+        self.exposure_selector.setEnabled(not is_capturing)
+        self.gain_selector.setEnabled(not is_capturing)
         if is_capturing:
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0/%m")

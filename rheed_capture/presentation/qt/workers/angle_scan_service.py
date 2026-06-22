@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal
 from rheed_capture.application.capture.angle_scan import (
     AngleScanCapture,
     AngleScanHooks,
-    build_angle_scan_document_from_lists,
+    build_angle_scan_document_from_conditions,
 )
 from rheed_capture.application.capture.angle_scan import (
     AngleScanSettings as ApplicationAngleScanSettings,
@@ -23,6 +23,7 @@ from rheed_capture.presentation.qt.workers.capture_worker import CaptureWorker
 if TYPE_CHECKING:
     from rheed_capture.application.capture.cancellation import CancellationToken
     from rheed_capture.application.ports.motor import RotationMotor
+    from rheed_capture.domain.capture_condition import CaptureCondition
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
     from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
@@ -43,8 +44,7 @@ class AngleScanService(CaptureWorker):
         camera_device: CameraDevice,
         storage: ExperimentStorage,
         motor: RotationMotor,
-        exposure_list: list[float],
-        gain_list: list[int],
+        conditions: list[CaptureCondition],
         settings: AngleScanSettings,
         parent: QObject | None = None,
     ) -> None:
@@ -52,13 +52,11 @@ class AngleScanService(CaptureWorker):
         self.storage = storage
         self.motor = motor
         self.settings = settings
-        self._exposure_list = exposure_list
-        self._gain_list = gain_list
+        self._conditions = list(conditions)
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
-        self._scan_document = build_angle_scan_document_from_lists(
+        self._scan_document = build_angle_scan_document_from_conditions(
             settings=self.settings,
-            exposure_list=self._exposure_list,
-            gain_list=self._gain_list,
+            conditions=self._conditions,
             retry_limit=self.max_retries,
         )
         super().__init__(self._run_angle_scan_capture, parent=parent)
@@ -72,8 +70,7 @@ class AngleScanService(CaptureWorker):
             FrameCapturer(self.camera, max_retries=self.max_retries),
             session,
             self.motor,
-            self._exposure_list,
-            self._gain_list,
+            self._conditions,
             self.settings,
         )
         capture.run(

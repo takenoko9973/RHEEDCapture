@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -21,15 +20,14 @@ class SequenceCapture:
         self,
         frame_capturer: FrameCapture,
         session: SequenceSession,
-        exposure_list: list[float],
-        gain_list: list[int],
+        conditions: list[CaptureCondition],
     ) -> None:
         self.frame_capturer = frame_capturer
         self.session = session
-        self.conditions = [
-            CaptureCondition(exposure_ms=exposure_ms, gain=gain)
-            for exposure_ms, gain in itertools.product(sorted(exposure_list), sorted(gain_list))
-        ]
+        self.conditions = list(conditions)
+        if not self.conditions:
+            msg = "撮影条件がありません。"
+            raise ValueError(msg)
 
     @property
     def total_shots(self) -> int:
