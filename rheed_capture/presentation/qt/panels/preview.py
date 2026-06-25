@@ -35,11 +35,13 @@ class PreviewPanel(QGroupBox):
     expo_steps = 1000  # 対数スライドの解像度
 
     def __init__(self, expo_bounds: tuple[float, float], gain_bounds: tuple[int, int]) -> None:
+        """露光時間とGainの範囲を受け取り、Preview設定UIを構築する。"""
         super().__init__("Preview Settings")
         self._grid_shape_options = DEFAULT_GRID_SHAPE_OPTIONS
         self._setup_ui(expo_bounds, gain_bounds)
 
     def _setup_ui(self, expo_bounds: tuple[float, float], gain_bounds: tuple[int, int]) -> None:
+        """Preview設定用のWidget生成、配置、Signal接続を行う。"""
         layout = QFormLayout(self)
         self.expo_min, self.expo_max = expo_bounds
         self.gain_min, self.gain_max = gain_bounds
@@ -146,6 +148,7 @@ class PreviewPanel(QGroupBox):
     # --- Exposure ---
     @Slot(float)
     def _on_spin_expo_changed(self, value: float) -> None:
+        """露光時間SpinBoxの変更をSliderへ同期し、カメラ条件変更を通知する。"""
         self.slider_expo.blockSignals(True)
         self.slider_expo.setValue(self._expo_to_slider(value))
         self.slider_expo.blockSignals(False)
@@ -167,6 +170,7 @@ class PreviewPanel(QGroupBox):
     # --- Gain ---
     @Slot(float)
     def _on_spin_gain_changed(self, value: int) -> None:
+        """Gain SpinBoxの変更をSliderへ同期し、カメラ条件変更を通知する。"""
         self.slider_gain.blockSignals(True)
         self.slider_gain.setValue(value)
         self.slider_gain.blockSignals(False)
@@ -197,6 +201,7 @@ class PreviewPanel(QGroupBox):
 
     @Slot(int)
     def update_gain_ui(self, value: int) -> None:
+        """シグナルの無限ループを防ぎつつGain UIを更新する。"""
         self.spin_gain.blockSignals(True)
         self.spin_gain.setValue(value)
         self.spin_gain.blockSignals(False)
@@ -208,6 +213,7 @@ class PreviewPanel(QGroupBox):
     # --- CLAHE ---
     @Slot(bool)
     def update_clahe_ui(self, enabled: bool) -> None:
+        """シグナルの無限ループを防ぎつつCLAHE UIを更新する。"""
         self.chk_processing.blockSignals(True)
         self.chk_processing.setChecked(enabled)
         self.chk_processing.blockSignals(False)
@@ -215,15 +221,18 @@ class PreviewPanel(QGroupBox):
     # --- Grid ---
     @Slot(bool)
     def _on_grid_enabled_toggled(self, enabled: bool) -> None:
+        """Grid表示の有効状態をComboBoxとViewer通知へ反映する。"""
         self.cmb_grid_shape.setEnabled(enabled)
         self.grid_enabled_changed.emit(enabled)
 
     @Slot(str)
     def _on_grid_shape_changed(self, text: str) -> None:
+        """Grid形状ComboBoxの表示文字列を行列数へ変換して通知する。"""
         rows, cols = parse_grid_shape(text)
         self.grid_shape_changed.emit(rows, cols)
 
     def _refresh_grid_shape_options(self) -> None:
+        """現在のGrid形状候補をComboBoxへ反映する。"""
         # 選択肢は単純な文字列一覧に変換してコンボに反映する。
         self.cmb_grid_shape.clear()
         self.cmb_grid_shape.addItems(
@@ -231,6 +240,7 @@ class PreviewPanel(QGroupBox):
         )
 
     def get_grid_settings_to_save(self) -> PreviewGridSettings:
+        """現在のGrid UI状態を保存用設定へ変換する。"""
         rows, cols = parse_grid_shape(self.cmb_grid_shape.currentText())
         return PreviewGridSettings(
             show_grid=self.chk_show_grid.isChecked(),
@@ -239,6 +249,7 @@ class PreviewPanel(QGroupBox):
         )
 
     def apply_grid_settings(self, enabled: bool, rows: int, cols: int) -> None:
+        """保存済みGrid設定をUIへ反映する。"""
         # 保存値が候補外でも UI で選択できるよう、候補に動的追加してから適用する。
         applied_shape = normalize_grid_shape(rows, cols, fallback=DEFAULT_GRID_SHAPE)
         self._grid_shape_options = ensure_option(self._grid_shape_options, applied_shape)
@@ -255,9 +266,12 @@ class PreviewPanel(QGroupBox):
         self.cmb_grid_shape.setEnabled(enabled)
 
     def set_controls_enabled(self, enabled: bool) -> None:
+        """撮影中はカメラ条件へ影響するPreview操作だけを切り替える。"""
         self.spin_expo.setEnabled(enabled)
         self.slider_expo.setEnabled(enabled)
         self.spin_gain.setEnabled(enabled)
         self.slider_gain.setEnabled(enabled)
-        self.chk_show_grid.setEnabled(enabled)
-        self.cmb_grid_shape.setEnabled(enabled and self.chk_show_grid.isChecked())
+        # CLAHEとGridは表示処理だけなので、撮影中も操作できる状態を保つ。
+        self.chk_processing.setEnabled(True)
+        self.chk_show_grid.setEnabled(True)
+        self.cmb_grid_shape.setEnabled(self.chk_show_grid.isChecked())
