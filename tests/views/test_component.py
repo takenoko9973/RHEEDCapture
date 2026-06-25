@@ -210,6 +210,29 @@ def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:
     assert panel.cmb_grid_shape.isEnabled() is False
 
 
+def test_preview_panel_keeps_display_controls_enabled_while_capturing(
+    qtbot: QtBot,
+) -> None:
+    """撮影中でもCLAHEとGridは表示操作として有効のままにする。"""
+    panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
+    qtbot.addWidget(panel)
+    panel.chk_show_grid.setChecked(True)
+
+    panel.set_controls_enabled(False)
+
+    assert panel.spin_expo.isEnabled() is False
+    assert panel.slider_expo.isEnabled() is False
+    assert panel.spin_gain.isEnabled() is False
+    assert panel.slider_gain.isEnabled() is False
+    assert panel.chk_processing.isEnabled() is True
+    assert panel.chk_show_grid.isEnabled() is True
+    assert panel.cmb_grid_shape.isEnabled() is True
+
+    with qtbot.waitSignal(panel.clahe_toggled, timeout=1000) as blocker:
+        panel.chk_processing.setChecked(True)
+    assert blocker.args == [True]
+
+
 def test_preview_panel_accepts_non_square_grid_shape(qtbot: QtBot) -> None:
     """PreviewPanelが非正方形Grid設定を保存状態へ反映できる。"""
     panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
