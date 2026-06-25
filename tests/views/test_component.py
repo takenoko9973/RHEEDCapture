@@ -8,6 +8,7 @@ from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
 from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
 from rheed_capture.presentation.qt.panels.preview import PreviewPanel
+from rheed_capture.presentation.qt.panels.recording import RecordingPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
 from rheed_capture.presentation.qt.widgets.histogram_viewer import HistogramPanel
 from rheed_capture.presentation.qt.widgets.image_viewer import ImageViewer
@@ -76,6 +77,7 @@ def test_sequence_panel_chip_selection(qtbot: QtBot) -> None:
 
 
 def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
+    """AngleScanPanelの初期値と保存先表示が仕様どおりであることを確認する。"""
     panel = AngleScanPanel()
     qtbot.addWidget(panel)
 
@@ -98,7 +100,37 @@ def test_angle_scan_panel_uses_positive_interval(qtbot: QtBot) -> None:
     assert panel.lbl_next_angle_scan_preview.minimumWidth() >= 120
 
 
+def test_recording_panel_switches_rate_inputs_with_conversion(qtbot: QtBot) -> None:
+    """RecordingPanelがRate入力を固定位置で切替え、値を相互変換する。"""
+    panel = RecordingPanel(exposure_bounds=(1.0, 10000.0), gain_bounds=(0, 48))
+    qtbot.addWidget(panel)
+
+    assert not hasattr(panel, "edit_sample_name")
+    assert panel.rate_value_stack.currentWidget() is panel.spin_interval_ms
+    assert panel.lbl_rate_value.width() == 82
+    assert panel.rate_value_stack.width() == 128
+    assert panel.btn_rate_interval.height() == panel.spin_interval_ms.sizeHint().height()
+    assert panel.btn_rate_fps.height() == panel.spin_interval_ms.sizeHint().height()
+    assert panel.rate_value_stack.height() == panel.spin_interval_ms.sizeHint().height()
+
+    with qtbot.waitSignal(panel.rate_mode_changed, timeout=1000) as blocker:
+        panel.btn_rate_fps.click()
+
+    assert blocker.args == ["fps"]
+    assert panel.rate_value_stack.currentWidget() is panel.spin_fps
+    assert panel.spin_fps.value() == 10.0
+
+    panel.spin_fps.setValue(20.0)
+    with qtbot.waitSignal(panel.rate_mode_changed, timeout=1000) as blocker:
+        panel.btn_rate_interval.click()
+
+    assert blocker.args == ["interval"]
+    assert panel.rate_value_stack.currentWidget() is panel.spin_interval_ms
+    assert panel.spin_interval_ms.value() == 50.0
+
+
 def test_capture_chips_panel_uses_comma_separated_inputs(qtbot: QtBot) -> None:
+    """CaptureChipsPanelがカンマ区切り候補値を読み書きする。"""
     panel = CaptureChipsPanel()
     qtbot.addWidget(panel)
     panel.set_values([10.0, 50.0], [0, 5])
@@ -118,6 +150,7 @@ def test_capture_chips_panel_uses_comma_separated_inputs(qtbot: QtBot) -> None:
 
 
 def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:
+    """AngleScanPanelの進捗表示に現在角度が出ることを確認する。"""
     panel = AngleScanPanel()
     qtbot.addWidget(panel)
 
@@ -130,6 +163,7 @@ def test_angle_scan_panel_progress_shows_current_angle(qtbot: QtBot) -> None:
 
 
 def test_sequence_panel_progress_shows_current_condition(qtbot: QtBot) -> None:
+    """SequencePanelの進捗表示に現在条件が出ることを確認する。"""
     panel = SequencePanel()
     qtbot.addWidget(panel)
 
@@ -142,6 +176,7 @@ def test_sequence_panel_progress_shows_current_condition(qtbot: QtBot) -> None:
 
 
 def test_motor_settings_panel_exposes_position_units_per_deg(qtbot: QtBot) -> None:
+    """MotorSettingsPanelが角度換算係数入力を表示することを確認する。"""
     panel = MotorSettingsPanel()
     qtbot.addWidget(panel)
 
@@ -152,6 +187,7 @@ def test_motor_settings_panel_exposes_position_units_per_deg(qtbot: QtBot) -> No
 
 
 def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:
+    """PreviewPanelのGrid有効化と形状選択Signalを確認する。"""
     panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
     qtbot.addWidget(panel)
 
@@ -175,6 +211,7 @@ def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:
 
 
 def test_preview_panel_accepts_non_square_grid_shape(qtbot: QtBot) -> None:
+    """PreviewPanelが非正方形Grid設定を保存状態へ反映できる。"""
     panel = PreviewPanel(expo_bounds=(1.0, 100.0), gain_bounds=(0, 40))
     qtbot.addWidget(panel)
 
@@ -187,6 +224,7 @@ def test_preview_panel_accepts_non_square_grid_shape(qtbot: QtBot) -> None:
 
 
 def test_preview_panel_exposure_arrow_step_tracks_current_digits(qtbot: QtBot) -> None:
+    """露光時間SpinBoxの矢印ステップが現在桁に追従する。"""
     panel = PreviewPanel(expo_bounds=(0.01, 5000.0), gain_bounds=(0, 40))
     qtbot.addWidget(panel)
 
@@ -203,6 +241,7 @@ def test_preview_panel_exposure_arrow_step_tracks_current_digits(qtbot: QtBot) -
 
 
 def test_image_viewer_grid_overlay_updates_pixmap(qtbot: QtBot) -> None:
+    """ImageViewerがGrid overlay込みでpixmapを更新する。"""
     viewer = ImageViewer()
     qtbot.addWidget(viewer)
     viewer.resize(800, 600)
@@ -218,6 +257,7 @@ def test_image_viewer_grid_overlay_updates_pixmap(qtbot: QtBot) -> None:
 
 
 def test_image_viewer_draws_configurable_preview_background(qtbot: QtBot) -> None:
+    """ImageViewerが設定されたPreview背景を描画する。"""
     viewer = ImageViewer()
     qtbot.addWidget(viewer)
     viewer.resize(800, 600)

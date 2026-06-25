@@ -15,6 +15,7 @@ from rheed_capture.infrastructure.storage.experiment_storage import ExperimentSt
 
 @pytest.fixture
 def local_temp_root() -> Generator[Path, None, None]:
+    """workspace内に一時Storage rootを作って後片付けする。"""
     root = Path.cwd() / ".test_tmp" / f"storage_sync_{uuid4().hex}"
     root.mkdir(parents=True, exist_ok=True)
     yield root
@@ -22,6 +23,7 @@ def local_temp_root() -> Generator[Path, None, None]:
 
 
 def test_next_sequence_is_based_on_max_image_suffix(local_temp_root: Path) -> None:
+    """Sequence次番号が既存image最大suffixから決まることを確認する。"""
     storage = ExperimentStorage(local_temp_root)
     exp_dir = local_temp_root / storage.get_current_experiment_dir().name
     (exp_dir / "image_001").mkdir(parents=True)
@@ -34,6 +36,7 @@ def test_next_sequence_is_based_on_max_image_suffix(local_temp_root: Path) -> No
 
 
 def test_next_angle_scan_is_based_on_max_scan_suffix(local_temp_root: Path) -> None:
+    """Angle Scan次番号が既存scan最大suffixから決まることを確認する。"""
     storage = ExperimentStorage(local_temp_root)
     exp_dir = local_temp_root / storage.get_current_experiment_dir().name
     (exp_dir / "angle_scan_001").mkdir(parents=True)
@@ -46,6 +49,7 @@ def test_next_angle_scan_is_based_on_max_scan_suffix(local_temp_root: Path) -> N
 
 
 def test_refresh_reflects_deleted_max_directory(local_temp_root: Path) -> None:
+    """最大Sequenceディレクトリ削除後の再走査で次番号が戻ることを確認する。"""
     storage = ExperimentStorage(local_temp_root)
     exp_dir = local_temp_root / storage.get_current_experiment_dir().name
     (exp_dir / "image_001").mkdir(parents=True)
@@ -61,6 +65,7 @@ def test_refresh_reflects_deleted_max_directory(local_temp_root: Path) -> None:
 
 
 def test_refresh_reflects_deleted_max_angle_scan_directory(local_temp_root: Path) -> None:
+    """最大Angle Scanディレクトリ削除後の再走査で次番号が戻ることを確認する。"""
     storage = ExperimentStorage(local_temp_root)
     exp_dir = local_temp_root / storage.get_current_experiment_dir().name
     (exp_dir / "angle_scan_001").mkdir(parents=True)
@@ -75,7 +80,10 @@ def test_refresh_reflects_deleted_max_angle_scan_directory(local_temp_root: Path
     assert storage.get_next_angle_scan_dir_name() == "angle_scan_002"
 
 
-def test_start_new_sequence_uses_disk_rescan_before_assigning(local_temp_root: Path) -> None:
+def test_start_sequence_session_uses_disk_rescan_before_assigning(
+    local_temp_root: Path,
+) -> None:
+    """Sequence開始直前の再走査で外部作成済み番号との衝突を避ける。"""
     storage = ExperimentStorage(local_temp_root)
     exp_dir = local_temp_root / storage.get_current_experiment_dir().name
     (exp_dir / "image_001").mkdir(parents=True)
@@ -84,15 +92,16 @@ def test_start_new_sequence_uses_disk_rescan_before_assigning(local_temp_root: P
     # 実行直前に外部要因で増えたフォルダを想定
     (exp_dir / "image_005").mkdir()
 
-    storage.start_new_sequence()
+    storage.start_sequence_session()
 
     assert storage.get_current_sequence_dir().name == "image_006"
     assert storage.get_current_sequence_dir().exists()
 
 
-def test_start_new_angle_scan_uses_disk_rescan_before_assigning(
+def test_start_angle_scan_session_uses_disk_rescan_before_assigning(
     local_temp_root: Path,
 ) -> None:
+    """Angle Scan開始直前の再走査で外部作成済み番号との衝突を避ける。"""
     storage = ExperimentStorage(local_temp_root)
     exp_dir = local_temp_root / storage.get_current_experiment_dir().name
     (exp_dir / "angle_scan_001").mkdir(parents=True)
@@ -101,14 +110,15 @@ def test_start_new_angle_scan_uses_disk_rescan_before_assigning(
     # 実行直前に外部要因で増えたフォルダを想定
     (exp_dir / "angle_scan_005").mkdir()
 
-    scan_id, scan_dir = storage.start_new_angle_scan(_scan_document())
+    session = storage.start_angle_scan_session(_scan_document())
 
-    assert scan_id == "as006"
-    assert scan_dir.name == "angle_scan_006"
-    assert scan_dir.exists()
+    assert session.scan_id == "as006"
+    assert session.session_dir.name == "angle_scan_006"
+    assert session.session_dir.exists()
 
 
 def _scan_document() -> AngleScanDocument:
+    """Storage同期テスト用の最小AngleScanDocumentを作る。"""
     return AngleScanDocument(
         schema_version=1,
         scan_id="",

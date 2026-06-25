@@ -46,20 +46,32 @@ The following commands are safe to run without additional confirmation:
 ## Coding Guidelines
 
 * Follow the existing architecture before adding a new abstraction.
+
 * Keep domain and application code independent of Qt and concrete hardware adapters.
+
 * Use application ports for behavior that touches cameras, motors, storage, or time.
+
 * Keep Qt panels responsible for layout and signal wiring; put reusable state parsing
   and validation in viewmodels or small helper widgets.
+
 * Prefer dataclasses and typed values for capture settings, plans, and metadata.
+
 * Do not add fallback paths, compatibility layers, or defensive abstractions unless
   they are necessary for a concrete requirement.
+
 * Prefer direct, explicit behavior over broad "just in case" handling.
-* Do not make code overly dense.
-* Separate logical blocks with blank lines when it improves readability.
-* Keep comments concise and close to the code they explain.
-* Prefer clear names and simple structure over explanatory comments.
+
 * Do not add broad exception handling around hardware operations unless the caller can
   report or recover from the failure.
+
+* Do not make code overly dense.
+
+* Separate logical blocks with blank lines when it improves readability.
+
+* Keep comments concise and close to the code they explain.
+
+* Prefer clear names and simple structure, then add short comments where they help
+  explain intent, boundaries, assumptions, or error-prevention details.
 
 ## Settings Policy
 
@@ -73,13 +85,32 @@ The following commands are safe to run without additional confirmation:
 
 ## Docstring and Comment Guidelines
 
-* Use docstrings for public behavior, not history.
-* Before writing a multi-line docstring, consider whether a one-line docstring is enough.
-* If implementation details need explanation, consider a short inline comment instead
-  of a long docstring.
-* Avoid comments about historical background, rejected approaches, or internal reasoning.
-* Preserve such notes only when they explain a necessary workaround, a failed approach
-  that must not be repeated, or a recovery procedure that is known to work.
+* Add a docstring to every project-defined function and method.
+
+* Empty `__init__.py` files do not need module docstrings or placeholder comments.
+
+* Prefer a one-line docstring unless the behavior, arguments, return value, side effects,
+  or failure modes genuinely need more explanation.
+
+* Use docstrings to describe what the function does, not how the implementation evolved.
+
+* Add short comments for important processing blocks, hardware assumptions, validation
+  rules, timing assumptions, state transitions, and error-prevention measures.
+
+* Do not omit comments only because the code is locally readable.
+
+* Use short inline comments for implementation details, validation intent, hardware
+  constraints, timing assumptions, and error-handling reasons.
+
+* When a multi-line docstring seems useful, first consider whether a one-line docstring
+  plus one or more short inline comments would be clearer.
+
+* Avoid comments about chat discussions, historical background, rejected approaches, or
+  internal reasoning.
+
+* Preserve historical or workaround notes only when they are necessary to explain an
+  error-prevention measure, a hardware-specific constraint, a failed approach that must
+  not be repeated, or a recovery procedure that is known to work.
 
 ## Safety Notes
 

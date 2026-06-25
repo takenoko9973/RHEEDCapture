@@ -28,10 +28,12 @@ from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
 from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
 from rheed_capture.presentation.qt.panels.preview import PreviewPanel
+from rheed_capture.presentation.qt.panels.recording import RecordingPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
 from rheed_capture.presentation.qt.panels.storage import StoragePanel
 from rheed_capture.presentation.qt.viewmodels.angle_scan import AngleScanViewModel
 from rheed_capture.presentation.qt.viewmodels.preview import PreviewViewModel
+from rheed_capture.presentation.qt.viewmodels.recording import RecordingViewModel
 from rheed_capture.presentation.qt.viewmodels.sequence import CaptureViewModel
 from rheed_capture.presentation.qt.widgets.grid_spec import DEFAULT_GRID_SHAPE
 from rheed_capture.presentation.qt.widgets.histogram_viewer import HistogramPanel
@@ -47,6 +49,7 @@ class MainWindow(QMainWindow):
     preview_vm: PreviewViewModel
     capture_vm: CaptureViewModel
     angle_scan_vm: AngleScanViewModel
+    recording_vm: RecordingViewModel
 
     def __init__(
         self,
@@ -54,6 +57,7 @@ class MainWindow(QMainWindow):
         storage: ExperimentStorage,
         motor_factory: Callable[[str, int, float], RotationMotor] | None = None,
     ) -> None:
+        """カメラ、Storage、Motor factoryを受け取りMainWindowを構築する。"""
         super().__init__()
         self.camera = camera
         self.storage = storage
@@ -86,6 +90,7 @@ class MainWindow(QMainWindow):
             self.storage,
             motor_factory=self._motor_factory,
         )
+        self.recording_vm = RecordingViewModel(self.camera, self.storage)
 
     def _setup_capture_coordinator(self) -> None:
         """撮影開始・終了時の共通UI操作をCoordinatorへ登録する。"""
@@ -93,8 +98,10 @@ class MainWindow(QMainWindow):
             CaptureCoordinatorHooks(
                 set_sequence_capturing=self.sequence_panel.set_capturing_state,
                 set_angle_scan_capturing=self.angle_scan_panel.set_capturing_state,
+                set_recording_capturing=self.recording_panel.set_capturing_state,
                 set_sequence_enabled=self.sequence_panel.setEnabled,
                 set_angle_scan_enabled=self.angle_scan_panel.setEnabled,
+                set_recording_enabled=self.recording_panel.setEnabled,
                 set_motor_settings_enabled=self.motor_settings_panel.setEnabled,
                 set_preview_controls_enabled=self.preview_panel.set_controls_enabled,
                 stop_sequence_preview_timer=self._sequence_preview_timer.stop,
@@ -106,6 +113,7 @@ class MainWindow(QMainWindow):
         )
 
     def _setup_ui(self) -> None:
+        """MainWindowのWidget生成、配置、基本Signal接続を行う。"""
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
 
@@ -123,11 +131,15 @@ class MainWindow(QMainWindow):
         )
         self.sequence_panel = SequencePanel()
         self.angle_scan_panel = AngleScanPanel()
+        self.recording_panel = RecordingPanel(
+            self.camera.get_exposure_bounds(), self.camera.get_gain_bounds()
+        )
         self.capture_chips_panel = CaptureChipsPanel()
         self.motor_settings_panel = MotorSettingsPanel()
         self.capture_tabs = QTabWidget()
         self.capture_tabs.addTab(self.sequence_panel, "Sequence")
         self.capture_tabs.addTab(self.angle_scan_panel, "Angle Scan")
+        self.capture_tabs.addTab(self.recording_panel, "Recording")
         self.control_tabs = QTabWidget()
         self.histogram_panel = HistogramPanel()
 
@@ -179,6 +191,7 @@ class MainWindow(QMainWindow):
         self._setup_preview_bindings()
         self._setup_sequence_bindings()
         self._setup_angle_scan_bindings()
+        self._setup_recording_bindings()
         self._setup_motor_settings_bindings()
 
     def _setup_preview_bindings(self) -> None:
@@ -274,6 +287,28 @@ class MainWindow(QMainWindow):
         self.angle_scan_vm.error_occurred.connect(self._show_error)
         self._setup_angle_scan_preview_bindings()
 
+    def _setup_recording_bindings(self) -> None:
+        """録画撮影の結線。"""
+        self.recording_panel.exposure_changed.connect(self.recording_vm.update_exposure_ms)
+        self.recording_panel.gain_changed.connect(self.recording_vm.update_gain)
+        self.recording_panel.rate_mode_changed.connect(self.recording_vm.update_rate_mode)
+        self.recording_panel.fps_changed.connect(self.recording_vm.update_fps)
+        self.recording_panel.interval_changed.connect(self.recording_vm.update_interval_ms)
+        self.recording_panel.duration_changed.connect(self.recording_vm.update_duration_sec)
+
+        self.recording_panel.start_requested.connect(self._on_start_recording_requested)
+        self.recording_panel.stop_requested.connect(self.recording_vm.stop_recording)
+
+        self.recording_vm.saved_frames_updated.connect(
+            self.recording_panel.update_saved_frames
+        )
+        self.recording_vm.expected_frames_updated.connect(
+            self.recording_panel.update_expected_frames
+        )
+        self.recording_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
+        self.recording_vm.recording_finished.connect(self._on_recording_finished)
+        self.recording_vm.error_occurred.connect(self._show_error)
+
     def _setup_motor_settings_bindings(self) -> None:
         """モーター装置設定の結線。"""
         # 候補値変更は両撮影モードへ反映する。
@@ -304,6 +339,7 @@ class MainWindow(QMainWindow):
         self.preview_vm.preview_paused.connect(self.angle_scan_vm.notify_preview_paused)
 
     def _setup_sequence_preview_timer(self) -> None:
+        """保存先番号プレビューを定期更新するTimerを開始する。"""
         # 外部で image_xxx が削除/追加される運用に追従するため、定期的に再同期する。
         self._sequence_preview_timer = QTimer(self)
         self._sequence_preview_timer.setInterval(2000)
@@ -311,6 +347,7 @@ class MainWindow(QMainWindow):
         self._sequence_preview_timer.start()
 
     def _update_storage_display(self, *, refresh_counters: bool = True) -> None:
+        """Storage状態を各Panelの保存先プレビューへ反映する。"""
         # set_root_dir()直後のように既に再スキャン済みの場面では、
         # 不要なディスク走査を避けるため refresh_counters=False を使う。
         if refresh_counters:
@@ -323,9 +360,13 @@ class MainWindow(QMainWindow):
         self.angle_scan_panel.update_next_angle_scan_preview(
             self.storage.get_next_angle_scan_dir_name()
         )
+        self.recording_panel.update_next_recording_preview(
+            self.storage.get_next_recording_dir_name()
+        )
 
     @Slot()
     def _on_sequence_preview_timer(self) -> None:
+        """撮影中でなければ保存先番号プレビューを更新する。"""
         # 撮影中は CaptureService 側でシーケンス番号を確定するため、ここで再スキャンしない。
         if self.capture_coordinator.is_capturing():
             return
@@ -334,6 +375,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_browse_root(self) -> None:
+        """保存ルート選択Dialogを開き、Storageへ反映する。"""
         dir_path = QFileDialog.getExistingDirectory(
             self, "Select Root Directory", str(self.storage.root_dir)
         )
@@ -343,6 +385,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_new_branch(self) -> None:
+        """手動branch更新を実行し、保存先表示とStatusを更新する。"""
         self.storage.increment_branch()
         self._update_storage_display(refresh_counters=False)
 
@@ -356,6 +399,7 @@ class MainWindow(QMainWindow):
 
     @Slot(list, list)
     def _on_start_sequence_requested(self) -> None:
+        """Sequence開始要求をCoordinatorへ渡す。"""
         self.capture_coordinator.begin_sequence(
             self._arm_sequence_start_after_preview_pause
         )
@@ -367,8 +411,23 @@ class MainWindow(QMainWindow):
             Qt.ConnectionType.SingleShotConnection,
         )
 
+    @Slot()
+    def _on_start_recording_requested(self) -> None:
+        """Recording開始要求をCoordinatorへ渡す。"""
+        self.capture_coordinator.begin_recording(
+            self._arm_recording_start_after_preview_pause
+        )
+
+    def _arm_recording_start_after_preview_pause(self) -> None:
+        """PreviewWorkerの停止完了を待ってからRecording Workerを開始する。"""
+        self.preview_vm.preview_paused.connect(
+            self.recording_vm.start_recording,
+            Qt.ConnectionType.SingleShotConnection,
+        )
+
     @Slot(bool, str)
     def _on_sequence_finished(self, success: bool, saved_dir_name: str) -> None:
+        """Sequence終了後にUI状態を戻し、成功時は保存先を表示する。"""
         self.capture_coordinator.leave()
         if success:
             # 完了通知は撮影結果をユーザーが確認できる程度に長めに表示する。
@@ -377,20 +436,32 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_start_angle_scan_requested(self) -> None:
+        """Angle Scan開始要求をCoordinatorへ渡す。"""
         self.capture_coordinator.begin_angle_scan(self.angle_scan_vm.start_angle_scan)
 
     @Slot(bool, str)
     def _on_angle_scan_finished(self, success: bool, saved_dir_name: str) -> None:
+        """Angle Scan終了後にUI状態を戻し、成功時は保存先を表示する。"""
         self.capture_coordinator.leave()
         if success:
             msg = f"Angle Scan Complete: Saved to '{saved_dir_name}'"
             self.status_bar.showMessage(msg, CAPTURE_COMPLETE_STATUS_MESSAGE_MS)
 
+    @Slot(bool, str)
+    def _on_recording_finished(self, success: bool, saved_dir_name: str) -> None:
+        """Recording終了後にUI状態を戻し、成功時は保存先を表示する。"""
+        self.capture_coordinator.leave()
+        if success:
+            msg = f"Recording Finished: Saved to '{saved_dir_name}'"
+            self.status_bar.showMessage(msg, CAPTURE_COMPLETE_STATUS_MESSAGE_MS)
+
     @Slot(str)
     def _show_error(self, message: str) -> None:
+        """ユーザーへエラーダイアログを表示する。"""
         QMessageBox.critical(self, "Error", message)
 
     def _load_settings(self) -> None:
+        """保存済み設定を読み込み、各PanelとViewModelへ反映する。"""
         settings = AppSettings.load()
 
         if settings.root_dir:
@@ -402,6 +473,8 @@ class MainWindow(QMainWindow):
         self.capture_chips_panel.set_values(settings.exposure_ms_values, settings.gain_values)
         self.capture_vm.load_settings(settings)
         self.angle_scan_vm.load_settings(settings)
+        self.recording_panel.apply_settings(settings.recording_capture)
+        self.recording_vm.load_settings(settings.recording_capture)
         self._apply_grid_settings(settings.preview)
 
     @Slot(list)
@@ -419,6 +492,7 @@ class MainWindow(QMainWindow):
         self.angle_scan_vm.update_candidate_values(exposure_ms_values, gain_values)
 
     def _apply_grid_settings(self, settings: PreviewSettings) -> None:
+        """保存済みGrid設定をPreview PanelとImage Viewerへ反映する。"""
         # Grid は Panel(操作状態) と Viewer(描画状態) の両方へ同時反映する。
         default_rows, default_cols = DEFAULT_GRID_SHAPE
         grid_rows = settings.grid_rows or default_rows
@@ -429,6 +503,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_grid_shape(grid_rows, grid_cols)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        """終了時に設定保存、Preview停止、カメラ切断を行う。"""
         # キャプチャ中は終了をブロック
         if self.capture_coordinator.is_capturing():
             QMessageBox.warning(self, "Warning", "Cannot close while capturing.")
@@ -446,6 +521,7 @@ class MainWindow(QMainWindow):
             preview=preview_settings,
             sequence_capture=self.capture_vm.get_settings_to_save(),
             angle_scan=self.angle_scan_vm.get_angle_scan_settings(),
+            recording_capture=self.recording_vm.get_settings_to_save(),
             device=self.angle_scan_vm.get_device_settings(),
         )
         AppSettings.save(settings_to_save)
