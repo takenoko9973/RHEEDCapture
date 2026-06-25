@@ -11,6 +11,10 @@ from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocumentSettings,
     CaptureCondition,
 )
+from rheed_capture.data_formats.storage_naming import (
+    ANGLE_DIR_PATTERN,
+    ANGLE_SCAN_TIFF_FILENAME_PATTERN,
+)
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
 
@@ -44,7 +48,7 @@ def test_lazy_directory_creation() -> None:
         assert not storage.get_current_experiment_dir().exists()
 
         # 撮影開始時に初めて作られる
-        storage.start_new_sequence()
+        storage.start_sequence_session()
         assert storage.get_current_experiment_dir().exists()
         assert storage.get_current_sequence_dir().exists()
 
@@ -55,14 +59,14 @@ def test_experiment_storage_save_sequence() -> None:
         storage = ExperimentStorage(root_dir=temp_dir)
 
         # 1回目のシーケンス撮影開始
-        storage.start_new_sequence()
+        session = storage.start_sequence_session()
         assert storage.get_current_sequence_dir().name == "image_001"
 
         data = np.zeros((10, 10), dtype=np.uint16)
         meta = {"exposure_ms": 50}
 
         # 保存実行
-        saved_path = storage.save_frame(data, exposure_ms=50, gain=0, metadata=meta)
+        saved_path = session.save_raw_frame(data, exposure_ms=50, gain=0, metadata=meta)
 
         # ファイル名が {yymmdd}-{n}_expo{Exposure}_gain{Gain}.tiff になっているか
         expected_filename = f"{storage.date_str}-1_expo50_gain0.tiff"
@@ -72,10 +76,10 @@ def test_experiment_storage_save_sequence() -> None:
         # ===
 
         # 2回目のシーケンス撮影開始
-        storage.start_new_sequence()
+        session2 = storage.start_sequence_session()
         assert storage.get_current_sequence_dir().name == "image_002"
 
-        saved_path2 = storage.save_frame(data, exposure_ms=2000, gain=1.5, metadata=meta)
+        saved_path2 = session2.save_raw_frame(data, exposure_ms=2000, gain=1.5, metadata=meta)
 
         expected_filename2 = f"{storage.date_str}-2_expo2000_gain1.5.tiff"
         assert saved_path2.name == expected_filename2
@@ -101,7 +105,7 @@ def test_root_change_and_branch_detection() -> None:
         assert storage.get_current_experiment_dir().name == f"{date_str}-2"
 
         # 次のシーケンスは image_006 になるはず
-        storage.start_new_sequence()
+        storage.start_sequence_session()
         assert storage.get_current_sequence_dir().name == "image_006"
 
 
@@ -118,6 +122,7 @@ def test_manual_branch_increment() -> None:
 
 
 def test_angle_scan_storage_uses_independent_counter_and_spec_names() -> None:
+    """Angle Scanが独立番号と保存形式定数でSessionを作ることを確認する。"""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = ExperimentStorage(temp_dir)
         data = np.zeros((10, 10), dtype=np.uint16)
@@ -140,17 +145,18 @@ def test_angle_scan_storage_uses_independent_counter_and_spec_names() -> None:
             capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=0)],
         )
 
-        storage.start_new_sequence()
-        scan_id, scan_dir = storage.start_new_angle_scan(scan_document)
+        storage.start_sequence_session()
+        scan_session = storage.start_angle_scan_session(scan_document)
+        scan_id = scan_session.scan_id
+        scan_dir = scan_session.session_dir
 
         assert storage.get_current_sequence_dir().name == "image_001"
         assert scan_id == "as001"
         assert scan_dir.name == "angle_scan_001"
         assert (scan_dir / "scan.json").exists()
 
-        saved_path = storage.save_angle_scan_frame(
+        saved_path = scan_session.save_raw_frame(
             data,
-            scan_id=scan_id,
             target_angle_deg=0.5,
             exposure_ms=10.0,
             gain=0,
@@ -162,9 +168,12 @@ def test_angle_scan_storage_uses_independent_counter_and_spec_names() -> None:
         with (scan_dir / "scan.json").open(encoding="utf-8") as f:
             saved_scan = json.load(f)
         assert saved_scan["scan_id"] == "as001"
+        assert saved_scan["storage"]["angle_directory_format"] == ANGLE_DIR_PATTERN
+        assert saved_scan["storage"]["filename_format"] == ANGLE_SCAN_TIFF_FILENAME_PATTERN
 
 
 def test_angle_scan_counter_uses_max_suffix_without_reuse() -> None:
+    """既存Angle Scan最大番号の次番号を使い、番号を再利用しない。"""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = ExperimentStorage(temp_dir)
         exp_dir = storage.get_current_experiment_dir()

@@ -85,6 +85,7 @@ class AngleScanCapture:
         conditions: list[CaptureCondition],
         settings: AngleScanSettings,
     ) -> None:
+        """撮影、保存、モータ操作の依存を受け取り、走査計画を確定する。"""
         self.frame_capturer = frame_capturer
         self.session = session
         self.motor = motor
@@ -214,7 +215,7 @@ def build_angle_scan_document(
     conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
 ) -> AngleScanDocument:
-    """角度走査計画と撮影条件を、保存互換性のあるscan.jsonモデルへ変換する。"""
+    """角度走査計画と撮影条件をscan.json保存モデルへ変換する。"""
     return AngleScanDocument(
         schema_version=1,
         scan_id="",

@@ -13,6 +13,7 @@ from rheed_capture.infrastructure.config.schema import (
     DeviceSettings,
     MotorDeviceSettings,
     PreviewSettings,
+    RecordingCaptureSettings,
     SequenceCaptureSettings,
 )
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
@@ -21,9 +22,11 @@ from rheed_capture.presentation.qt.main_window import MainWindow
 
 @pytest.fixture
 def mock_camera() -> MagicMock:
+    """MainWindowテスト用のCamera mockを作る。"""
     camera = MagicMock(spec=CameraDevice)
 
     def mock_retrieve(*args, **kwargs) -> None:  # noqa: ARG001
+        """Preview取得待ちを短時間だけ再現する。"""
         time.sleep(0.01)
 
     camera.retrieve_preview_frame.side_effect = mock_retrieve
@@ -34,6 +37,7 @@ def mock_camera() -> MagicMock:
 
 @pytest.fixture
 def mock_storage() -> MagicMock:
+    """MainWindowテスト用のStorage mockを作る。"""
     storage = MagicMock(spec=ExperimentStorage)
     storage.root_dir = Path("dummy/root")
     mock_dir = MagicMock(spec=Path)
@@ -41,12 +45,14 @@ def mock_storage() -> MagicMock:
     storage.get_current_experiment_dir.return_value = mock_dir
     storage.get_next_sequence_dir_name.return_value = "image_001"
     storage.get_next_angle_scan_dir_name.return_value = "angle_scan_001"
+    storage.get_next_recording_dir_name.return_value = "record-1"
     storage.increment_branch.return_value = "260215-2"
     return storage
 
 
 @pytest.fixture(autouse=True)
 def mock_settings() -> types.GeneratorType:
+    """AppSettings.load/saveをテスト用設定に差し替える。"""
     with patch("rheed_capture.presentation.qt.main_window.AppSettings") as mock_app_settings:
         mock_app_settings.load.return_value = AppSettingsData(
             root_dir="dummy/root",
@@ -71,6 +77,14 @@ def mock_settings() -> types.GeneratorType:
                 direction="both",
                 motor_speed_rpm=4.0,
             ),
+            recording_capture=RecordingCaptureSettings(
+                exposure_ms=25.0,
+                gain=1,
+                rate_mode="fps",
+                fps=40.0,
+                interval_ms=25.0,
+                duration_sec=5.0,
+            ),
             device=DeviceSettings(
                 motor=MotorDeviceSettings(
                     port="COM8",
@@ -85,6 +99,7 @@ def mock_settings() -> types.GeneratorType:
 def test_main_window_initialization(
     qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock
 ) -> None:
+    """保存済み設定がMainWindowの各Panelへ反映されることを確認する。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
 
@@ -106,13 +121,21 @@ def test_main_window_initialization(
     assert window.control_tabs.count() == 2
     assert window.control_tabs.tabText(0) == "Capture"
     assert window.control_tabs.tabText(1) == "Settings"
-    assert window.capture_tabs.count() == 2
+    assert window.capture_tabs.count() == 3
     assert window.capture_tabs.tabText(0) == "Sequence"
     assert window.capture_tabs.tabText(1) == "Angle Scan"
+    assert window.capture_tabs.tabText(2) == "Recording"
+    assert window.recording_panel.spin_exposure_ms.value() == 25.0
+    assert window.recording_panel.spin_gain.value() == 1
+    assert window.recording_panel.btn_rate_fps.isChecked() is True
+    assert window.recording_panel.rate_value_stack.currentWidget() is (
+        window.recording_panel.spin_fps
+    )
     window.close()
 
 
 def test_branch_update_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:
+    """Branch更新操作でStorage更新と通知Dialogが呼ばれることを確認する。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
     with patch("rheed_capture.presentation.qt.main_window.QMessageBox.information") as mock_msg:
@@ -125,6 +148,7 @@ def test_branch_update_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage:
 def test_settings_save_on_close(
     qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock, mock_settings: MagicMock
 ) -> None:
+    """MainWindow終了時に現在UI状態をsettingsへ保存することを確認する。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
 
@@ -132,6 +156,7 @@ def test_settings_save_on_close(
     window.preview_panel.chk_processing.setChecked(False)
     window.preview_panel.chk_show_grid.setChecked(False)
     window.preview_panel.cmb_grid_shape.setCurrentText("2x2")
+    window.recording_panel.btn_rate_interval.click()
 
     window.close()
 
@@ -150,6 +175,8 @@ def test_settings_save_on_close(
     assert saved_data.angle_scan.range_deg == 5.0
     assert saved_data.angle_scan.direction == "both"
     assert saved_data.angle_scan.motor_speed_rpm == 4.0
+    assert saved_data.recording_capture.rate_mode == "interval"
+    assert saved_data.recording_capture.interval_ms == 25.0
     assert saved_data.device.motor.port == "COM8"
     assert saved_data.device.motor.slave == 3
     assert saved_data.device.motor.position_units_per_deg == 31.25

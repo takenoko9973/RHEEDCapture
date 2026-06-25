@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-CaptureMode = Literal["sequence", "angle_scan", "time_series"]
+CaptureMode = Literal["sequence", "angle_scan", "recording"]
 
 
 @dataclass(frozen=True)
@@ -15,8 +15,10 @@ class CaptureCoordinatorHooks:
 
     set_sequence_capturing: Callable[[bool], None]
     set_angle_scan_capturing: Callable[[bool], None]
+    set_recording_capturing: Callable[[bool], None]
     set_sequence_enabled: Callable[[bool], None]
     set_angle_scan_enabled: Callable[[bool], None]
+    set_recording_enabled: Callable[[bool], None]
     set_motor_settings_enabled: Callable[[bool], None]
     set_preview_controls_enabled: Callable[[bool], None]
     stop_sequence_preview_timer: Callable[[], None]
@@ -31,6 +33,7 @@ class CaptureCoordinator:
     """撮影モード間の排他制御とプレビュー所有権の受け渡しをまとめる。"""
 
     def __init__(self, hooks: CaptureCoordinatorHooks | None = None) -> None:
+        """必要なら初期hooksを受け取り、未撮影状態で初期化する。"""
         self.active_mode: CaptureMode | None = None
         self._hooks = hooks
 
@@ -59,6 +62,17 @@ class CaptureCoordinator:
             self.leave()
             raise
 
+    def begin_recording(self, arm_start_after_preview_pause: Callable[[], None]) -> None:
+        """PreviewWorker停止完了後にRecordingを開始する流れを開始する。"""
+        self.enter("recording")
+
+        try:
+            arm_start_after_preview_pause()
+            self._require_hooks().pause_preview()
+        except Exception:
+            self.leave()
+            raise
+
     def enter(self, mode: CaptureMode) -> None:
         """指定モードを唯一の撮影所有者として登録し、共通UI状態へ切り替える。"""
         if self.active_mode is not None:
@@ -83,8 +97,10 @@ class CaptureCoordinator:
 
         hooks.set_sequence_capturing(mode == "sequence")
         hooks.set_angle_scan_capturing(mode == "angle_scan")
+        hooks.set_recording_capturing(mode == "recording")
         hooks.set_sequence_enabled(mode == "sequence")
         hooks.set_angle_scan_enabled(mode == "angle_scan")
+        hooks.set_recording_enabled(mode == "recording")
         hooks.set_motor_settings_enabled(False)
         hooks.set_preview_controls_enabled(False)
         hooks.stop_sequence_preview_timer()
@@ -95,8 +111,10 @@ class CaptureCoordinator:
 
         hooks.set_sequence_capturing(False)
         hooks.set_angle_scan_capturing(False)
+        hooks.set_recording_capturing(False)
         hooks.set_sequence_enabled(True)
         hooks.set_angle_scan_enabled(True)
+        hooks.set_recording_enabled(True)
         hooks.set_motor_settings_enabled(True)
         hooks.set_preview_controls_enabled(True)
         hooks.resume_preview()

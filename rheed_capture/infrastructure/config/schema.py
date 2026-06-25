@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
 from rheed_capture.domain.angle_scan.model import (
@@ -52,13 +52,28 @@ def _as_mapping(value: object) -> dict[str, Any]:
     return {}
 
 
+def _optional_section(data: dict[str, Any], key: str) -> dict[str, Any] | None:
+    """存在すればdictとして返し、欠落時だけNoneを返す。"""
+    value = data.get(key)
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        return cast("dict[str, Any]", value)
+
+    msg = f"settings section must be an object: {key}"
+    raise ValueError(msg)
+
+
 def _require_non_negative_wait_time(wait_after_move_ms: int) -> None:
+    """Angle Scanの移動後待機時間が0以上であることを検証する。"""
     if wait_after_move_ms < 0:
         msg = "移動後待機時間は0以上にしてください。"
         raise ValueError(msg)
 
 
 def _require_positive_motor_speed(motor_speed_rpm: float) -> None:
+    """Angle Scanのモーター速度が正であることを検証する。"""
     if motor_speed_rpm <= 0:
         msg = "モーター速度は正の値にしてください。"
         raise ValueError(msg)
@@ -90,6 +105,7 @@ class PreviewSettings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PreviewSettings:
+        """settings.jsonのpreviewセクションからPreviewSettingsを作る。"""
         preview = _as_mapping(data.get("preview"))
         clahe = _as_mapping(preview.get("clahe"))
         grid = _as_mapping(preview.get("grid"))
@@ -105,6 +121,7 @@ class PreviewSettings:
         )
 
     def with_grid(self, grid: PreviewGridSettings) -> PreviewSettings:
+        """ImageViewer由来のGrid設定を反映したPreviewSettingsを返す。"""
         return replace(
             self,
             show_grid=grid.show_grid,
@@ -113,6 +130,7 @@ class PreviewSettings:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """PreviewSettingsをsettings.json保存用dictへ変換する。"""
         return {
             "exposure_ms": self.exposure_ms,
             "gain": self.gain,
@@ -143,6 +161,7 @@ class SequenceCaptureSettings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SequenceCaptureSettings:
+        """settings.jsonのsequence_captureセクションから設定を作る。"""
         defaults = cls()
         return cls(
             selected_exposure_ms_values=[
@@ -161,6 +180,7 @@ class SequenceCaptureSettings:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """SequenceCaptureSettingsをsettings.json保存用dictへ変換する。"""
         return {
             "selected_exposure_ms_values": self.selected_exposure_ms_values,
             "selected_gain_values": self.selected_gain_values,
@@ -181,6 +201,7 @@ class AngleScanCaptureSettings:
     return_to_start: bool = DEFAULT_ANGLE_SCAN_RETURN_TO_START
 
     def __post_init__(self) -> None:
+        """Angle Scan撮影条件の入力制約を検証する。"""
         validate_range(self.range_deg)
         validate_interval(self.interval_deg)
         validate_interval_within_range(self.range_deg, self.interval_deg)
@@ -190,6 +211,7 @@ class AngleScanCaptureSettings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AngleScanCaptureSettings:
+        """settings.jsonのangle_scanセクションから設定を作る。"""
         defaults = cls()
         return cls(
             selected_exposure_ms_values=[
@@ -217,6 +239,7 @@ class AngleScanCaptureSettings:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """AngleScanCaptureSettingsをsettings.json保存用dictへ変換する。"""
         return {
             "selected_exposure_ms_values": self.selected_exposure_ms_values,
             "selected_gain_values": self.selected_gain_values,
@@ -226,6 +249,50 @@ class AngleScanCaptureSettings:
             "wait_after_move_ms": self.wait_after_move_ms,
             "motor_speed_rpm": self.motor_speed_rpm,
             "return_to_start": self.return_to_start,
+        }
+
+
+RecordingRateMode = Literal["fps", "interval"]
+
+
+@dataclass(frozen=True)
+class RecordingCaptureSettings:
+    """Recording撮影の単一条件とレート入力状態。"""
+
+    exposure_ms: float = DEFAULT_PREVIEW_EXPOSURE_MS
+    gain: int = DEFAULT_PREVIEW_GAIN
+    rate_mode: RecordingRateMode = "interval"
+    fps: float = 10.0
+    interval_ms: float = 100.0
+    duration_sec: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Recordingのrate_modeが既知の入力モードであることを検証する。"""
+        if self.rate_mode not in ("fps", "interval"):
+            msg = "Recording rate_mode must be 'fps' or 'interval'."
+            raise ValueError(msg)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RecordingCaptureSettings:
+        """settings.jsonのrecording_captureセクションから設定を作る。"""
+        return cls(
+            exposure_ms=float(data["exposure_ms"]),
+            gain=int(data["gain"]),
+            rate_mode=cast("RecordingRateMode", str(data["rate_mode"])),
+            fps=float(data["fps"]),
+            interval_ms=float(data["interval_ms"]),
+            duration_sec=float(data["duration_sec"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """RecordingCaptureSettingsをsettings.json保存用dictへ変換する。"""
+        return {
+            "exposure_ms": self.exposure_ms,
+            "gain": self.gain,
+            "rate_mode": self.rate_mode,
+            "fps": self.fps,
+            "interval_ms": self.interval_ms,
+            "duration_sec": self.duration_sec,
         }
 
 
@@ -239,12 +306,14 @@ class MotorDeviceSettings:
     driver: str = DEFAULT_MOTOR_DRIVER
 
     def __post_init__(self) -> None:
+        """モーター角度換算係数が正であることを検証する。"""
         if self.position_units_per_deg <= 0:
             msg = "1degあたりのモーター位置単位は正の値にしてください。"
             raise ValueError(msg)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MotorDeviceSettings:
+        """settings.jsonのdevice.motorセクションから設定を作る。"""
         connection = _as_mapping(data.get("connection"))
         calibration = _as_mapping(data.get("calibration"))
 
@@ -258,6 +327,7 @@ class MotorDeviceSettings:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        """MotorDeviceSettingsをsettings.json保存用dictへ変換する。"""
         return {
             "driver": self.driver,
             "connection": {
@@ -279,9 +349,11 @@ class DeviceSettings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DeviceSettings:
+        """settings.jsonのdeviceセクションからDeviceSettingsを作る。"""
         return cls(motor=MotorDeviceSettings.from_dict(_as_mapping(data.get("motor"))))
 
     def to_dict(self) -> dict[str, Any]:
+        """DeviceSettingsをsettings.json保存用dictへ変換する。"""
         return {"motor": self.motor.to_dict()}
 
 
@@ -302,32 +374,64 @@ class AppSettingsData:
     preview: PreviewSettings = field(default_factory=PreviewSettings)
     sequence_capture: SequenceCaptureSettings = field(default_factory=SequenceCaptureSettings)
     angle_scan: AngleScanCaptureSettings = field(default_factory=AngleScanCaptureSettings)
+    recording_capture: RecordingCaptureSettings = field(
+        default_factory=RecordingCaptureSettings
+    )
     device: DeviceSettings = field(default_factory=DeviceSettings)
     schema_version: int = 1
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AppSettingsData:
-        output = _as_mapping(data.get("output"))
+        """settings.jsonのdictからAppSettingsDataを作る。"""
+        return AppSettingsParser(data).parse()
+
+    def to_dict(self) -> dict[str, Any]:
+        """AppSettingsDataをsettings.json保存用dictへ変換する。"""
+        return {
+            "schema_version": self.schema_version,
+            "output": {"root_dir": self.root_dir},
+            "exposure_ms_values": self.exposure_ms_values,
+            "gain_values": self.gain_values,
+            "preview": self.preview.to_dict(),
+            "sequence_capture": self.sequence_capture.to_dict(),
+            "angle_scan": self.angle_scan.to_dict(),
+            "recording_capture": self.recording_capture.to_dict(),
+            "device": self.device.to_dict(),
+        }
+
+
+class AppSettingsParser:
+    """settings.jsonのdictを設定モデルへ変換する境界。"""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        """parse対象のsettings.json由来dictを保持する。"""
+        self.data = data
+
+    def parse(self) -> AppSettingsData:
+        """settings.json由来dictをAppSettingsDataへ変換する。"""
+        output = _as_mapping(self.data.get("output"))
         exposure_ms_values = [
             float(value)
-            for value in list(data.get("exposure_ms_values", _default_exposure_ms_values()))
+            for value in list(
+                self.data.get("exposure_ms_values", _default_exposure_ms_values())
+            )
         ]
         gain_values = [
-            int(value) for value in list(data.get("gain_values", _default_gain_values()))
+            int(value) for value in list(self.data.get("gain_values", _default_gain_values()))
         ]
         sequence_capture = SequenceCaptureSettings.from_dict(
-            _as_mapping(data.get("sequence_capture"))
+            _as_mapping(self.data.get("sequence_capture"))
         )
-        angle_scan = AngleScanCaptureSettings.from_dict(_as_mapping(data.get("angle_scan")))
+        angle_scan = AngleScanCaptureSettings.from_dict(_as_mapping(self.data.get("angle_scan")))
+        recording_capture = self._parse_recording_capture()
         exposure_set = set(exposure_ms_values)
         gain_set = set(gain_values)
 
-        # 候補から削除された値は選択状態から取り除く。
-        return cls(
+        return AppSettingsData(
             root_dir=str(output.get("root_dir", "")),
             exposure_ms_values=exposure_ms_values,
             gain_values=gain_values,
-            preview=PreviewSettings.from_dict(data),
+            preview=PreviewSettings.from_dict(self.data),
             sequence_capture=replace(
                 sequence_capture,
                 selected_exposure_ms_values=filter_existing_float_values(
@@ -350,18 +454,16 @@ class AppSettingsData:
                     gain_set,
                 ),
             ),
-            device=DeviceSettings.from_dict(_as_mapping(data.get("device"))),
+            recording_capture=recording_capture,
+            device=DeviceSettings.from_dict(_as_mapping(self.data.get("device"))),
             schema_version=1,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "output": {"root_dir": self.root_dir},
-            "exposure_ms_values": self.exposure_ms_values,
-            "gain_values": self.gain_values,
-            "preview": self.preview.to_dict(),
-            "sequence_capture": self.sequence_capture.to_dict(),
-            "angle_scan": self.angle_scan.to_dict(),
-            "device": self.device.to_dict(),
-        }
+    def _parse_recording_capture(self) -> RecordingCaptureSettings:
+        """Recording設定を読み込み、未作成セクションだけ既定値で補う。"""
+        section = _optional_section(self.data, "recording_capture")
+        if section is None:
+            # 録画機能追加直後の設定欠落だけを局所的に補い、他セクションは保持する。
+            return RecordingCaptureSettings()
+
+        return RecordingCaptureSettings.from_dict(section)
