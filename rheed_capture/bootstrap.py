@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from rheed_capture.infrastructure.camera.basler_camera import BaslerCamera
+from rheed_capture.infrastructure.camera.basler_configurators import (
+    CAMERA_EMULATION_ENV_VAR,
+    BaslerCameraConfigurator,
+    BaslerCameraEmulationSettings,
+    BaslerMandatorySettings,
+)
 from rheed_capture.infrastructure.motor.azd_cd.motor import (
     AzdCdRotationMotor,
     MotorConnectionConfig,
@@ -15,6 +22,17 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rheed_capture.application.ports.motor import RotationMotor
+
+
+def create_camera() -> BaslerCamera:
+    """実行環境に応じたBaslerカメラ実装を生成して接続する。"""
+    configurators: list[BaslerCameraConfigurator] = [BaslerMandatorySettings()]
+    if os.environ.get(CAMERA_EMULATION_ENV_VAR):
+        configurators.append(BaslerCameraEmulationSettings())
+
+    camera = BaslerCamera(configurators=configurators)
+    camera.connect()
+    return camera
 
 
 def create_motor_factory() -> Callable[[str, int, float], RotationMotor]:
@@ -39,8 +57,7 @@ def create_motor_factory() -> Callable[[str, int, float], RotationMotor]:
 
 def create_main_window() -> MainWindow:
     """実機依存オブジェクトを組み立て、QtのMainWindowへ注入する。"""
-    camera = BaslerCamera()
-    camera.connect()
+    camera = create_camera()
 
     storage = ExperimentStorage(root_dir="./Data_Root")
     return MainWindow(camera, storage, motor_factory=create_motor_factory())

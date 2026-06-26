@@ -9,12 +9,22 @@ os.environ["PYLON_CAMEMU"] = "1"
 from pypylon import genicam, pylon
 
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.camera.basler_configurators import (
+    CAMERA_EMULATION_ROI,
+    BaslerCameraEmulationSettings,
+    BaslerMandatorySettings,
+)
 
 
 @pytest.fixture
 def camera_device():  # noqa: ANN201
     """テスト用のカメラデバイスフィクスチャ"""
-    dev = CameraDevice()
+    dev = CameraDevice(
+        configurators=[
+            BaslerMandatorySettings(),
+            BaslerCameraEmulationSettings(),
+        ],
+    )
     dev.connect()
     yield dev
     dev.disconnect()
@@ -31,6 +41,14 @@ def test_camera_connection_and_mandatory_settings(camera_device: CameraDevice) -
     # エミュレータでサポートされている範囲で強制設定が反映されているか
     if genicam.IsWritable(cam.ExposureAuto):
         assert cam.ExposureAuto.GetValue() == "Off"
+
+
+def test_camera_emulation_roi(camera_device: CameraDevice) -> None:
+    """エミュレータカメラのROIがシミュレーション用サイズに設定されるかのテスト"""
+    expected_width, expected_height = CAMERA_EMULATION_ROI
+
+    assert camera_device.camera.Width.GetValue() == expected_width
+    assert camera_device.camera.Height.GetValue() == expected_height
 
 
 def test_camera_bounds(camera_device: CameraDevice) -> None:
@@ -68,6 +86,7 @@ def test_grab_one(camera_device: CameraDevice) -> None:
     assert img_data is not None
     assert isinstance(img_data, np.ndarray)
     assert img_data.dtype == np.uint16, "Mono16設定のためuint16で返ること"
+    assert img_data.shape == (540, 720)
 
 
 def test_preview_grabbing(camera_device: CameraDevice) -> None:
@@ -94,6 +113,7 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
         assert img_data is not None
         assert isinstance(img_data, np.ndarray)
         assert img_data.dtype == np.uint16
+        assert img_data.shape == (540, 720)
 
     camera_device.stop_grabbing()
 
