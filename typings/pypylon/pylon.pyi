@@ -83,6 +83,11 @@ class InstantCamera:
     GainRaw: IInteger
     Gamma: IFloat
 
+    Width: IInteger
+    Height: IInteger
+    OffsetX: IInteger
+    OffsetY: IInteger
+
     ReverseX: IBoolean
     ReverseY: IBoolean
 
