@@ -72,12 +72,12 @@ class PreviewViewModel(QObject):
         他サービスによって変更された可能性のあるカメラ設定を、
         ViewModelが保持している現在のプレビュー設定で上書き復元する。
         """
-        # 1. カメラハードウェアの設定を復元
-        self._camera.set_exposure(self._exposure)
-        self._camera.set_gain(self._gain)
+        # 再開済みでも直接書き込まず、Worker所有スレッドで停止してから設定を復元する。
+        self._worker.request_exposure(self._exposure)
+        self._worker.request_gain(self._gain)
         self._worker.set_processing_enabled(self._clahe_enabled)
 
-        # 2. Workerスレッドの画像取得ループを再開
+        # 設定予約後にWorkerの画像取得ループを再開する。
         self._worker.resume()
 
     @Slot(float)
