@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 import numpy as np
 import pytest
@@ -8,7 +9,9 @@ os.environ["PYLON_CAMEMU"] = "1"
 
 from pypylon import genicam, pylon
 
-from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.application.ports.camera import CameraError
+from rheed_capture.infrastructure.camera import basler_camera as basler_module
+from rheed_capture.infrastructure.camera.basler_camera import CameraDevice, CameraState
 from rheed_capture.infrastructure.camera.basler_configurators import (
     CAMERA_EMULATION_ROI,
     BaslerCameraEmulationSettings,
@@ -78,21 +81,27 @@ def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
         assert camera_device.camera.GainRaw.GetValue() == 400
 
 
-def test_grab_one(camera_device: CameraDevice) -> None:
-    """同期取得(GrabOne)のテスト"""
-    # GrabOneで1枚画像を取得する
-    img_data = camera_device.grab_one(timeout_ms=1000)
+def test_emulator_reports_missing_timestamp_chunk_capability(
+    camera_device: CameraDevice,
+) -> None:
+    """Timestamp Chunk非対応エミュレータでは不足node名を明示して失敗する。"""
+    with pytest.raises(CameraError, match="ChunkSelector"):
+        camera_device.start_software_trigger_session(expected_frames=1)
 
-    assert img_data is not None
-    assert isinstance(img_data, np.ndarray)
-    assert img_data.dtype == np.uint16, "Mono16設定のためuint16で返ること"
-    assert img_data.shape == (540, 720)
+    assert camera_device.state is CameraState.IDLE
+    assert camera_device.camera.TriggerMode.GetValue() == "Off"
 
 
 def test_preview_grabbing(camera_device: CameraDevice) -> None:
     """プレビュー用非同期取得(StartGrabbing)のテスト"""
     camera_device.start_preview_grab()
     assert camera_device.camera.IsGrabbing()
+
+    with pytest.raises(CameraError, match="idle状態"):
+        camera_device.set_exposure(20.0)
+
+    with pytest.raises(CameraError, match="idle状態"):
+        camera_device.start_software_trigger_session(expected_frames=1)
 
     # 1フレームだけ手動で取り出してみる
     grab_result = camera_device.camera.RetrieveResult(1000, pylon.TimeoutHandling_ThrowException)
@@ -119,3 +128,169 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
 
     # 停止中に取得しようとした場合はNoneが返ること
     assert camera_device.retrieve_preview_frame() is None
+
+
+class _FakeNode:
+    """Basler trigger unit test用の読み書き可能なGenICam node。"""
+
+    def __init__(self, value: str | int) -> None:
+        """初期node値を保持する。"""
+        self.value = value
+
+    def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
+        """GenICam文字列表現からnode値を更新する。"""
+        if isinstance(self.value, int):
+            self.value = int(value)
+        else:
+            self.value = value
+
+    def ToString(self) -> str:  # noqa: N802
+        """現在値をGenICam文字列表現で返す。"""
+        return str(self.value)
+
+    def GetValue(self) -> str | int:  # noqa: N802
+        """現在値を返す。"""
+        return self.value
+
+
+class _FakeNodeMap:
+    """node名で_FakeNodeを返す最小NodeMap。"""
+
+    def __init__(self, nodes: dict[str, _FakeNode]) -> None:
+        """node辞書を保持する。"""
+        self.nodes = nodes
+
+    def GetNode(self, name: str) -> _FakeNode | None:  # noqa: N802
+        """指定名のnodeを返す。"""
+        return self.nodes.get(name)
+
+
+class _FakeGrabResult:
+    """Timestamp Chunk付きの成功GrabResult。"""
+
+    def __init__(self, timestamp_ticks: int) -> None:
+        """返却するcamera timestampを保持する。"""
+        self.chunk_nodemap = _FakeNodeMap(
+            {"ChunkTimestamp": _FakeNode(timestamp_ticks)}
+        )
+
+    def __enter__(self):  # noqa: ANN204
+        """GrabResult自身を返す。"""
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:  # noqa: ANN001
+        """test doubleでは解放処理を行わない。"""
+
+    def IsValid(self) -> bool:  # noqa: N802
+        """有効なGrabResultであることを返す。"""
+        return True
+
+    def GrabSucceeded(self) -> bool:  # noqa: N802
+        """取得成功を返す。"""
+        return True
+
+    def GetChunkDataNodeMap(self) -> _FakeNodeMap:  # noqa: N802
+        """Timestamp Chunk node mapを返す。"""
+        return self.chunk_nodemap
+
+
+class _FakeInstantCamera:
+    """Basler software trigger lifecycleを観測するInstantCamera test double。"""
+
+    def __init__(self) -> None:
+        """必須nodeと取得履歴を初期化する。"""
+        self.nodemap = _FakeNodeMap(
+            {
+                "AcquisitionMode": _FakeNode("SingleFrame"),
+                "TriggerSelector": _FakeNode("FrameStart"),
+                "TriggerMode": _FakeNode("Off"),
+                "TriggerSource": _FakeNode("Line1"),
+                "ChunkModeActive": _FakeNode("False"),
+                "ChunkSelector": _FakeNode("Timestamp"),
+                "ChunkEnable": _FakeNode("False"),
+                "GevTimestampTickFrequency": _FakeNode(125_000_000),
+            }
+        )
+        self.start_args: tuple[object, ...] | None = None
+        self.grabbing = False
+        self.trigger_count = 0
+        self.stop_count = 0
+
+    def IsOpen(self) -> bool:  # noqa: N802
+        """接続済みとして扱う。"""
+        return True
+
+    def GetNodeMap(self) -> _FakeNodeMap:  # noqa: N802
+        """必須trigger node mapを返す。"""
+        return self.nodemap
+
+    def StartGrabbing(self, *args: object) -> None:  # noqa: N802
+        """取得strategy引数を記録してgrabbing状態にする。"""
+        self.start_args = args
+        self.grabbing = True
+
+    def IsGrabbing(self) -> bool:  # noqa: N802
+        """現在の取得状態を返す。"""
+        return self.grabbing
+
+    def WaitForFrameTriggerReady(self, timeout_ms: int, handling: object) -> bool:  # noqa: ARG002, N802
+        """即座にtrigger readyを返す。"""
+        return True
+
+    def ExecuteSoftwareTrigger(self) -> None:  # noqa: N802
+        """software trigger発行回数を記録する。"""
+        self.trigger_count += 1
+
+    def RetrieveResult(self, timeout_ms: int, handling: object) -> _FakeGrabResult:  # noqa: ARG002, N802
+        """Timestamp Chunk付きの1フレームを返す。"""
+        return _FakeGrabResult(987654)
+
+    def StopGrabbing(self) -> None:  # noqa: N802
+        """取得を停止して呼出回数を記録する。"""
+        self.grabbing = False
+        self.stop_count += 1
+
+
+class _FakeConvertedImage:
+    """Mono16変換済み画像を返すtest double。"""
+
+    def GetArray(self) -> np.ndarray:  # noqa: N802
+        """uint16画像を返す。"""
+        return np.ones((2, 2), dtype=np.uint16)
+
+
+class _FakeConverter:
+    """ImageFormatConverterのtest double。"""
+
+    def Convert(self, result: object) -> _FakeConvertedImage:  # noqa: ARG002, N802
+        """Mono16変換済み画像を返す。"""
+        return _FakeConvertedImage()
+
+
+def test_software_trigger_session_uses_one_by_one_and_restores_state(monkeypatch) -> None:  # noqa: ANN001
+    """1回triggerで1枚とtimestampを取得し、終了時に設定を復元する。"""
+    monkeypatch.setattr(basler_module.genicam, "IsAvailable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    instant_camera = _FakeInstantCamera()
+    camera_device = CameraDevice()
+    camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
+    camera_device._state = CameraState.IDLE  # noqa: SLF001
+    camera_device.converter = cast("pylon.ImageFormatConverter", _FakeConverter())
+
+    with camera_device.start_software_trigger_session(expected_frames=1) as session:
+        with pytest.raises(CameraError, match="idle状態"):
+            camera_device.start_preview_grab()
+        session.wait_until_ready(100)
+        session.execute_trigger()
+        frame = session.retrieve_frame(100)
+
+        assert instant_camera.start_args == (1, pylon.GrabStrategy_OneByOne)
+        assert instant_camera.trigger_count == 1
+        assert frame.camera_timestamp_ticks == 987654
+        assert frame.camera_timestamp_frequency_hz == 125_000_000
+
+    assert instant_camera.stop_count == 1
+    assert instant_camera.nodemap.nodes["TriggerMode"].value == "Off"
+    assert instant_camera.nodemap.nodes["ChunkModeActive"].value == "False"
+    assert camera_device.state is CameraState.IDLE

@@ -49,7 +49,7 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 
 ### 5.1 プレビュー機能
 
-* **取得ロジック**: 非同期スレッドによる `StartGrabbing(LatestImageOnly)`。
+* **取得ロジック**: `TriggerMode = Off` で、非同期スレッドによる `StartGrabbing(GrabStrategy_LatestImageOnly)` と `RetrieveResult()` を使用する。
 * **画像処理 (トグル式)**:
 * **ON時**: CLAHE（Contrast Limited Adaptive Histogram Equalization）を分割数の異なる2段構成で適用。
 * **OFF時**: MsbAligned化された16bitデータを8bitにダウンスケール（`>> 8`）して表示。
@@ -72,12 +72,19 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 1. プレビューの完全停止 (`StopGrabbing`)。
 2. 入力された露光時間(ms)リストとゲインリストを**それぞれ昇順にソートする**（カメラの安定性確保のため、小さい値から順に適用する）。
 3. ソートされたリストの**直積（全組み合わせ）**を展開し、順次設定を適用。
-4. `GrabOne()` を用いた同期取得。（※パイプラインが完全に停止・リセットされている状態での取得となるため、旧仕様の安定化用ダミー取得は不要とする）。
+4. 条件ごとに `expected_frames=1` のソフトトリガーSessionを開始し、`TriggerReady` 待機後に1回triggerを発行して `GrabStrategy_OneByOne` で1枚取得する。
 5. 撮影完了後、プレビューを自動再開。
 
 * **キャンセルフラグ**: ユーザーによる即時中断（進行中の撮影ループ終了後に停止）をサポート。
 
-### 5.3 データ・ディレクトリ管理機能
+### 5.3 Recording機能
+
+* 露光時間とゲインを設定後、`expected_frames=None` のソフトトリガーSessionをRecording全体で再利用する。
+* 各フレームはPCの元の予定時刻まで待機し、`TriggerReady` 待機後に1回triggerを発行する。遅延時もframe indexを飛ばさない。
+* 1フレーム取得が失敗した場合は異常Sessionを閉じ、新しいSessionで同じframe indexを最大3回まで再試行する。
+* `actual_elapsed_ms` はソフトトリガー命令を発行する直前のmonotonic時刻を基準にする。
+
+### 5.4 データ・ディレクトリ管理機能
 
 * **遅延作成 (Lazy Creation)**:
 アプリ起動やルートフォルダ設定時点では空フォルダを作成せず、**実際に「Start Sequence」が実行された瞬間にのみ**必要なディレクトリツリーを構築する。
@@ -85,7 +92,7 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 指定されたRoot内に本日の実験フォルダ(`yymmdd`)が存在する場合、既存の枝番(`yymmdd-n`)と内部の連番(`image_nnn`)を自動スキャンして続きから再開する。
 GUI上の「New Branch」ボタンにより、意図的に新しいブランチ（例: `-2` から `-3` へ）を切り出し、連番を `001` にリセット可能。
 
-### 5.4 GUI・操作要件
+### 5.5 GUI・操作要件
 
 * **パラメータ入力の双方向同期**:
 プレビューの露光時間・ゲイン設定において、「小数入力可能なSpinBox」と「直感的に操作可能なSlider」を相互にリアルタイム同期させる。スライダーの可動域はカメラのMin/Max仕様を動的に取得して反映する。
@@ -94,7 +101,7 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 * **保存先参照**: GUIからダイアログで保存先 Root Directory を変更可能。
 * **進捗表示**: シーケンス撮影時は全体の撮影予定枚数と現在枚数をプログレスバーで可視化する。
 
-### 5.5 アプリケーション設定の永続化
+### 5.6 アプリケーション設定の永続化
 
 * アプリケーション終了時に以下の項目を `settings.json` に保存し、次回起動時に自動復元する。
 * Root Directoryパス
@@ -120,13 +127,17 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 {
   "exposure_ms": 10.5,
   "gain": 0.0,
-  "timestamp": "2026-02-15T15:00:00.000",
+  "timestamp": "2026-02-15T15:00:00.000+09:00",
+  "camera_timestamp_ticks": 123456789,
+  "camera_timestamp_frequency_hz": 125000000,
   "bit_depth_sensor": 12,
   "bit_depth_saved": 16,
   "alignment": "MsbAligned"
 }
 
 ```
+
+`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_ticks` はカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数であり、PTPを自動有効化しないためtickを絶対日時として扱わない。Recordingでは同じ2項目をTIFFと `frames.csv` の両方へ保存する。
 
 ### 6.3 ディレクトリ構造とファイル命名規則
 
@@ -147,6 +158,6 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 ## 7. エラー・例外処理
 
 * **リトライ制御 (CaptureService)**:
-撮影時（`GrabOne`）に `None` が返却された、または `pylon.GenericException` 等の通信エラーが発生した場合、最大 **3回** までリトライ（再取得）を行う。
+`TriggerReady` 待機、trigger発行、`RetrieveResult`、Grab成否、Timestamp Chunk取得、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
 * **致命的エラー時の保護**:
 リトライ上限に達した場合は、シーケンス全体を中断し、ユーザーにダイアログで通知する。中断が発生した場合でも、`finally` ブロックにより必ずプレビュー機能を復帰させる（ハードウェアリソースをロックしたままにしない）。

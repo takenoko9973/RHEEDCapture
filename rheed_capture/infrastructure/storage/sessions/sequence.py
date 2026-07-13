@@ -45,6 +45,8 @@ class SequenceSession:
             exposure_ms=captured_frame.condition.exposure_ms,
             gain=captured_frame.condition.gain,
             timestamp=captured_frame.timestamp,
+            camera_timestamp_ticks=captured_frame.camera_timestamp_ticks,
+            camera_timestamp_frequency_hz=captured_frame.camera_timestamp_frequency_hz,
         )
         return self.save_raw_frame(
             captured_frame.image,

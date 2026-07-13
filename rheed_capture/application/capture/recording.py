@@ -120,31 +120,42 @@ class RecordingCapture:
         timeout_ms = int(self.settings.exposure_ms + DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS)
         frame_index = 1
 
-        while True:
-            # frame 1は開始時刻そのものを目標にし、以後はintervalで固定する。
-            target_elapsed_ms = (frame_index - 1) * self.settings.target_interval_ms
-            target_time = start_monotonic + target_elapsed_ms / 1000.0
+        # Recordingは正常なカメラSessionを全フレームで共有し、失敗時だけ再作成する。
+        with self.frame_grabber.start_session(expected_frames=None) as trigger_session:
+            while True:
+                # frame 1は開始時刻そのものを目標にし、以後はintervalで固定する。
+                target_elapsed_ms = (frame_index - 1) * self.settings.target_interval_ms
+                target_time = start_monotonic + target_elapsed_ms / 1000.0
 
-            if not self._wait_until(target_time, cancellation_token):
-                return False, True
+                if not self._wait_until(target_time, cancellation_token):
+                    return False, True
 
-            grabbed = self.frame_grabber.grab(timeout_ms)
-            actual_elapsed_ms = (grabbed.monotonic_time_sec - start_monotonic) * 1000.0
-            self._enqueue_frame(frame_index, target_elapsed_ms, actual_elapsed_ms, grabbed, hooks)
+                grabbed = trigger_session.grab(timeout_ms)
+                actual_elapsed_ms = (
+                    grabbed.triggered_monotonic_sec - start_monotonic
+                ) * 1000.0
+                self._enqueue_frame(
+                    frame_index,
+                    target_elapsed_ms,
+                    actual_elapsed_ms,
+                    grabbed,
+                    hooks,
+                )
 
-            if hooks.on_frame_captured is not None:
-                hooks.on_frame_captured(grabbed)
+                if hooks.on_frame_captured is not None:
+                    hooks.on_frame_captured(grabbed)
 
-            if cancellation_token.is_cancelled():
-                return False, True
+                if cancellation_token.is_cancelled():
+                    return False, True
 
-            if (
-                self.settings.duration_ms is not None
-                and actual_elapsed_ms >= self.settings.duration_ms
-            ):
-                return True, False
+                if (
+                    self.settings.duration_ms is not None
+                    and actual_elapsed_ms >= self.settings.duration_ms
+                ):
+                    return True, False
 
-            frame_index += 1
+                # 遅延時も番号を飛ばさず、次の元の予定時刻を同じ式で評価する。
+                frame_index += 1
 
     def _apply_condition(self) -> None:
         """Recording用の単一撮影条件をカメラへ適用する。"""
@@ -182,7 +193,9 @@ class RecordingCapture:
             frame_index=frame_index,
             target_elapsed_ms=target_elapsed_ms,
             actual_elapsed_ms=actual_elapsed_ms,
-            timestamp=grabbed.timestamp.isoformat(),
+            timestamp=grabbed.triggered_at.isoformat(),
+            camera_timestamp_ticks=grabbed.camera_timestamp_ticks,
+            camera_timestamp_frequency_hz=grabbed.camera_timestamp_frequency_hz,
             exposure_ms=self.settings.exposure_ms,
             gain=self.settings.gain,
             filename=file_path.name,
@@ -222,6 +235,8 @@ class RecordingCapture:
             "target_elapsed_ms": row.target_elapsed_ms,
             "actual_elapsed_ms": row.actual_elapsed_ms,
             "timestamp": row.timestamp,
+            "camera_timestamp_ticks": row.camera_timestamp_ticks,
+            "camera_timestamp_frequency_hz": row.camera_timestamp_frequency_hz,
             "exposure_ms": row.exposure_ms,
             "gain": row.gain,
         }

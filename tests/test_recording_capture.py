@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import pytest
@@ -19,8 +19,12 @@ from rheed_capture.application.capture.recording import (
     RecordingSettings,
     interval_from_fps,
 )
+from rheed_capture.application.ports.camera import CameraError, CameraFrame
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from types import TracebackType
+
     from rheed_capture.application.capture.save_worker import SaveRequest
     from rheed_capture.data_formats.recording import RecordingFrameRow
 
@@ -28,12 +32,18 @@ if TYPE_CHECKING:
 class _FakeCamera:
     """RecordingCaptureへ渡すテスト用Camera。"""
 
-    def __init__(self, images: list[np.ndarray], *, sleep_sec: float = 0.0) -> None:
+    def __init__(
+        self,
+        images: Sequence[np.ndarray | Exception],
+        *,
+        sleep_sec: float = 0.0,
+    ) -> None:
         """返す画像列と任意の取得遅延を保持する。"""
-        self.images = images
+        self.images = list(images)
         self.sleep_sec = sleep_sec
         self.exposures: list[float] = []
         self.gains: list[int] = []
+        self.sessions: list[_FakeSoftwareTriggerSession] = []
 
     def set_exposure(self, exposure_ms: float) -> None:
         """設定された露光時間を記録する。"""
@@ -43,12 +53,72 @@ class _FakeCamera:
         """設定されたGainを記録する。"""
         self.gains.append(gain)
 
-    def grab_one(self, timeout_ms: int) -> np.ndarray | None:  # noqa: ARG002
-        """画像列から1枚返し、必要なら取得遅延を再現する。"""
-        if self.sleep_sec:
-            time.sleep(self.sleep_sec)
+    def start_software_trigger_session(
+        self,
+        *,
+        expected_frames: int | None,
+    ) -> _FakeSoftwareTriggerSession:
+        """Recording用の長期ソフトトリガーSessionを作成する。"""
+        session = _FakeSoftwareTriggerSession(self, expected_frames=expected_frames)
+        self.sessions.append(session)
+        return session
 
-        return self.images.pop(0)
+
+class _FakeSoftwareTriggerSession:
+    """RecordingのSession再利用と再作成を観測するtest double。"""
+
+    def __init__(self, camera: _FakeCamera, *, expected_frames: int | None) -> None:
+        """共有画像列と予定フレーム数を保持する。"""
+        self.camera = camera
+        self.expected_frames = expected_frames
+        self.closed = False
+        self.trigger_count = 0
+
+    def __enter__(self) -> Self:
+        """Session自身を返す。"""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """context終了時にSessionを閉じる。"""
+        self.close()
+
+    def wait_until_ready(self, timeout_ms: int) -> None:
+        """テストでは即座にtrigger readyとする。"""
+
+    def execute_trigger(self) -> None:
+        """発行されたソフトトリガー数を記録する。"""
+        self.trigger_count += 1
+
+    def retrieve_frame(self, timeout_ms: int) -> CameraFrame:  # noqa: ARG002
+        """画像列から1枚返し、必要なら取得遅延や失敗を再現する。"""
+        if self.closed:
+            msg = "closed"
+            raise CameraError(msg)
+        if self.sleep_sec:
+            time.sleep(self.camera.sleep_sec)
+
+        result = self.camera.images.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return CameraFrame(
+            image=result,
+            camera_timestamp_ticks=self.trigger_count,
+            camera_timestamp_frequency_hz=125_000_000,
+        )
+
+    @property
+    def sleep_sec(self) -> float:
+        """Camera test doubleの取得遅延を返す。"""
+        return self.camera.sleep_sec
+
+    def close(self) -> None:
+        """Sessionを冪等に閉じる。"""
+        self.closed = True
 
 
 class _Session:
@@ -125,13 +195,14 @@ def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
         duration_ms=1.0,
     )
     saved_counts: list[int] = []
+    worker = _SaveWorker()
 
     capture = RecordingCapture(
         CaptureConditionApplier(camera),
         FrameGrabber(camera, retry_interval_sec=0),
         session,
         settings,
-        save_worker=_SaveWorker(),
+        save_worker=worker,
     )
 
     capture.run(
@@ -142,8 +213,12 @@ def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
     assert session.status == "completed"
     assert camera.exposures == [1.0]
     assert camera.gains == [2]
+    assert len(camera.sessions) == 1
+    assert camera.sessions[0].expected_frames is None
     assert [row.frame_index for row, _ in session.rows] == [1, 2]
     assert [row.target_elapsed_ms for row, _ in session.rows] == [0.0, 1.0]
+    assert [row.camera_timestamp_ticks for row, _ in session.rows] == [1, 2]
+    assert worker.requests[0].metadata["camera_timestamp_frequency_hz"] == 125_000_000
     assert saved_counts == [1, 2]
 
 
@@ -213,6 +288,33 @@ def test_recording_stop_during_wait_returns_without_next_frame() -> None:
     assert time.perf_counter() - started_cancel < 0.2
     assert session.status == "cancelled"
     assert len(session.rows) == 1
+
+
+def test_recording_recreates_failed_session_without_skipping_frame_index() -> None:
+    """取得失敗時だけSessionを再作成し、同じframe indexを保存する。"""
+    image = np.ones((2, 2), dtype=np.uint16)
+    camera = _FakeCamera([CameraError("temporary"), image])
+    session = _Session()
+    settings = RecordingSettings(
+        exposure_ms=1.0,
+        gain=0,
+        rate_mode="interval",
+        target_interval_ms=1.0,
+        duration_ms=0.001,
+    )
+    capture = RecordingCapture(
+        CaptureConditionApplier(camera),
+        FrameGrabber(camera, retry_interval_sec=0),
+        session,
+        settings,
+        save_worker=_SaveWorker(),
+    )
+
+    capture.run(CancellationToken())
+
+    assert len(camera.sessions) == 2
+    assert all(trigger_session.closed for trigger_session in camera.sessions)
+    assert [row.frame_index for row, _ in session.rows] == [1]
 
 
 def test_recording_rejects_exposure_longer_than_interval() -> None:

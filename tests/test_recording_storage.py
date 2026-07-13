@@ -66,6 +66,8 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
             target_elapsed_ms=0.0,
             actual_elapsed_ms=2.5,
             timestamp="2026-06-25T15:00:00+09:00",
+            camera_timestamp_ticks=123456,
+            camera_timestamp_frequency_hz=125_000_000,
             exposure_ms=50.0,
             gain=0,
             filename=session.build_frame_path(1).name,
@@ -81,6 +83,8 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
         assert rows[0]["frame_index"] == "1"
         assert rows[0]["target_elapsed_ms"] == "0.000"
         assert rows[0]["actual_elapsed_ms"] == "2.500"
+        assert rows[0]["camera_timestamp_ticks"] == "123456"
+        assert rows[0]["camera_timestamp_frequency_hz"] == "125000000"
         assert rows[0]["save_elapsed_ms"] == "3.250"
 
         with (Path(session.session_dir) / "recording.json").open(encoding="utf-8") as f:

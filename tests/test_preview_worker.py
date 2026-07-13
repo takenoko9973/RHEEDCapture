@@ -9,16 +9,31 @@ class MockCamera(CameraDevice):
     """テスト用のモックカメラ (ハードウェアに依存せず一定ペースで画像を返す)"""
 
     def __init__(self) -> None:
+        """プレビュー状態と撮影条件を初期化する。"""
         self.is_grabbing = True
+        self.exposure_ms = 100.0
+        self.gain = 120
 
     def is_connected(self) -> bool:
         return True
 
     def get_exposure(self) -> float:
-        return 100
+        """現在の露光時間を返す。"""
+        return self.exposure_ms
 
     def get_gain(self) -> float:
-        return 120
+        """現在のGainを返す。"""
+        return self.gain
+
+    def set_exposure(self, exposure_ms: float) -> None:
+        """停止中だけ露光時間を更新する。"""
+        assert not self.is_grabbing
+        self.exposure_ms = exposure_ms
+
+    def set_gain(self, gain: int) -> None:
+        """停止中だけGainを更新する。"""
+        assert not self.is_grabbing
+        self.gain = gain
 
     def start_preview_grab(self) -> None:
         self.is_grabbing = True
@@ -58,6 +73,7 @@ def test_preview_worker_signals(qtbot: QtBot) -> None:
     worker.stop()
     worker.wait(1000)  # スレッド終了待機
     assert not worker.isRunning()
+    assert not mock_camera.is_grabbing
 
 
 def test_preview_worker_pause_resume(qtbot: QtBot) -> None:
@@ -82,3 +98,23 @@ def test_preview_worker_pause_resume(qtbot: QtBot) -> None:
     # ワーカーを安全に停止
     worker.stop()
     worker.wait(1000)
+    assert not mock_camera.is_grabbing
+
+
+def test_preview_worker_applies_settings_only_after_stopping(qtbot: QtBot) -> None:
+    """プレビュー中の条件変更は所有スレッドで停止してから適用する。"""
+    mock_camera = MockCamera()
+    worker = PreviewWorker(camera_device=mock_camera)
+    worker.start()
+
+    worker.request_exposure(25.0)
+    worker.request_gain(10)
+    qtbot.waitUntil(
+        lambda: mock_camera.exposure_ms == 25.0 and mock_camera.gain == 10,
+        timeout=2000,
+    )
+
+    worker.stop()
+    worker.wait(1000)
+
+    assert not mock_camera.is_grabbing

@@ -82,14 +82,22 @@ class PreviewViewModel(QObject):
 
     @Slot(float)
     def set_exposure(self, value: float) -> None:
+        """露光時間を保持し、プレビュー中はWorkerへ安全な更新を予約する。"""
         self._exposure = value
-        self._camera.set_exposure(value)
+        if self._worker.isRunning():
+            self._worker.request_exposure(value)
+        else:
+            self._camera.set_exposure(value)
         self.exposure_updated.emit(value)  # UI同期用
 
     @Slot(int)
     def set_gain(self, value: int) -> None:
+        """Gainを保持し、プレビュー中はWorkerへ安全な更新を予約する。"""
         self._gain = value
-        self._camera.set_gain(value)
+        if self._worker.isRunning():
+            self._worker.request_gain(value)
+        else:
+            self._camera.set_gain(value)
         self.gain_updated.emit(value)
 
     @Slot(bool)

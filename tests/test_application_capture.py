@@ -25,6 +25,8 @@ class _FakeFrameCapturer:
             image=np.ones((2, 2), dtype=np.uint16),
             condition=condition,
             timestamp="2026-06-17T00:00:00+09:00",
+            camera_timestamp_ticks=100,
+            camera_timestamp_frequency_hz=125_000_000,
         )
 
 

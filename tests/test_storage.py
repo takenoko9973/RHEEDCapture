@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import tifffile
 
+from rheed_capture.application.capture.frame_capturer import CapturedFrame
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
@@ -15,6 +16,7 @@ from rheed_capture.data_formats.storage_naming import (
     ANGLE_DIR_PATTERN,
     ANGLE_SCAN_TIFF_FILENAME_PATTERN,
 )
+from rheed_capture.domain.capture_condition import CaptureCondition as DomainCaptureCondition
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
 
@@ -84,6 +86,31 @@ def test_experiment_storage_save_sequence() -> None:
         expected_filename2 = f"{storage.date_str}-2_expo2000_gain1.5.tiff"
         assert saved_path2.name == expected_filename2
         assert saved_path2.exists()
+
+
+def test_sequence_tiff_round_trips_trigger_and_camera_timestamps() -> None:
+    """Sequence TIFFからtrigger時刻とcamera tick情報を読み戻せる。"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(root_dir=temp_dir)
+        session = storage.start_sequence_session()
+        captured_frame = CapturedFrame(
+            image=np.zeros((2, 2), dtype=np.uint16),
+            condition=DomainCaptureCondition(exposure_ms=50.0, gain=1),
+            timestamp="2026-07-11T12:00:00+09:00",
+            camera_timestamp_ticks=987654,
+            camera_timestamp_frequency_hz=125_000_000,
+        )
+
+        saved_path = session.save_frame(captured_frame)
+
+        with tifffile.TiffFile(saved_path) as tif:
+            page = tif.pages[0]
+            assert isinstance(page, tifffile.TiffPage)
+            metadata = json.loads(page.tags["ImageDescription"].value)
+
+        assert metadata["timestamp"] == "2026-07-11T12:00:00+09:00"
+        assert metadata["camera_timestamp_ticks"] == 987654
+        assert metadata["camera_timestamp_frequency_hz"] == 125_000_000
 
 
 def test_root_change_and_branch_detection() -> None:

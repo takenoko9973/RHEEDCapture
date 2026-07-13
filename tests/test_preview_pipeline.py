@@ -28,6 +28,8 @@ def test_preview_pipeline_processes_captured_frame(qtbot: QtBot) -> None:
         image=np.ones((4, 4), dtype=np.uint16) << 8,
         condition=CaptureCondition(exposure_ms=10.0, gain=0),
         timestamp="2026-06-17T00:00:00+09:00",
+        camera_timestamp_ticks=100,
+        camera_timestamp_frequency_hz=125_000_000,
     )
 
     with qtbot.waitSignal(pipeline.image_ready, timeout=1000):

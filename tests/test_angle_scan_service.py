@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.application.ports.camera import CameraFrame
 from rheed_capture.domain.angle_scan.plan import (
     angle_to_position_units,
     build_angle_list,
@@ -23,8 +24,21 @@ from rheed_capture.presentation.qt.workers.angle_scan_service import (
 
 @pytest.fixture
 def mock_camera() -> MagicMock:
+    """1フレーム用ソフトトリガーSessionを作るCamera mockを返す。"""
     camera = MagicMock(spec=CameraDevice)
-    camera.grab_one.return_value = np.zeros((10, 10), dtype=np.uint16)
+
+    def start_session(*, expected_frames: int | None) -> MagicMock:
+        """保存可能なCameraFrameを返すSessionを作る。"""
+        assert expected_frames == 1
+        session = MagicMock()
+        session.retrieve_frame.return_value = CameraFrame(
+            image=np.zeros((10, 10), dtype=np.uint16),
+            camera_timestamp_ticks=1,
+            camera_timestamp_frequency_hz=125_000_000,
+        )
+        return session
+
+    camera.start_software_trigger_session.side_effect = start_session
     return camera
 
 
@@ -93,7 +107,7 @@ def test_angle_scan_service_moves_by_delta_and_saves(
         4.0,
         4.0,
     ]
-    assert mock_camera.grab_one.call_count == 3
+    assert mock_camera.start_software_trigger_session.call_count == 3
     assert (
         storage.get_current_experiment_dir()
         / "angle_scan_001"
@@ -187,7 +201,7 @@ def test_angle_scan_service_scans_opposite_direction_after_returning_to_zero(
         device_angle_to_position_units(-0.5),
         device_angle_to_position_units(-1.0) - device_angle_to_position_units(-0.5),
     ]
-    assert mock_camera.grab_one.call_count == 5
+    assert mock_camera.start_software_trigger_session.call_count == 5
 
 
 def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
@@ -216,7 +230,7 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
         device_angle_to_position_units(0.5),
         -device_angle_to_position_units(0.5),
     ]
-    assert mock_camera.grab_one.call_count == 2
+    assert mock_camera.start_software_trigger_session.call_count == 2
 
 
 @pytest.mark.parametrize(
