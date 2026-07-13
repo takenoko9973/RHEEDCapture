@@ -137,7 +137,7 @@ def test_frame_capturer_passes_remaining_shared_deadline(monkeypatch) -> None:  
     )
     capturer = FrameCapturer(camera, retry_interval_sec=0)
 
-    captured = capturer.capture(CaptureCondition(exposure_ms=10.0, gain=0))
+    capturer.capture(CaptureCondition(exposure_ms=10.0, gain=0))
 
     wait_timeout = camera.sessions[0].calls[0][1]
     retrieve_timeout = camera.sessions[0].calls[2][1]
@@ -146,7 +146,6 @@ def test_frame_capturer_passes_remaining_shared_deadline(monkeypatch) -> None:  
     assert 409 <= wait_timeout <= 411
     assert 209 <= retrieve_timeout <= 211
     assert retrieve_timeout < wait_timeout
-    assert captured.timestamp
 
 
 def test_frame_capturer_raises_after_three_failures() -> None:

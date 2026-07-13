@@ -362,12 +362,17 @@ class _BaslerSoftwareTriggerSession:
         )
 
         try:
+            # pypylonでは予定枚数つき取得は別APIを使い、SDK内部のRetrieveResult待機を起動しない。
             if self._expected_frames is None:
-                camera.StartGrabbing(pylon.GrabStrategy_OneByOne)
-            else:
                 camera.StartGrabbing(
+                    pylon.GrabStrategy_OneByOne,
+                    pylon.GrabLoop_ProvidedByUser,
+                )
+            else:
+                camera.StartGrabbingMax(
                     self._expected_frames,
                     pylon.GrabStrategy_OneByOne,
+                    pylon.GrabLoop_ProvidedByUser,
                 )
         except GenericException as e:
             msg = f"StartGrabbing(GrabStrategy_OneByOne)に失敗しました: {e}"

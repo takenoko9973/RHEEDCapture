@@ -249,9 +249,19 @@ class _FakeInstantCamera:
         """必須trigger node mapを返す。"""
         return self.nodemap
 
-    def StartGrabbing(self, *args: object) -> None:  # noqa: N802
-        """取得strategy引数を記録してgrabbing状態にする。"""
-        self.start_args = args
+    def StartGrabbing(self, strategy: object, grab_loop_type: object) -> None:  # noqa: N802
+        """無制限取得のstrategyとgrab loopを記録する。"""
+        self.start_args = (strategy, grab_loop_type)
+        self.grabbing = True
+
+    def StartGrabbingMax(  # noqa: N802
+        self,
+        max_images: int,
+        strategy: object,
+        grab_loop_type: object,
+    ) -> None:
+        """予定枚数つき取得の上限、strategy、grab loopを記録する。"""
+        self.start_args = (max_images, strategy, grab_loop_type)
         self.grabbing = True
 
     def IsGrabbing(self) -> bool:  # noqa: N802
@@ -292,8 +302,8 @@ class _FakeConverter:
         return _FakeConvertedImage()
 
 
-def test_software_trigger_session_uses_one_by_one_and_restores_state(monkeypatch) -> None:  # noqa: ANN001
-    """1回triggerで1枚とtimestampを取得し、終了時に設定を復元する。"""
+def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeypatch) -> None:  # noqa: ANN001
+    """SDK内部の取得待機を使わず1枚とtimestampを取得し、終了時に設定を復元する。"""
     monkeypatch.setattr(
         basler_module.genicam,
         "IsAvailable",
@@ -314,7 +324,11 @@ def test_software_trigger_session_uses_one_by_one_and_restores_state(monkeypatch
         session.execute_trigger()
         frame = session.retrieve_frame(100)
 
-        assert instant_camera.start_args == (1, pylon.GrabStrategy_OneByOne)
+        assert instant_camera.start_args == (
+            1,
+            pylon.GrabStrategy_OneByOne,
+            pylon.GrabLoop_ProvidedByUser,
+        )
         assert instant_camera.trigger_count == 1
         assert frame.camera_timestamp_ticks == 987654
         assert frame.camera_timestamp_frequency_hz == 125_000_000

@@ -99,7 +99,7 @@ class _FakeSoftwareTriggerSession:
         if self.closed:
             msg = "closed"
             raise CameraError(msg)
-        if self.sleep_sec:
+        if self.camera.sleep_sec:
             time.sleep(self.camera.sleep_sec)
 
         result = self.camera.images.pop(0)
@@ -110,11 +110,6 @@ class _FakeSoftwareTriggerSession:
             camera_timestamp_ticks=self.trigger_count,
             camera_timestamp_frequency_hz=125_000_000,
         )
-
-    @property
-    def sleep_sec(self) -> float:
-        """Camera test doubleの取得遅延を返す。"""
-        return self.camera.sleep_sec
 
     def close(self) -> None:
         """Sessionを冪等に閉じる。"""
