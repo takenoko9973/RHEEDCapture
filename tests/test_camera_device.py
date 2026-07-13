@@ -1,4 +1,5 @@
 import os
+from collections.abc import Callable
 from typing import cast
 
 import numpy as np
@@ -133,9 +134,21 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
 class _FakeNode:
     """Basler trigger unit test用の読み書き可能なGenICam node。"""
 
-    def __init__(self, value: str | int) -> None:
-        """初期node値を保持する。"""
+    def __init__(
+        self,
+        value: str | int,
+        *,
+        available_when: Callable[[], bool] | None = None,
+    ) -> None:
+        """初期node値と利用可能になる条件を保持する。"""
         self.value = value
+        self.available_when = available_when
+
+    def is_available(self) -> bool:
+        """現在の関連node状態で利用可能かを返す。"""
+        if self.available_when is None:
+            return True
+        return self.available_when()
 
     def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
         """GenICam文字列表現からnode値を更新する。"""
@@ -199,15 +212,27 @@ class _FakeInstantCamera:
 
     def __init__(self) -> None:
         """必須nodeと取得履歴を初期化する。"""
+        chunk_mode_active = _FakeNode("False")
+
+        def available_in_chunk_mode() -> bool:
+            """ChunkModeActive=Trueの間だけ関連nodeを利用可能にする。"""
+            return chunk_mode_active.value == "1"
+
         self.nodemap = _FakeNodeMap(
             {
                 "AcquisitionMode": _FakeNode("SingleFrame"),
                 "TriggerSelector": _FakeNode("FrameStart"),
                 "TriggerMode": _FakeNode("Off"),
                 "TriggerSource": _FakeNode("Line1"),
-                "ChunkModeActive": _FakeNode("False"),
-                "ChunkSelector": _FakeNode("Timestamp"),
-                "ChunkEnable": _FakeNode("False"),
+                "ChunkModeActive": chunk_mode_active,
+                "ChunkSelector": _FakeNode(
+                    "Timestamp",
+                    available_when=available_in_chunk_mode,
+                ),
+                "ChunkEnable": _FakeNode(
+                    "False",
+                    available_when=available_in_chunk_mode,
+                ),
                 "GevTimestampTickFrequency": _FakeNode(125_000_000),
             }
         )
@@ -269,7 +294,11 @@ class _FakeConverter:
 
 def test_software_trigger_session_uses_one_by_one_and_restores_state(monkeypatch) -> None:  # noqa: ANN001
     """1回triggerで1枚とtimestampを取得し、終了時に設定を復元する。"""
-    monkeypatch.setattr(basler_module.genicam, "IsAvailable", lambda node: node is not None)
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
     monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
     monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
     instant_camera = _FakeInstantCamera()

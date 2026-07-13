@@ -342,13 +342,14 @@ class _BaslerSoftwareTriggerSession:
             nodemap,
             "ChunkModeActive",
         )
-        self._original_chunk_selector = _read_required_node_string(nodemap, "ChunkSelector")
 
         _set_required_node_value(nodemap, "AcquisitionMode", "Continuous")
         _set_required_node_value(nodemap, "TriggerSelector", "FrameStart")
         _set_required_node_value(nodemap, "TriggerMode", "On")
         _set_required_node_value(nodemap, "TriggerSource", "Software")
+        # Baslerではchunk mode有効化前のChunkSelectorが利用不可になるため、公式順序を守る。
         _set_required_node_value(nodemap, "ChunkModeActive", True)
+        self._original_chunk_selector = _read_required_node_string(nodemap, "ChunkSelector")
         _set_required_node_value(nodemap, "ChunkSelector", "Timestamp")
         self._original_timestamp_chunk_enabled = _read_required_node_string(
             nodemap,
@@ -543,8 +544,10 @@ def _set_required_node_value(
         msg = f"必須GenICam node '{node_name}' は書き込みできません。"
         raise CameraError(msg)
 
+    # GenICam IBoolean.FromStringはPython表記のTrue/Falseではなく1/0を要求する。
+    serialized_value = str(int(value)) if isinstance(value, bool) else str(value)
     try:
-        node.FromString(str(value))
+        node.FromString(serialized_value)
     except genicam.LogicalErrorException as e:
         msg = f"必須GenICam node '{node_name}' に値 '{value}' を設定できません: {e}"
         raise CameraError(msg) from e
