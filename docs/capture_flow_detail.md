@@ -46,7 +46,7 @@
 7. `GrabStrategy_OneByOne` で1枚取得し、Timestamp ChunkとMono16 / `MsbAligned` 画像を得る。
    - 1試行の共通deadlineは `露光時間 + 500ms` とし、ready待機と取得には残り時間だけを渡す。
 8. Sessionを閉じ、`TriggerMode = Off` へ戻す。
-9. trigger直前のPC時刻、camera timestamp tickと周波数、露光時間、ゲイン、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
+9. 要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
 8. 現在の `image_nnn` フォルダへTIFF保存する。
    - 現在の実装上のファイル名は `{実験フォルダ名}-{シーケンス番号}_expo{露光時間:g}_gain{ゲイン:g}.tiff`。
 
@@ -153,7 +153,7 @@
 12. 進捗を `現在枚数 / 総枚数 / 現在角度` としてUIへ通知する。
 13. カメラの露光時間とゲインを設定する。
 14. Sequenceと同じ1フレーム用ソフトトリガーSessionで撮影する。
-15. `scan_id`、目標角度、露光時間、ゲイン、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
+15. `scan_id`、目標角度、要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
 17. 角度別サブフォルダへTIFF保存する。
     - 角度フォルダ名は `angle{角度:+06.1f}`。
     - ファイル名は `{scan_id}_angle{角度:+06.1f}_exp{露光時間:g}_gain{ゲイン:g}.tiff`。
@@ -167,7 +167,7 @@
 
 ### 2.7 リトライと中断
 
-1. ソフトトリガーSession内のready待機、trigger発行、取得、Timestamp Chunk、画像変換、カメラ通信の失敗を撮影エラーとして扱う。
+1. ソフトトリガーSession内のready待機、trigger発行、取得、必須Chunk読戻し、画像変換、カメラ通信の失敗を撮影エラーとして扱う。
 2. 1つの角度・露光時間・ゲイン条件につき最大3回まで撮影を再試行する。
 3. 再試行前には0.5秒待機する。
 4. 3回とも失敗した場合は回転撮影全体を中断する。
@@ -193,7 +193,7 @@
 7. 取得失敗時は異常Sessionを閉じ、新しいSessionで同じ `frame_index` を再試行する。
 8. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、`TriggerMode = Off` へ戻す。
 
-TIFFと `frames.csv` には、trigger直前のPC時刻を表す `timestamp`、露光開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想的な露光開始イベントとして記録する。
+TIFFと `frames.csv` には、要求条件の `exposure_ms`・`gain` と、フレーム単位の読戻し値 `camera_exposure_ms`・`camera_gain` を区別して保存する。さらにtrigger直前のPC時刻を表す `timestamp`、画像取得開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
 
 ## 4. 通常シーケンス撮影と回転撮影の主な違い
 

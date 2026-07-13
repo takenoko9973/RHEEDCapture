@@ -8,6 +8,7 @@ import numpy as np
 import tifffile
 
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
+from rheed_capture.application.ports.camera import FrameReadback
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
@@ -89,20 +90,24 @@ def test_experiment_storage_save_sequence() -> None:
         assert saved_path2.exists()
 
 
-def test_sequence_tiff_round_trips_trigger_and_camera_timestamps() -> None:
-    """Sequence TIFFからtrigger時刻とcamera tick情報を読み戻せる。"""
+def test_sequence_tiff_round_trips_requested_condition_and_camera_readback() -> None:
+    """Sequence TIFFで要求条件とcamera読戻し値を区別して保存する。"""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = ExperimentStorage(root_dir=temp_dir)
         session = storage.start_sequence_session()
         captured_frame = CapturedFrame(
             image=np.zeros((2, 2), dtype=np.uint16),
             condition=DomainCaptureCondition(exposure_ms=50.0, gain=1),
+            readback=FrameReadback(
+                exposure_ms=49.5,
+                gain=2,
+                camera_timestamp_ticks=987654,
+                camera_timestamp_frequency_hz=125_000_000,
+                source="camera",
+            ),
             timing=CaptureTiming(
                 trigger_issued_at=datetime.fromisoformat("2026-07-11T12:00:00+09:00"),
                 trigger_issued_monotonic_sec=1.0,
-                exposure_started_ticks=987654,
-                exposure_timestamp_frequency_hz=125_000_000,
-                exposure_timestamp_source="camera",
             ),
         )
 
@@ -114,6 +119,10 @@ def test_sequence_tiff_round_trips_trigger_and_camera_timestamps() -> None:
             metadata = json.loads(page.tags["ImageDescription"].value)
 
         assert metadata["timestamp"] == "2026-07-11T12:00:00+09:00"
+        assert metadata["exposure_ms"] == 50.0
+        assert metadata["gain"] == 1
+        assert metadata["camera_exposure_ms"] == 49.5
+        assert metadata["camera_gain"] == 2
         assert metadata["camera_timestamp_ticks"] == 987654
         assert metadata["camera_timestamp_frequency_hz"] == 125_000_000
         assert metadata["camera_timestamp_source"] == "camera"

@@ -20,4 +20,6 @@ class RecordingFrameRow:
     camera_timestamp_source: Literal["camera", "simulation"]
     exposure_ms: float
     gain: int
+    camera_exposure_ms: float
+    camera_gain: int
     filename: str

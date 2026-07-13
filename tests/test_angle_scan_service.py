@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.application.ports.camera import CameraFrame
+from rheed_capture.application.ports.camera import CameraFrame, FrameReadback
 from rheed_capture.domain.angle_scan.plan import (
     angle_to_position_units,
     build_angle_list,
@@ -33,9 +33,13 @@ def mock_camera() -> MagicMock:
         session = MagicMock()
         session.retrieve_frame.return_value = CameraFrame(
             image=np.zeros((10, 10), dtype=np.uint16),
-            exposure_started_ticks=1,
-            exposure_timestamp_frequency_hz=125_000_000,
-            exposure_timestamp_source="camera",
+            readback=FrameReadback(
+                exposure_ms=10.0,
+                gain=0,
+                camera_timestamp_ticks=1,
+                camera_timestamp_frequency_hz=125_000_000,
+                source="camera",
+            ),
         )
         return session
 

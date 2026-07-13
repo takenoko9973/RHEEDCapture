@@ -13,18 +13,27 @@ class CameraError(RuntimeError):
     """カメラ操作または状態遷移の失敗を表す。"""
 
 
-type ExposureTimestampSource = Literal["camera", "simulation"]
+type FrameReadbackSource = Literal["camera", "simulation"]
+
+
+@dataclass(frozen=True)
+class FrameReadback:
+    """取得フレームに対応する撮影設定とcamera timestampを保持する。"""
+
+    exposure_ms: float
+    gain: int
+    camera_timestamp_ticks: int
+    camera_timestamp_frequency_hz: int
+    source: FrameReadbackSource
 
 
 @dataclass(frozen=True)
 class CameraFrame:
-    """カメラ由来の画像と露光開始時刻を保持する。"""
+    """Raw画像と、そのフレームに対応する読戻し情報を保持する。"""
 
     # pypylon converterでMono16 / MsbAlignedへ変換した、画像処理前のRaw相当画像。
     image: np.ndarray
-    exposure_started_ticks: int
-    exposure_timestamp_frequency_hz: int
-    exposure_timestamp_source: ExposureTimestampSource
+    readback: FrameReadback
 
 
 class SoftwareTriggerSession(Protocol):

@@ -10,6 +10,8 @@ class SequenceFrameMetadata:
 
     exposure_ms: float
     gain: int
+    camera_exposure_ms: float
+    camera_gain: int
     # software trigger発行直前のPC時刻。画像受信完了時刻ではない。
     timestamp: str
     # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
@@ -25,6 +27,8 @@ class SequenceFrameMetadata:
         return {
             "exposure_ms": self.exposure_ms,
             "gain": self.gain,
+            "camera_exposure_ms": self.camera_exposure_ms,
+            "camera_gain": self.camera_gain,
             "timestamp": self.timestamp,
             "camera_timestamp_ticks": self.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": self.camera_timestamp_frequency_hz,
@@ -43,6 +47,8 @@ class AngleScanFrameMetadata:
     target_angle_deg: float
     exposure_ms: float
     gain: int
+    camera_exposure_ms: float
+    camera_gain: int
     # software trigger発行直前のPC時刻。画像受信完了時刻ではない。
     timestamp: str
     # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
@@ -68,6 +74,8 @@ class AngleScanFrameMetadata:
             "angle_reference": self.angle_reference,
             "exposure_ms": self.exposure_ms,
             "gain": self.gain,
+            "camera_exposure_ms": self.camera_exposure_ms,
+            "camera_gain": self.camera_gain,
             "timestamp": self.timestamp,
             "camera_timestamp_ticks": self.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": self.camera_timestamp_frequency_hz,

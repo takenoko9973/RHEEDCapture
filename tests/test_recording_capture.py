@@ -19,7 +19,7 @@ from rheed_capture.application.capture.recording import (
     RecordingSettings,
     interval_from_fps,
 )
-from rheed_capture.application.ports.camera import CameraError, CameraFrame
+from rheed_capture.application.ports.camera import CameraError, CameraFrame, FrameReadback
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -107,9 +107,13 @@ class _FakeSoftwareTriggerSession:
             raise result
         return CameraFrame(
             image=result,
-            exposure_started_ticks=self.trigger_count,
-            exposure_timestamp_frequency_hz=125_000_000,
-            exposure_timestamp_source="camera",
+            readback=FrameReadback(
+                exposure_ms=1.25,
+                gain=3,
+                camera_timestamp_ticks=self.trigger_count,
+                camera_timestamp_frequency_hz=125_000_000,
+                source="camera",
+            ),
         )
 
     def close(self) -> None:
@@ -213,7 +217,13 @@ def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
     assert camera.sessions[0].expected_frames is None
     assert [row.frame_index for row, _ in session.rows] == [1, 2]
     assert [row.target_elapsed_ms for row, _ in session.rows] == [0.0, 1.0]
+    assert [row.exposure_ms for row, _ in session.rows] == [1.0, 1.0]
+    assert [row.gain for row, _ in session.rows] == [2, 2]
+    assert [row.camera_exposure_ms for row, _ in session.rows] == [1.25, 1.25]
+    assert [row.camera_gain for row, _ in session.rows] == [3, 3]
     assert [row.camera_timestamp_ticks for row, _ in session.rows] == [1, 2]
+    assert worker.requests[0].metadata["camera_exposure_ms"] == 1.25
+    assert worker.requests[0].metadata["camera_gain"] == 3
     assert worker.requests[0].metadata["camera_timestamp_frequency_hz"] == 125_000_000
     assert worker.requests[0].metadata["camera_timestamp_source"] == "camera"
     assert saved_counts == [1, 2]

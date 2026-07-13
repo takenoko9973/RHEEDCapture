@@ -7,7 +7,7 @@ import logging
 import threading
 import time
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, Self, cast
+from typing import TYPE_CHECKING, Protocol, Self
 
 from pypylon import genicam, pylon
 from pypylon.pylon import GenericException, InstantCamera, TlFactory
@@ -15,12 +15,16 @@ from pypylon.pylon import GenericException, InstantCamera, TlFactory
 from rheed_capture.application.ports.camera import (
     CameraError,
     CameraFrame,
-    ExposureTimestampSource,
 )
 from rheed_capture.infrastructure.camera.basler_configurators import (
     BaslerCameraConfigurator,
     BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
+)
+from rheed_capture.infrastructure.camera.basler_frame_readback import (
+    BaslerFrameReadbackProvider,
+    ChunkFrameReadbackProvider,
+    SimulationFrameReadbackProvider,
 )
 
 if TYPE_CHECKING:
@@ -31,7 +35,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _CAMERA_EMULATION_DEVICE_CLASS = "BaslerCamEmu"
-SIMULATION_TIMESTAMP_FREQUENCY_HZ = 1_000_000_000
 
 
 class _GenicamNode(Protocol):
@@ -55,14 +58,6 @@ class _GenicamNodeMap(Protocol):
 
     def GetNode(self, name: str) -> _GenicamNode | None:  # noqa: N802
         """指定名のnodeを返す。"""
-        ...
-
-
-class _TimestampGrabResult(Protocol):
-    """フレームのtimestampを提供するGrabResult型。"""
-
-    def GetTimeStamp(self) -> int:  # noqa: N802
-        """フレームに対応するcamera timestampを返す。"""
         ...
 
 
@@ -91,7 +86,9 @@ class BaslerCamera:
         self._state = CameraState.DISCONNECTED
         self._owner_thread_id: int | None = None
         self._active_trigger_session: _BaslerSoftwareTriggerSession | None = None
-        self._exposure_timestamp_source: ExposureTimestampSource
+        self._frame_readback_provider_factory: (
+            type[ChunkFrameReadbackProvider | SimulationFrameReadbackProvider]
+        )
 
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputPixelFormat = pylon.PixelType_Mono16
@@ -132,8 +129,10 @@ class BaslerCamera:
                 is_emulation = (
                     device_info.GetDeviceClass() == _CAMERA_EMULATION_DEVICE_CLASS
                 )
-                self._exposure_timestamp_source = (
-                    "simulation" if is_emulation else "camera"
+                self._frame_readback_provider_factory = (
+                    SimulationFrameReadbackProvider
+                    if is_emulation
+                    else ChunkFrameReadbackProvider
                 )
 
                 for configurator in self._configurators:
@@ -331,8 +330,9 @@ class _BaslerSoftwareTriggerSession:
         self._camera_device = camera_device
         self._expected_frames = expected_frames
         self._closed = False
-        self._exposure_timestamp_frequency_hz = 0
-        self._simulated_exposure_started_ticks: int | None = None
+        self._readback_provider: BaslerFrameReadbackProvider = (
+            camera_device._frame_readback_provider_factory()
+        )
 
     def __enter__(self) -> Self:
         """開始済みSession自身を返す。"""
@@ -361,15 +361,7 @@ class _BaslerSoftwareTriggerSession:
         _set_required_node_value(nodemap, "TriggerSelector", "FrameStart")
         _set_required_node_value(nodemap, "TriggerMode", "On")
         _set_required_node_value(nodemap, "TriggerSource", "Software")
-
-        if self._camera_device._exposure_timestamp_source == "simulation":
-            # pylon emulatorには有効なcamera timestampがないため、PCのns単位時刻を使う。
-            self._exposure_timestamp_frequency_hz = SIMULATION_TIMESTAMP_FREQUENCY_HZ
-        else:
-            self._exposure_timestamp_frequency_hz = _read_required_node_int(
-                nodemap,
-                "GevTimestampTickFrequency",
-            )
+        self._readback_provider.prepare(camera)
 
         try:
             # pypylonでは予定枚数つき取得は別APIを使い、SDK内部のRetrieveResult待機を起動しない。
@@ -412,12 +404,9 @@ class _BaslerSoftwareTriggerSession:
         """ソフトウェアFrameStart triggerを1回発行する。"""
         with self._camera_device._lock:
             self._require_active("ソフトトリガー発行")
-            self._simulated_exposure_started_ticks = None
             try:
                 self._camera_device.camera.ExecuteSoftwareTrigger()
-                if self._camera_device._exposure_timestamp_source == "simulation":
-                    # エミュレータではtrigger直後を仮想的な露光開始イベントとして記録する。
-                    self._simulated_exposure_started_ticks = time.perf_counter_ns()
+                self._readback_provider.on_trigger_executed()
             except GenericException as e:
                 msg = f"ExecuteSoftwareTriggerに失敗しました: {e}"
                 raise CameraError(msg) from e
@@ -438,7 +427,10 @@ class _BaslerSoftwareTriggerSession:
                         msg = f"GrabSucceeded=False: {result.GetErrorDescription()}"
                         raise CameraError(msg)
 
-                    exposure_started_ticks = self._read_exposure_started_ticks(result)
+                    readback = self._readback_provider.read(
+                        self._camera_device.camera,
+                        result,
+                    )
                     try:
                         converted = self._camera_device.converter.Convert(result)
                         image = converted.GetArray()
@@ -448,13 +440,7 @@ class _BaslerSoftwareTriggerSession:
 
                     return CameraFrame(
                         image=image,
-                        exposure_started_ticks=exposure_started_ticks,
-                        exposure_timestamp_frequency_hz=(
-                            self._exposure_timestamp_frequency_hz
-                        ),
-                        exposure_timestamp_source=(
-                            self._camera_device._exposure_timestamp_source
-                        ),
+                        readback=readback,
                     )
 
             except pylon.TimeoutException as e:
@@ -507,20 +493,13 @@ class _BaslerSoftwareTriggerSession:
             self._closed = True
 
     def _restore_nodes(self) -> None:
-        """Session終了時にtriggerを無効化する。"""
-        nodemap = self._camera_device.camera.GetNodeMap()
-        _set_required_node_value(nodemap, "TriggerMode", "Off")
-
-    def _read_exposure_started_ticks(self, result: _TimestampGrabResult) -> int:
-        """選択済み取得元から露光開始に対応するtickを返す。"""
-        if self._camera_device._exposure_timestamp_source == "camera":
-            return int(result.GetTimeStamp())
-
-        if self._simulated_exposure_started_ticks is None:
-            # trigger発行に対応しない時刻を保存しないため、不整合は明示的に失敗させる。
-            msg = "シミュレーション露光開始時刻が記録されていません。"
-            raise CameraError(msg)
-        return self._simulated_exposure_started_ticks
+        """読戻し設定を復元してからtriggerを無効化する。"""
+        camera = self._camera_device.camera
+        try:
+            self._readback_provider.restore(camera)
+        finally:
+            # Chunk復元に失敗しても、プレビュー再開に必要なTriggerModeはOffへ戻す。
+            _set_required_node_value(camera.GetNodeMap(), "TriggerMode", "Off")
 
     def _require_active(self, operation: str) -> None:
         """このSessionが現在のカメラ所有者であることを確認する。"""
@@ -573,19 +552,6 @@ def _read_required_node_string(nodemap: _GenicamNodeMap, node_name: str) -> str:
         raise CameraError(msg)
     try:
         return str(node.ToString())
-    except genicam.LogicalErrorException as e:
-        msg = f"必須GenICam node '{node_name}' の読み取りに失敗しました: {e}"
-        raise CameraError(msg) from e
-
-
-def _read_required_node_int(nodemap: _GenicamNodeMap, node_name: str) -> int:
-    """必須GenICam integer nodeの現在値を取得する。"""
-    node = _get_required_node(nodemap, node_name)
-    if not genicam.IsReadable(node):
-        msg = f"必須GenICam node '{node_name}' は読み取りできません。"
-        raise CameraError(msg)
-    try:
-        return int(cast("int", node.GetValue()))
     except genicam.LogicalErrorException as e:
         msg = f"必須GenICam node '{node_name}' の読み取りに失敗しました: {e}"
         raise CameraError(msg) from e

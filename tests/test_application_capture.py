@@ -13,6 +13,7 @@ from rheed_capture.application.capture.angle_scan import (
 from rheed_capture.application.capture.cancellation import CancellationToken, CaptureCancelled
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
 from rheed_capture.application.capture.sequence import SequenceCapture
+from rheed_capture.application.ports.camera import FrameReadback
 from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.motor.defaults import DEFAULT_POSITION_UNITS_PER_DEG
 
@@ -26,12 +27,16 @@ class _FakeFrameCapturer:
         return CapturedFrame(
             image=np.ones((2, 2), dtype=np.uint16),
             condition=condition,
+            readback=FrameReadback(
+                exposure_ms=condition.exposure_ms,
+                gain=condition.gain,
+                camera_timestamp_ticks=100,
+                camera_timestamp_frequency_hz=125_000_000,
+                source="camera",
+            ),
             timing=CaptureTiming(
                 trigger_issued_at=datetime.fromisoformat("2026-06-17T00:00:00+09:00"),
                 trigger_issued_monotonic_sec=1.0,
-                exposure_started_ticks=100,
-                exposure_timestamp_frequency_hz=125_000_000,
-                exposure_timestamp_source="camera",
             ),
         )
 

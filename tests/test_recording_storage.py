@@ -71,6 +71,8 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
             camera_timestamp_source="camera",
             exposure_ms=50.0,
             gain=0,
+            camera_exposure_ms=49.5,
+            camera_gain=1,
             filename=session.build_frame_path(1).name,
         )
 
@@ -84,6 +86,8 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
         assert rows[0]["frame_index"] == "1"
         assert rows[0]["target_elapsed_ms"] == "0.000"
         assert rows[0]["actual_elapsed_ms"] == "2.500"
+        assert rows[0]["camera_exposure_ms"] == "49.5"
+        assert rows[0]["camera_gain"] == "1"
         assert rows[0]["camera_timestamp_ticks"] == "123456"
         assert rows[0]["camera_timestamp_frequency_hz"] == "125000000"
         assert rows[0]["camera_timestamp_source"] == "camera"

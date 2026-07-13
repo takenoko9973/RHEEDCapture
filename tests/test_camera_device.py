@@ -1,5 +1,6 @@
 import os
 from typing import cast
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -15,6 +16,10 @@ from rheed_capture.infrastructure.camera.basler_camera import CameraDevice, Came
 from rheed_capture.infrastructure.camera.basler_configurators import (
     CAMERA_EMULATION_ROI,
     BaslerMandatorySettings,
+)
+from rheed_capture.infrastructure.camera.basler_frame_readback import (
+    ChunkFrameReadbackProvider,
+    SimulationFrameReadbackProvider,
 )
 
 
@@ -77,21 +82,39 @@ def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
         assert camera_device.camera.GainRaw.GetValue() == 400
 
 
-def test_emulator_captures_with_simulation_timestamp(
+def test_emulator_captures_with_simulation_readback(
     camera_device: CameraDevice,
 ) -> None:
-    """Timestamp Chunk非対応エミュレータでもシミュレーション時刻で撮影する。"""
+    """エミュレータ設定nodeと仮想timestampから読戻し値を取得する。"""
+    camera_device.set_exposure(10.5)
+    camera_device.set_gain(240)
+
     with camera_device.start_software_trigger_session(expected_frames=1) as session:
         session.wait_until_ready(1000)
         session.execute_trigger()
         frame = session.retrieve_frame(1000)
 
     assert frame.image.shape == (540, 720)
-    assert frame.exposure_started_ticks > 0
-    assert frame.exposure_timestamp_frequency_hz == 1_000_000_000
-    assert frame.exposure_timestamp_source == "simulation"
+    assert frame.readback.exposure_ms == 10.5
+    assert frame.readback.gain == 240
+    assert frame.readback.camera_timestamp_ticks > 0
+    assert frame.readback.camera_timestamp_frequency_hz == 1_000_000_000
+    assert frame.readback.source == "simulation"
     assert camera_device.state is CameraState.IDLE
     assert camera_device.camera.TriggerMode.GetValue() == "Off"
+
+
+def test_simulation_readback_does_not_reuse_trigger_timestamp(
+    camera_device: CameraDevice,
+) -> None:
+    """仮想timestampは対応する1フレームだけに使用する。"""
+    provider = SimulationFrameReadbackProvider()
+    provider.on_trigger_executed()
+
+    provider.read(camera_device.camera, MagicMock())
+
+    with pytest.raises(CameraError, match="camera timestamp"):
+        provider.read(camera_device.camera, MagicMock())
 
 
 def test_preview_grabbing(camera_device: CameraDevice) -> None:
@@ -135,7 +158,7 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
 class _FakeNode:
     """Basler trigger unit test用の読み書き可能なGenICam node。"""
 
-    def __init__(self, value: str | int) -> None:
+    def __init__(self, value: str | float) -> None:
         """初期node値を保持する。"""
         self.value = value
 
@@ -147,6 +170,8 @@ class _FakeNode:
         """GenICam文字列表現からnode値を更新する。"""
         if isinstance(self.value, int):
             self.value = int(value)
+        elif isinstance(self.value, float):
+            self.value = float(value)
         else:
             self.value = value
 
@@ -154,9 +179,35 @@ class _FakeNode:
         """現在値をGenICam文字列表現で返す。"""
         return str(self.value)
 
-    def GetValue(self) -> str | int:  # noqa: N802
+    def GetValue(self) -> str | int | float:  # noqa: N802
         """現在値を返す。"""
         return self.value
+
+
+class _FakeChunkEnableNode(_FakeNode):
+    """選択中のChunkごとに有効状態を保持するtest double。"""
+
+    def __init__(self, selector: _FakeNode, values: dict[str, str]) -> None:
+        """ChunkSelector nodeとselector別の初期状態を保持する。"""
+        super().__init__("0")
+        self.selector = selector
+        self.values = values
+
+    def is_available(self) -> bool:
+        """利用可能なnodeとして扱う。"""
+        return True
+
+    def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
+        """選択中Chunkの有効状態を更新する。"""
+        self.values[str(self.selector.value)] = value
+
+    def ToString(self) -> str:  # noqa: N802
+        """選択中Chunkの有効状態を返す。"""
+        return self.values[str(self.selector.value)]
+
+    def GetValue(self) -> str:  # noqa: N802
+        """選択中Chunkの有効状態を返す。"""
+        return self.ToString()
 
 
 class _FakeNodeMap:
@@ -172,11 +223,17 @@ class _FakeNodeMap:
 
 
 class _FakeGrabResult:
-    """camera timestamp付きの成功GrabResult。"""
+    """必須の撮影値Chunkを持つ成功GrabResult。"""
 
     def __init__(self, timestamp_ticks: int) -> None:
         """返却するcamera timestampを保持する。"""
-        self.timestamp_ticks = timestamp_ticks
+        self.chunk_nodemap = _FakeNodeMap(
+            {
+                "ChunkExposureTime": _FakeNode(12_500.0),
+                "ChunkGainAll": _FakeNode(240),
+                "ChunkTimestamp": _FakeNode(timestamp_ticks),
+            }
+        )
 
     def __enter__(self):  # noqa: ANN204
         """GrabResult自身を返す。"""
@@ -193,9 +250,9 @@ class _FakeGrabResult:
         """取得成功を返す。"""
         return True
 
-    def GetTimeStamp(self) -> int:  # noqa: N802
-        """camera timestampを返す。"""
-        return self.timestamp_ticks
+    def GetChunkDataNodeMap(self) -> _FakeNodeMap:  # noqa: N802
+        """撮影値を保持するChunkData node mapを返す。"""
+        return self.chunk_nodemap
 
 
 class _FakeInstantCamera:
@@ -203,12 +260,24 @@ class _FakeInstantCamera:
 
     def __init__(self) -> None:
         """必須nodeと取得履歴を初期化する。"""
+        chunk_selector = _FakeNode("GainAll")
+        self.original_chunk_enabled = {
+            "ExposureTime": "0",
+            "GainAll": "1",
+            "Timestamp": "0",
+        }
         self.nodemap = _FakeNodeMap(
             {
                 "AcquisitionMode": _FakeNode("SingleFrame"),
                 "TriggerSelector": _FakeNode("FrameStart"),
                 "TriggerMode": _FakeNode("Off"),
                 "TriggerSource": _FakeNode("Line1"),
+                "ChunkModeActive": _FakeNode("False"),
+                "ChunkSelector": chunk_selector,
+                "ChunkEnable": _FakeChunkEnableNode(
+                    chunk_selector,
+                    self.original_chunk_enabled.copy(),
+                ),
                 "GevTimestampTickFrequency": _FakeNode(125_000_000),
             }
         )
@@ -279,7 +348,7 @@ class _FakeConverter:
 
 
 def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeypatch) -> None:  # noqa: ANN001
-    """SDK内部の取得待機を使わず1枚とtimestampを取得し、終了時に設定を復元する。"""
+    """実機相当Chunkから読戻し値を取得し、終了時にChunk設定を復元する。"""
     monkeypatch.setattr(
         basler_module.genicam,
         "IsAvailable",
@@ -291,7 +360,9 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
     camera_device = CameraDevice()
     camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
     camera_device._state = CameraState.IDLE  # noqa: SLF001
-    camera_device._exposure_timestamp_source = "camera"  # noqa: SLF001
+    camera_device._frame_readback_provider_factory = (  # noqa: SLF001
+        ChunkFrameReadbackProvider
+    )
     camera_device.converter = cast("pylon.ImageFormatConverter", _FakeConverter())
 
     with camera_device.start_software_trigger_session(expected_frames=1) as session:
@@ -307,10 +378,17 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
             pylon.GrabLoop_ProvidedByUser,
         )
         assert instant_camera.trigger_count == 1
-        assert frame.exposure_started_ticks == 987654
-        assert frame.exposure_timestamp_frequency_hz == 125_000_000
-        assert frame.exposure_timestamp_source == "camera"
+        assert frame.readback.exposure_ms == 12.5
+        assert frame.readback.gain == 240
+        assert frame.readback.camera_timestamp_ticks == 987654
+        assert frame.readback.camera_timestamp_frequency_hz == 125_000_000
+        assert frame.readback.source == "camera"
 
     assert instant_camera.stop_count == 1
     assert instant_camera.nodemap.nodes["TriggerMode"].value == "Off"
+    assert instant_camera.nodemap.nodes["ChunkModeActive"].value == "False"
+    assert instant_camera.nodemap.nodes["ChunkSelector"].value == "GainAll"
+    chunk_enable = instant_camera.nodemap.nodes["ChunkEnable"]
+    assert isinstance(chunk_enable, _FakeChunkEnableNode)
+    assert chunk_enable.values == instant_camera.original_chunk_enabled
     assert camera_device.state is CameraState.IDLE

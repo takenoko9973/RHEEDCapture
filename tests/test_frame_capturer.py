@@ -9,7 +9,7 @@ import pytest
 
 from rheed_capture.application.capture import frame_capturer as frame_capturer_module
 from rheed_capture.application.capture.frame_capturer import FrameCapturer
-from rheed_capture.application.ports.camera import CameraError, CameraFrame
+from rheed_capture.application.ports.camera import CameraError, CameraFrame, FrameReadback
 from rheed_capture.domain.capture_condition import CaptureCondition
 
 
@@ -85,14 +85,18 @@ def _camera_frame(image: np.ndarray, ticks: int = 10) -> CameraFrame:
     """テスト用のCameraFrameを生成する。"""
     return CameraFrame(
         image=image,
-        exposure_started_ticks=ticks,
-        exposure_timestamp_frequency_hz=125_000_000,
-        exposure_timestamp_source="camera",
+        readback=FrameReadback(
+            exposure_ms=11.0,
+            gain=3,
+            camera_timestamp_ticks=ticks,
+            camera_timestamp_frequency_hz=125_000_000,
+            source="camera",
+        ),
     )
 
 
-def test_frame_capturer_captures_once_and_sets_camera_condition() -> None:
-    """条件適用後にready、trigger、retrieveの順で1枚取得する。"""
+def test_frame_capturer_keeps_requested_condition_and_camera_readback() -> None:
+    """要求条件とcamera読戻し値を区別して1回の撮影結果に保持する。"""
     image = np.ones((2, 2), dtype=np.uint16)
     camera = _FakeCamera([_camera_frame(image)])
     capturer = FrameCapturer(camera, retry_interval_sec=0)
@@ -101,9 +105,12 @@ def test_frame_capturer_captures_once_and_sets_camera_condition() -> None:
 
     assert np.array_equal(captured.image, image)
     assert captured.condition.exposure_ms == 10.5
-    assert captured.timing.exposure_started_ticks == 10
-    assert captured.timing.exposure_timestamp_frequency_hz == 125_000_000
-    assert captured.timing.exposure_timestamp_source == "camera"
+    assert captured.condition.gain == 2
+    assert captured.readback.exposure_ms == 11.0
+    assert captured.readback.gain == 3
+    assert captured.readback.camera_timestamp_ticks == 10
+    assert captured.readback.camera_timestamp_frequency_hz == 125_000_000
+    assert captured.readback.source == "camera"
     assert captured.timing.trigger_issued_at.tzinfo == ZoneInfo("Asia/Tokyo")
     assert camera.exposures == [10.5]
     assert camera.gains == [2]
@@ -142,7 +149,7 @@ def test_frame_capturer_retries_with_successful_attempt_timing(monkeypatch) -> N
 
     assert np.array_equal(captured.image, image)
     assert captured.timing.trigger_issued_at.minute == 1
-    assert captured.timing.exposure_started_ticks == 20
+    assert captured.readback.camera_timestamp_ticks == 20
     assert camera.expected_frames == [1, 1]
     assert len(camera.sessions) == 2
     assert all(session.closed for session in camera.sessions)

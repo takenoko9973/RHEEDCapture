@@ -194,13 +194,15 @@ class RecordingCapture:
             target_elapsed_ms=target_elapsed_ms,
             actual_elapsed_ms=actual_elapsed_ms,
             timestamp=grabbed.timing.trigger_issued_at.isoformat(),
-            camera_timestamp_ticks=grabbed.timing.exposure_started_ticks,
-            camera_timestamp_frequency_hz=(
-                grabbed.timing.exposure_timestamp_frequency_hz
-            ),
-            camera_timestamp_source=grabbed.timing.exposure_timestamp_source,
             exposure_ms=self.settings.exposure_ms,
             gain=self.settings.gain,
+            camera_exposure_ms=grabbed.readback.exposure_ms,
+            camera_gain=grabbed.readback.gain,
+            camera_timestamp_ticks=grabbed.readback.camera_timestamp_ticks,
+            camera_timestamp_frequency_hz=(
+                grabbed.readback.camera_timestamp_frequency_hz
+            ),
+            camera_timestamp_source=grabbed.readback.source,
             filename=file_path.name,
         )
         metadata = self._build_metadata(row)
@@ -238,6 +240,8 @@ class RecordingCapture:
             "target_elapsed_ms": row.target_elapsed_ms,
             "actual_elapsed_ms": row.actual_elapsed_ms,
             "timestamp": row.timestamp,
+            "camera_exposure_ms": row.camera_exposure_ms,
+            "camera_gain": row.camera_gain,
             "camera_timestamp_ticks": row.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": row.camera_timestamp_frequency_hz,
             "camera_timestamp_source": row.camera_timestamp_source,

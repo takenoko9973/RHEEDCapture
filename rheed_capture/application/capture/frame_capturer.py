@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from rheed_capture.application.ports.camera import (
     Camera,
     CameraError,
-    ExposureTimestampSource,
+    FrameReadback,
     SoftwareTriggerSession,
 )
 from rheed_capture.domain.capture_defaults import (
@@ -33,13 +33,10 @@ JST = ZoneInfo("Asia/Tokyo")
 
 @dataclass(frozen=True)
 class CaptureTiming:
-    """1回のソフトトリガー撮影に対応する時刻情報。"""
+    """アプリによるソフトウェアトリガー発行時刻を保持する。"""
 
     trigger_issued_at: datetime
     trigger_issued_monotonic_sec: float
-    exposure_started_ticks: int
-    exposure_timestamp_frequency_hz: int
-    exposure_timestamp_source: ExposureTimestampSource
 
 
 @dataclass(frozen=True)
@@ -49,6 +46,7 @@ class CapturedFrame:
     # 保存画像はプレビュー用CLAHEやグリッドを適用しないRaw相当画像。
     image: np.ndarray
     condition: CaptureCondition
+    readback: FrameReadback
     timing: CaptureTiming
 
 
@@ -57,6 +55,7 @@ class GrabbedFrame:
     """カメラから取得したRaw画像と撮影時刻情報。"""
 
     image: np.ndarray
+    readback: FrameReadback
     timing: CaptureTiming
 
 
@@ -122,14 +121,10 @@ class FrameGrabber:
 
         return GrabbedFrame(
             image=camera_frame.image,
+            readback=camera_frame.readback,
             timing=CaptureTiming(
                 trigger_issued_at=trigger_issued_at,
                 trigger_issued_monotonic_sec=trigger_issued_monotonic_sec,
-                exposure_started_ticks=camera_frame.exposure_started_ticks,
-                exposure_timestamp_frequency_hz=(
-                    camera_frame.exposure_timestamp_frequency_hz
-                ),
-                exposure_timestamp_source=camera_frame.exposure_timestamp_source,
             ),
         )
 
@@ -262,5 +257,6 @@ class FrameCapturer:
         return CapturedFrame(
             image=grabbed.image,
             condition=condition,
+            readback=grabbed.readback,
             timing=grabbed.timing,
         )

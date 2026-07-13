@@ -127,6 +127,8 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 {
   "exposure_ms": 10.5,
   "gain": 0.0,
+  "camera_exposure_ms": 10.496,
+  "camera_gain": 0,
   "timestamp": "2026-02-15T15:00:00.000+09:00",
   "camera_timestamp_ticks": 123456789,
   "camera_timestamp_frequency_hz": 125000000,
@@ -138,7 +140,7 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 
 ```
 
-`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` はカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測した露光開始時刻ではない。Recordingでは同じ3項目をTIFFと `frames.csv` の両方へ保存する。
+`exposure_ms` と `gain` はアプリが要求した撮影条件、`camera_exposure_ms` と `camera_gain` は取得フレームに対応するカメラ読戻し値を表す。実機ではExposure Time、Gain All、Timestamp Chunkから読戻し、pylonエミュレータでは設定nodeと仮想timestampから同じ項目を作る。`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` は画像取得開始時のカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測値ではない。Recordingではcamera読戻し項目をTIFFと `frames.csv` の両方へ保存する。
 
 ### 6.3 ディレクトリ構造とファイル命名規則
 
@@ -159,6 +161,6 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 ## 7. エラー・例外処理
 
 * **リトライ制御 (CaptureService)**:
-`TriggerReady` 待機、trigger発行、`RetrieveResult`、Grab成否、Timestamp Chunk取得、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
+`TriggerReady` 待機、trigger発行、`RetrieveResult`、Grab成否、必須Chunk読戻し、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
 * **致命的エラー時の保護**:
 リトライ上限に達した場合は、シーケンス全体を中断し、ユーザーにダイアログで通知する。中断が発生した場合でも、`finally` ブロックにより必ずプレビュー機能を復帰させる（ハードウェアリソースをロックしたままにしない）。
