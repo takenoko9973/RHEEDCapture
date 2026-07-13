@@ -19,6 +19,7 @@ from rheed_capture.application.ports.camera import (
 )
 from rheed_capture.infrastructure.camera.basler_configurators import (
     BaslerCameraConfigurator,
+    BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
 )
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
+_CAMERA_EMULATION_DEVICE_CLASS = "BaslerCamEmu"
 SIMULATION_TIMESTAMP_FREQUENCY_HZ = 1_000_000_000
 
 
@@ -81,8 +83,6 @@ class BaslerCamera:
     def __init__(
         self,
         configurators: Sequence[BaslerCameraConfigurator] | None = None,
-        *,
-        exposure_timestamp_source: ExposureTimestampSource = "camera",
     ) -> None:
         """カメラデバイスラッパーを未接続状態で初期化する。"""
         self._camera = None
@@ -91,7 +91,7 @@ class BaslerCamera:
         self._state = CameraState.DISCONNECTED
         self._owner_thread_id: int | None = None
         self._active_trigger_session: _BaslerSoftwareTriggerSession | None = None
-        self._exposure_timestamp_source = exposure_timestamp_source
+        self._exposure_timestamp_source: ExposureTimestampSource
 
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputPixelFormat = pylon.PixelType_Mono16
@@ -126,12 +126,22 @@ class BaslerCamera:
 
                 self._camera = InstantCamera(tl_factory.CreateFirstDevice())
                 self._camera.Open()
+                device_info = self.camera.GetDeviceInfo()
+
+                # PYLON_CAMEMUは列挙台数であり、実際の接続先はDeviceClassで判定する。
+                is_emulation = (
+                    device_info.GetDeviceClass() == _CAMERA_EMULATION_DEVICE_CLASS
+                )
+                self._exposure_timestamp_source = (
+                    "simulation" if is_emulation else "camera"
+                )
 
                 for configurator in self._configurators:
                     configurator.apply(self.camera)
+                if is_emulation:
+                    BaslerCameraEmulationSettings().apply(self.camera)
 
                 self._state = CameraState.IDLE
-                device_info = self.camera.GetDeviceInfo()
                 logger.info(
                     "Connected to camera: model=%s serial=%s class=%s version=%s",
                     device_info.GetModelName(),

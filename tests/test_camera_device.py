@@ -14,7 +14,6 @@ from rheed_capture.infrastructure.camera import basler_camera as basler_module
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice, CameraState
 from rheed_capture.infrastructure.camera.basler_configurators import (
     CAMERA_EMULATION_ROI,
-    BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
 )
 
@@ -23,11 +22,7 @@ from rheed_capture.infrastructure.camera.basler_configurators import (
 def camera_device():  # noqa: ANN201
     """テスト用のカメラデバイスフィクスチャ"""
     dev = CameraDevice(
-        configurators=[
-            BaslerMandatorySettings(),
-            BaslerCameraEmulationSettings(),
-        ],
-        exposure_timestamp_source="simulation",
+        configurators=[BaslerMandatorySettings()],
     )
     dev.connect()
     yield dev
@@ -296,6 +291,7 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
     camera_device = CameraDevice()
     camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
     camera_device._state = CameraState.IDLE  # noqa: SLF001
+    camera_device._exposure_timestamp_source = "camera"  # noqa: SLF001
     camera_device.converter = cast("pylon.ImageFormatConverter", _FakeConverter())
 
     with camera_device.start_software_trigger_session(expected_frames=1) as session:
