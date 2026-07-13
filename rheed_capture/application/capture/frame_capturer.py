@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from rheed_capture.application.ports.camera import (
     Camera,
     CameraError,
+    ExposureTimestampSource,
     SoftwareTriggerSession,
 )
 from rheed_capture.domain.capture_defaults import (
@@ -31,17 +32,24 @@ JST = ZoneInfo("Asia/Tokyo")
 
 
 @dataclass(frozen=True)
+class CaptureTiming:
+    """1回のソフトトリガー撮影に対応する時刻情報。"""
+
+    trigger_issued_at: datetime
+    trigger_issued_monotonic_sec: float
+    exposure_started_ticks: int
+    exposure_timestamp_frequency_hz: int
+    exposure_timestamp_source: ExposureTimestampSource
+
+
+@dataclass(frozen=True)
 class CapturedFrame:
-    """保存とプレビュー通知へ渡す、加工前の1フレーム取得結果。"""
+    """保存と通知へ渡す、1回分の撮影結果。"""
 
     # 保存画像はプレビュー用CLAHEやグリッドを適用しないRaw相当画像。
     image: np.ndarray
     condition: CaptureCondition
-    # PCがsoftware trigger命令を発行する直前のJST時刻をISO 8601で保持する。
-    timestamp: str
-    # 同じフレームのカメラ内部時刻。絶対日時への変換は行わない。
-    camera_timestamp_ticks: int
-    camera_timestamp_frequency_hz: int
+    timing: CaptureTiming
 
 
 @dataclass(frozen=True)
@@ -49,12 +57,7 @@ class GrabbedFrame:
     """カメラから取得したRaw画像と撮影時刻情報。"""
 
     image: np.ndarray
-    # 次の2値は画像受信後ではなく、software trigger発行直前に記録する。
-    triggered_at: datetime
-    triggered_monotonic_sec: float
-    # 次の2値はPC時計ではなく、取得フレームのTimestamp Chunkに由来する。
-    camera_timestamp_ticks: int
-    camera_timestamp_frequency_hz: int
+    timing: CaptureTiming
 
 
 class FrameCapture(Protocol):
@@ -112,17 +115,22 @@ class FrameGrabber:
 
         session.wait_until_ready(self._remaining_timeout_ms(deadline))
         # PC時刻はカメラへtrigger命令を渡す直前を撮影時刻として記録する。
-        triggered_at = datetime.now(JST)
-        triggered_monotonic_sec = time.perf_counter()
+        trigger_issued_at = datetime.now(JST)
+        trigger_issued_monotonic_sec = time.perf_counter()
         session.execute_trigger()
         camera_frame = session.retrieve_frame(self._remaining_timeout_ms(deadline))
 
         return GrabbedFrame(
             image=camera_frame.image,
-            triggered_at=triggered_at,
-            triggered_monotonic_sec=triggered_monotonic_sec,
-            camera_timestamp_ticks=camera_frame.camera_timestamp_ticks,
-            camera_timestamp_frequency_hz=camera_frame.camera_timestamp_frequency_hz,
+            timing=CaptureTiming(
+                trigger_issued_at=trigger_issued_at,
+                trigger_issued_monotonic_sec=trigger_issued_monotonic_sec,
+                exposure_started_ticks=camera_frame.exposure_started_ticks,
+                exposure_timestamp_frequency_hz=(
+                    camera_frame.exposure_timestamp_frequency_hz
+                ),
+                exposure_timestamp_source=camera_frame.exposure_timestamp_source,
+            ),
         )
 
     def _remaining_timeout_ms(self, deadline: float) -> int:
@@ -254,7 +262,5 @@ class FrameCapturer:
         return CapturedFrame(
             image=grabbed.image,
             condition=condition,
-            timestamp=grabbed.triggered_at.isoformat(),
-            camera_timestamp_ticks=grabbed.camera_timestamp_ticks,
-            camera_timestamp_frequency_hz=grabbed.camera_timestamp_frequency_hz,
+            timing=grabbed.timing,
         )

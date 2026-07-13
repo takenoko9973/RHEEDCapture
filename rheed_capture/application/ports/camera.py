@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Self
+from typing import TYPE_CHECKING, Literal, Protocol, Self
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -13,16 +13,18 @@ class CameraError(RuntimeError):
     """カメラ操作または状態遷移の失敗を表す。"""
 
 
+type ExposureTimestampSource = Literal["camera", "simulation"]
+
+
 @dataclass(frozen=True)
 class CameraFrame:
-    """カメラ由来の画像とデバイス時刻を保持する。"""
+    """カメラ由来の画像と露光開始時刻を保持する。"""
 
     # pypylon converterでMono16 / MsbAlignedへ変換した、画像処理前のRaw相当画像。
     image: np.ndarray
-    # Timestamp Chunkの生tick値。PTP未使用時は絶対日時ではない。
-    camera_timestamp_ticks: int
-    # camera_timestamp_ticksを秒へ換算するための、カメラ時計のtick数/秒。
-    camera_timestamp_frequency_hz: int
+    exposure_started_ticks: int
+    exposure_timestamp_frequency_hz: int
+    exposure_timestamp_source: ExposureTimestampSource
 
 
 class SoftwareTriggerSession(Protocol):

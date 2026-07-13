@@ -33,8 +33,9 @@ def mock_camera() -> MagicMock:
         session = MagicMock()
         session.retrieve_frame.return_value = CameraFrame(
             image=np.zeros((10, 10), dtype=np.uint16),
-            camera_timestamp_ticks=1,
-            camera_timestamp_frequency_hz=125_000_000,
+            exposure_started_ticks=1,
+            exposure_timestamp_frequency_hz=125_000_000,
+            exposure_timestamp_source="camera",
         )
         return session
 

@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, Protocol, Self, cast
 from pypylon import genicam, pylon
 from pypylon.pylon import GenericException, InstantCamera, TlFactory
 
-from rheed_capture.application.ports.camera import CameraError, CameraFrame
+from rheed_capture.application.ports.camera import (
+    CameraError,
+    CameraFrame,
+    ExposureTimestampSource,
+)
 from rheed_capture.infrastructure.camera.basler_configurators import (
     BaslerCameraConfigurator,
     BaslerMandatorySettings,
@@ -25,6 +29,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
+SIMULATION_TIMESTAMP_FREQUENCY_HZ = 1_000_000_000
 
 
 class _GenicamNode(Protocol):
@@ -51,11 +56,11 @@ class _GenicamNodeMap(Protocol):
         ...
 
 
-class _ChunkGrabResult(Protocol):
-    """ChunkDataのNodeMapを提供するGrabResult型。"""
+class _TimestampGrabResult(Protocol):
+    """フレームのtimestampを提供するGrabResult型。"""
 
-    def GetChunkDataNodeMap(self) -> _GenicamNodeMap:  # noqa: N802
-        """フレームへ付与されたChunkData node mapを返す。"""
+    def GetTimeStamp(self) -> int:  # noqa: N802
+        """フレームに対応するcamera timestampを返す。"""
         ...
 
 
@@ -73,7 +78,12 @@ class BaslerCamera:
 
     _camera: InstantCamera | None
 
-    def __init__(self, configurators: Sequence[BaslerCameraConfigurator] | None = None) -> None:
+    def __init__(
+        self,
+        configurators: Sequence[BaslerCameraConfigurator] | None = None,
+        *,
+        exposure_timestamp_source: ExposureTimestampSource = "camera",
+    ) -> None:
         """カメラデバイスラッパーを未接続状態で初期化する。"""
         self._camera = None
         self._lock = threading.RLock()
@@ -81,6 +91,7 @@ class BaslerCamera:
         self._state = CameraState.DISCONNECTED
         self._owner_thread_id: int | None = None
         self._active_trigger_session: _BaslerSoftwareTriggerSession | None = None
+        self._exposure_timestamp_source = exposure_timestamp_source
 
         self.converter = pylon.ImageFormatConverter()
         self.converter.OutputPixelFormat = pylon.PixelType_Mono16
@@ -310,10 +321,8 @@ class _BaslerSoftwareTriggerSession:
         self._camera_device = camera_device
         self._expected_frames = expected_frames
         self._closed = False
-        self._camera_timestamp_frequency_hz = 0
-        self._original_chunk_mode_active: str | None = None
-        self._original_chunk_selector: str | None = None
-        self._original_timestamp_chunk_enabled: str | None = None
+        self._exposure_timestamp_frequency_hz = 0
+        self._simulated_exposure_started_ticks: int | None = None
 
     def __enter__(self) -> Self:
         """開始済みSession自身を返す。"""
@@ -338,28 +347,19 @@ class _BaslerSoftwareTriggerSession:
         camera = self._camera_device.camera
         nodemap = camera.GetNodeMap()
 
-        self._original_chunk_mode_active = _read_required_node_string(
-            nodemap,
-            "ChunkModeActive",
-        )
-
         _set_required_node_value(nodemap, "AcquisitionMode", "Continuous")
         _set_required_node_value(nodemap, "TriggerSelector", "FrameStart")
         _set_required_node_value(nodemap, "TriggerMode", "On")
         _set_required_node_value(nodemap, "TriggerSource", "Software")
-        # Baslerではchunk mode有効化前のChunkSelectorが利用不可になるため、公式順序を守る。
-        _set_required_node_value(nodemap, "ChunkModeActive", True)
-        self._original_chunk_selector = _read_required_node_string(nodemap, "ChunkSelector")
-        _set_required_node_value(nodemap, "ChunkSelector", "Timestamp")
-        self._original_timestamp_chunk_enabled = _read_required_node_string(
-            nodemap,
-            "ChunkEnable",
-        )
-        _set_required_node_value(nodemap, "ChunkEnable", True)
-        self._camera_timestamp_frequency_hz = _read_required_node_int(
-            nodemap,
-            "GevTimestampTickFrequency",
-        )
+
+        if self._camera_device._exposure_timestamp_source == "simulation":
+            # pylon emulatorには有効なcamera timestampがないため、PCのns単位時刻を使う。
+            self._exposure_timestamp_frequency_hz = SIMULATION_TIMESTAMP_FREQUENCY_HZ
+        else:
+            self._exposure_timestamp_frequency_hz = _read_required_node_int(
+                nodemap,
+                "GevTimestampTickFrequency",
+            )
 
         try:
             # pypylonでは予定枚数つき取得は別APIを使い、SDK内部のRetrieveResult待機を起動しない。
@@ -402,8 +402,12 @@ class _BaslerSoftwareTriggerSession:
         """ソフトウェアFrameStart triggerを1回発行する。"""
         with self._camera_device._lock:
             self._require_active("ソフトトリガー発行")
+            self._simulated_exposure_started_ticks = None
             try:
                 self._camera_device.camera.ExecuteSoftwareTrigger()
+                if self._camera_device._exposure_timestamp_source == "simulation":
+                    # エミュレータではtrigger直後を仮想的な露光開始イベントとして記録する。
+                    self._simulated_exposure_started_ticks = time.perf_counter_ns()
             except GenericException as e:
                 msg = f"ExecuteSoftwareTriggerに失敗しました: {e}"
                 raise CameraError(msg) from e
@@ -424,7 +428,7 @@ class _BaslerSoftwareTriggerSession:
                         msg = f"GrabSucceeded=False: {result.GetErrorDescription()}"
                         raise CameraError(msg)
 
-                    timestamp_ticks = self._read_timestamp_ticks(result)
+                    exposure_started_ticks = self._read_exposure_started_ticks(result)
                     try:
                         converted = self._camera_device.converter.Convert(result)
                         image = converted.GetArray()
@@ -434,8 +438,13 @@ class _BaslerSoftwareTriggerSession:
 
                     return CameraFrame(
                         image=image,
-                        camera_timestamp_ticks=timestamp_ticks,
-                        camera_timestamp_frequency_hz=self._camera_timestamp_frequency_hz,
+                        exposure_started_ticks=exposure_started_ticks,
+                        exposure_timestamp_frequency_hz=(
+                            self._exposure_timestamp_frequency_hz
+                        ),
+                        exposure_timestamp_source=(
+                            self._camera_device._exposure_timestamp_source
+                        ),
                     )
 
             except pylon.TimeoutException as e:
@@ -488,32 +497,20 @@ class _BaslerSoftwareTriggerSession:
             self._closed = True
 
     def _restore_nodes(self) -> None:
-        """Session開始前のtriggerとTimestamp Chunk設定へ戻す。"""
+        """Session終了時にtriggerを無効化する。"""
         nodemap = self._camera_device.camera.GetNodeMap()
-        if self._original_timestamp_chunk_enabled is not None:
-            _set_required_node_value(
-                nodemap,
-                "ChunkEnable",
-                self._original_timestamp_chunk_enabled,
-            )
-        if self._original_chunk_selector is not None:
-            _set_required_node_value(
-                nodemap,
-                "ChunkSelector",
-                self._original_chunk_selector,
-            )
-        if self._original_chunk_mode_active is not None:
-            _set_required_node_value(
-                nodemap,
-                "ChunkModeActive",
-                self._original_chunk_mode_active,
-            )
         _set_required_node_value(nodemap, "TriggerMode", "Off")
 
-    def _read_timestamp_ticks(self, result: _ChunkGrabResult) -> int:
-        """GrabResultのTimestamp Chunkから生のcamera tickを取得する。"""
-        chunk_nodemap = result.GetChunkDataNodeMap()
-        return _read_required_node_int(chunk_nodemap, "ChunkTimestamp")
+    def _read_exposure_started_ticks(self, result: _TimestampGrabResult) -> int:
+        """選択済み取得元から露光開始に対応するtickを返す。"""
+        if self._camera_device._exposure_timestamp_source == "camera":
+            return int(result.GetTimeStamp())
+
+        if self._simulated_exposure_started_ticks is None:
+            # trigger発行に対応しない時刻を保存しないため、不整合は明示的に失敗させる。
+            msg = "シミュレーション露光開始時刻が記録されていません。"
+            raise CameraError(msg)
+        return self._simulated_exposure_started_ticks
 
     def _require_active(self, operation: str) -> None:
         """このSessionが現在のカメラ所有者であることを確認する。"""

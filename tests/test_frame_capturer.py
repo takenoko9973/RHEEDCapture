@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Self
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -83,8 +85,9 @@ def _camera_frame(image: np.ndarray, ticks: int = 10) -> CameraFrame:
     """テスト用のCameraFrameを生成する。"""
     return CameraFrame(
         image=image,
-        camera_timestamp_ticks=ticks,
-        camera_timestamp_frequency_hz=125_000_000,
+        exposure_started_ticks=ticks,
+        exposure_timestamp_frequency_hz=125_000_000,
+        exposure_timestamp_source="camera",
     )
 
 
@@ -98,8 +101,10 @@ def test_frame_capturer_captures_once_and_sets_camera_condition() -> None:
 
     assert np.array_equal(captured.image, image)
     assert captured.condition.exposure_ms == 10.5
-    assert captured.camera_timestamp_ticks == 10
-    assert captured.camera_timestamp_frequency_hz == 125_000_000
+    assert captured.timing.exposure_started_ticks == 10
+    assert captured.timing.exposure_timestamp_frequency_hz == 125_000_000
+    assert captured.timing.exposure_timestamp_source == "camera"
+    assert captured.timing.trigger_issued_at.tzinfo == ZoneInfo("Asia/Tokyo")
     assert camera.exposures == [10.5]
     assert camera.gains == [2]
     assert camera.expected_frames == [1]
@@ -111,15 +116,33 @@ def test_frame_capturer_captures_once_and_sets_camera_condition() -> None:
     assert camera.sessions[0].closed
 
 
-def test_frame_capturer_retries_with_new_session() -> None:
-    """取得失敗後は異常Sessionを閉じ、新しいSessionで同じフレームを再撮影する。"""
+def test_frame_capturer_retries_with_successful_attempt_timing(monkeypatch) -> None:  # noqa: ANN001
+    """再試行成功時は失敗試行ではなく成功試行の時刻を撮影結果へ残す。"""
     image = np.ones((2, 2), dtype=np.uint16)
-    camera = _FakeCamera([CameraError("temporary"), _camera_frame(image)])
+    camera = _FakeCamera([CameraError("temporary"), _camera_frame(image, ticks=20)])
+    issued_at_values = iter(
+        [
+            datetime(2026, 7, 13, 10, 0, tzinfo=ZoneInfo("Asia/Tokyo")),
+            datetime(2026, 7, 13, 10, 1, tzinfo=ZoneInfo("Asia/Tokyo")),
+        ]
+    )
+
+    class _FakeDateTime:
+        """試行ごとに異なるtrigger発行時刻を返す。"""
+
+        @staticmethod
+        def now(_timezone) -> datetime:  # noqa: ANN001
+            """次の固定時刻を返す。"""
+            return next(issued_at_values)
+
+    monkeypatch.setattr(frame_capturer_module, "datetime", _FakeDateTime)
     capturer = FrameCapturer(camera, retry_interval_sec=0)
 
     captured = capturer.capture(CaptureCondition(exposure_ms=20.0, gain=1))
 
     assert np.array_equal(captured.image, image)
+    assert captured.timing.trigger_issued_at.minute == 1
+    assert captured.timing.exposure_started_ticks == 20
     assert camera.expected_frames == [1, 1]
     assert len(camera.sessions) == 2
     assert all(session.closed for session in camera.sessions)

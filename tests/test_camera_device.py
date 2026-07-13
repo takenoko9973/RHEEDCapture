@@ -1,5 +1,4 @@
 import os
-from collections.abc import Callable
 from typing import cast
 
 import numpy as np
@@ -28,6 +27,7 @@ def camera_device():  # noqa: ANN201
             BaslerMandatorySettings(),
             BaslerCameraEmulationSettings(),
         ],
+        exposure_timestamp_source="simulation",
     )
     dev.connect()
     yield dev
@@ -82,13 +82,19 @@ def test_set_exposure_and_gain(camera_device: CameraDevice) -> None:
         assert camera_device.camera.GainRaw.GetValue() == 400
 
 
-def test_emulator_reports_missing_timestamp_chunk_capability(
+def test_emulator_captures_with_simulation_timestamp(
     camera_device: CameraDevice,
 ) -> None:
-    """Timestamp Chunk非対応エミュレータでは不足node名を明示して失敗する。"""
-    with pytest.raises(CameraError, match="ChunkSelector"):
-        camera_device.start_software_trigger_session(expected_frames=1)
+    """Timestamp Chunk非対応エミュレータでもシミュレーション時刻で撮影する。"""
+    with camera_device.start_software_trigger_session(expected_frames=1) as session:
+        session.wait_until_ready(1000)
+        session.execute_trigger()
+        frame = session.retrieve_frame(1000)
 
+    assert frame.image.shape == (540, 720)
+    assert frame.exposure_started_ticks > 0
+    assert frame.exposure_timestamp_frequency_hz == 1_000_000_000
+    assert frame.exposure_timestamp_source == "simulation"
     assert camera_device.state is CameraState.IDLE
     assert camera_device.camera.TriggerMode.GetValue() == "Off"
 
@@ -134,21 +140,13 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
 class _FakeNode:
     """Basler trigger unit test用の読み書き可能なGenICam node。"""
 
-    def __init__(
-        self,
-        value: str | int,
-        *,
-        available_when: Callable[[], bool] | None = None,
-    ) -> None:
-        """初期node値と利用可能になる条件を保持する。"""
+    def __init__(self, value: str | int) -> None:
+        """初期node値を保持する。"""
         self.value = value
-        self.available_when = available_when
 
     def is_available(self) -> bool:
-        """現在の関連node状態で利用可能かを返す。"""
-        if self.available_when is None:
-            return True
-        return self.available_when()
+        """利用可能なnodeとして扱う。"""
+        return True
 
     def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
         """GenICam文字列表現からnode値を更新する。"""
@@ -179,13 +177,11 @@ class _FakeNodeMap:
 
 
 class _FakeGrabResult:
-    """Timestamp Chunk付きの成功GrabResult。"""
+    """camera timestamp付きの成功GrabResult。"""
 
     def __init__(self, timestamp_ticks: int) -> None:
         """返却するcamera timestampを保持する。"""
-        self.chunk_nodemap = _FakeNodeMap(
-            {"ChunkTimestamp": _FakeNode(timestamp_ticks)}
-        )
+        self.timestamp_ticks = timestamp_ticks
 
     def __enter__(self):  # noqa: ANN204
         """GrabResult自身を返す。"""
@@ -202,9 +198,9 @@ class _FakeGrabResult:
         """取得成功を返す。"""
         return True
 
-    def GetChunkDataNodeMap(self) -> _FakeNodeMap:  # noqa: N802
-        """Timestamp Chunk node mapを返す。"""
-        return self.chunk_nodemap
+    def GetTimeStamp(self) -> int:  # noqa: N802
+        """camera timestampを返す。"""
+        return self.timestamp_ticks
 
 
 class _FakeInstantCamera:
@@ -212,27 +208,12 @@ class _FakeInstantCamera:
 
     def __init__(self) -> None:
         """必須nodeと取得履歴を初期化する。"""
-        chunk_mode_active = _FakeNode("False")
-
-        def available_in_chunk_mode() -> bool:
-            """ChunkModeActive=Trueの間だけ関連nodeを利用可能にする。"""
-            return chunk_mode_active.value == "1"
-
         self.nodemap = _FakeNodeMap(
             {
                 "AcquisitionMode": _FakeNode("SingleFrame"),
                 "TriggerSelector": _FakeNode("FrameStart"),
                 "TriggerMode": _FakeNode("Off"),
                 "TriggerSource": _FakeNode("Line1"),
-                "ChunkModeActive": chunk_mode_active,
-                "ChunkSelector": _FakeNode(
-                    "Timestamp",
-                    available_when=available_in_chunk_mode,
-                ),
-                "ChunkEnable": _FakeNode(
-                    "False",
-                    available_when=available_in_chunk_mode,
-                ),
                 "GevTimestampTickFrequency": _FakeNode(125_000_000),
             }
         )
@@ -277,7 +258,7 @@ class _FakeInstantCamera:
         self.trigger_count += 1
 
     def RetrieveResult(self, timeout_ms: int, handling: object) -> _FakeGrabResult:  # noqa: ARG002, N802
-        """Timestamp Chunk付きの1フレームを返す。"""
+        """camera timestamp付きの1フレームを返す。"""
         return _FakeGrabResult(987654)
 
     def StopGrabbing(self) -> None:  # noqa: N802
@@ -330,10 +311,10 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
             pylon.GrabLoop_ProvidedByUser,
         )
         assert instant_camera.trigger_count == 1
-        assert frame.camera_timestamp_ticks == 987654
-        assert frame.camera_timestamp_frequency_hz == 125_000_000
+        assert frame.exposure_started_ticks == 987654
+        assert frame.exposure_timestamp_frequency_hz == 125_000_000
+        assert frame.exposure_timestamp_source == "camera"
 
     assert instant_camera.stop_count == 1
     assert instant_camera.nodemap.nodes["TriggerMode"].value == "Off"
-    assert instant_camera.nodemap.nodes["ChunkModeActive"].value == "False"
     assert camera_device.state is CameraState.IDLE

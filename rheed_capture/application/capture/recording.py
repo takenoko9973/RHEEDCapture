@@ -132,7 +132,7 @@ class RecordingCapture:
 
                 grabbed = trigger_session.grab(timeout_ms)
                 actual_elapsed_ms = (
-                    grabbed.triggered_monotonic_sec - start_monotonic
+                    grabbed.timing.trigger_issued_monotonic_sec - start_monotonic
                 ) * 1000.0
                 self._enqueue_frame(
                     frame_index,
@@ -193,9 +193,12 @@ class RecordingCapture:
             frame_index=frame_index,
             target_elapsed_ms=target_elapsed_ms,
             actual_elapsed_ms=actual_elapsed_ms,
-            timestamp=grabbed.triggered_at.isoformat(),
-            camera_timestamp_ticks=grabbed.camera_timestamp_ticks,
-            camera_timestamp_frequency_hz=grabbed.camera_timestamp_frequency_hz,
+            timestamp=grabbed.timing.trigger_issued_at.isoformat(),
+            camera_timestamp_ticks=grabbed.timing.exposure_started_ticks,
+            camera_timestamp_frequency_hz=(
+                grabbed.timing.exposure_timestamp_frequency_hz
+            ),
+            camera_timestamp_source=grabbed.timing.exposure_timestamp_source,
             exposure_ms=self.settings.exposure_ms,
             gain=self.settings.gain,
             filename=file_path.name,
@@ -237,6 +240,7 @@ class RecordingCapture:
             "timestamp": row.timestamp,
             "camera_timestamp_ticks": row.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": row.camera_timestamp_frequency_hz,
+            "camera_timestamp_source": row.camera_timestamp_source,
             "exposure_ms": row.exposure_ms,
             "gain": row.gain,
         }

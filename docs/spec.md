@@ -130,6 +130,7 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
   "timestamp": "2026-02-15T15:00:00.000+09:00",
   "camera_timestamp_ticks": 123456789,
   "camera_timestamp_frequency_hz": 125000000,
+  "camera_timestamp_source": "camera",
   "bit_depth_sensor": 12,
   "bit_depth_saved": 16,
   "alignment": "MsbAligned"
@@ -137,7 +138,7 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 
 ```
 
-`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_ticks` はカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数であり、PTPを自動有効化しないためtickを絶対日時として扱わない。Recordingでは同じ2項目をTIFFと `frames.csv` の両方へ保存する。
+`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` はカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測した露光開始時刻ではない。Recordingでは同じ3項目をTIFFと `frames.csv` の両方へ保存する。
 
 ### 6.3 ディレクトリ構造とファイル命名規則
 

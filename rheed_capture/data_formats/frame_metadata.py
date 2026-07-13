@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -12,9 +12,10 @@ class SequenceFrameMetadata:
     gain: int
     # software trigger発行直前のPC時刻。画像受信完了時刻ではない。
     timestamp: str
-    # カメラ内部時計の生tickとtick数/秒。PTP未使用時は絶対日時ではない。
+    # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
+    camera_timestamp_source: Literal["camera", "simulation"]
     bit_depth_sensor: int = 12
     bit_depth_saved: int = 16
     alignment: str = "MsbAligned"
@@ -27,6 +28,7 @@ class SequenceFrameMetadata:
             "timestamp": self.timestamp,
             "camera_timestamp_ticks": self.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": self.camera_timestamp_frequency_hz,
+            "camera_timestamp_source": self.camera_timestamp_source,
             "bit_depth_sensor": self.bit_depth_sensor,
             "bit_depth_saved": self.bit_depth_saved,
             "alignment": self.alignment,
@@ -43,9 +45,10 @@ class AngleScanFrameMetadata:
     gain: int
     # software trigger発行直前のPC時刻。画像受信完了時刻ではない。
     timestamp: str
-    # カメラ内部時計の生tickとtick数/秒。PTP未使用時は絶対日時ではない。
+    # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
+    camera_timestamp_source: Literal["camera", "simulation"]
     capture_mode: str = "angle_scan"
     actual_angle_deg: float | None = None
     angle_coordinate: str = "relative"
@@ -68,6 +71,7 @@ class AngleScanFrameMetadata:
             "timestamp": self.timestamp,
             "camera_timestamp_ticks": self.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": self.camera_timestamp_frequency_hz,
+            "camera_timestamp_source": self.camera_timestamp_source,
             "bit_depth_sensor": self.bit_depth_sensor,
             "bit_depth_saved": self.bit_depth_saved,
             "alignment": self.alignment,

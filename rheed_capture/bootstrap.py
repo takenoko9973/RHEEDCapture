@@ -21,16 +21,23 @@ from rheed_capture.presentation.qt.main_window import MainWindow
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rheed_capture.application.ports.camera import ExposureTimestampSource
     from rheed_capture.application.ports.motor import RotationMotor
 
 
 def create_camera() -> BaslerCamera:
     """実行環境に応じたBaslerカメラ実装を生成して接続する。"""
     configurators: list[BaslerCameraConfigurator] = [BaslerMandatorySettings()]
-    if os.environ.get(CAMERA_EMULATION_ENV_VAR):
+    is_emulation = bool(os.environ.get(CAMERA_EMULATION_ENV_VAR))
+    timestamp_source: ExposureTimestampSource = "camera"
+    if is_emulation:
         configurators.append(BaslerCameraEmulationSettings())
+        timestamp_source = "simulation"
 
-    camera = BaslerCamera(configurators=configurators)
+    camera = BaslerCamera(
+        configurators=configurators,
+        exposure_timestamp_source=timestamp_source,
+    )
     camera.connect()
     return camera
 

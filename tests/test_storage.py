@@ -1,12 +1,13 @@
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import tifffile
 
-from rheed_capture.application.capture.frame_capturer import CapturedFrame
+from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
@@ -96,9 +97,13 @@ def test_sequence_tiff_round_trips_trigger_and_camera_timestamps() -> None:
         captured_frame = CapturedFrame(
             image=np.zeros((2, 2), dtype=np.uint16),
             condition=DomainCaptureCondition(exposure_ms=50.0, gain=1),
-            timestamp="2026-07-11T12:00:00+09:00",
-            camera_timestamp_ticks=987654,
-            camera_timestamp_frequency_hz=125_000_000,
+            timing=CaptureTiming(
+                trigger_issued_at=datetime.fromisoformat("2026-07-11T12:00:00+09:00"),
+                trigger_issued_monotonic_sec=1.0,
+                exposure_started_ticks=987654,
+                exposure_timestamp_frequency_hz=125_000_000,
+                exposure_timestamp_source="camera",
+            ),
         )
 
         saved_path = session.save_frame(captured_frame)
@@ -111,6 +116,7 @@ def test_sequence_tiff_round_trips_trigger_and_camera_timestamps() -> None:
         assert metadata["timestamp"] == "2026-07-11T12:00:00+09:00"
         assert metadata["camera_timestamp_ticks"] == 987654
         assert metadata["camera_timestamp_frequency_hz"] == 125_000_000
+        assert metadata["camera_timestamp_source"] == "camera"
 
 
 def test_root_change_and_branch_detection() -> None:

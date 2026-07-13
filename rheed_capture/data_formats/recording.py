@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -13,9 +14,10 @@ class RecordingFrameRow:
     actual_elapsed_ms: float
     # software trigger発行直前のPC時刻。画像受信完了時刻ではない。
     timestamp: str
-    # 同じフレームに付与されたカメラ内部時計の生tickとtick数/秒。
+    # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
+    camera_timestamp_source: Literal["camera", "simulation"]
     exposure_ms: float
     gain: int
     filename: str

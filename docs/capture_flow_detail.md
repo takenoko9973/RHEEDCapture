@@ -193,7 +193,7 @@
 7. 取得失敗時は異常Sessionを閉じ、新しいSessionで同じ `frame_index` を再試行する。
 8. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、`TriggerMode = Off` へ戻す。
 
-TIFFと `frames.csv` には、trigger直前のPC時刻を表す `timestamp`、`camera_timestamp_ticks`、`camera_timestamp_frequency_hz` を保存する。PTPは自動有効化しないため、camera tickは絶対日時として解釈しない。
+TIFFと `frames.csv` には、trigger直前のPC時刻を表す `timestamp`、露光開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想的な露光開始イベントとして記録する。
 
 ## 4. 通常シーケンス撮影と回転撮影の主な違い
 

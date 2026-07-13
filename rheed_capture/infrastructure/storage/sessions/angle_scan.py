@@ -67,9 +67,12 @@ class AngleScanSession:
             target_angle_deg=target_angle_deg,
             exposure_ms=captured_frame.condition.exposure_ms,
             gain=captured_frame.condition.gain,
-            timestamp=captured_frame.timestamp,
-            camera_timestamp_ticks=captured_frame.camera_timestamp_ticks,
-            camera_timestamp_frequency_hz=captured_frame.camera_timestamp_frequency_hz,
+            timestamp=captured_frame.timing.trigger_issued_at.isoformat(),
+            camera_timestamp_ticks=captured_frame.timing.exposure_started_ticks,
+            camera_timestamp_frequency_hz=(
+                captured_frame.timing.exposure_timestamp_frequency_hz
+            ),
+            camera_timestamp_source=captured_frame.timing.exposure_timestamp_source,
         )
         return self.save_raw_frame(
             captured_frame.image,

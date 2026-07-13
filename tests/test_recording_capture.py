@@ -107,8 +107,9 @@ class _FakeSoftwareTriggerSession:
             raise result
         return CameraFrame(
             image=result,
-            camera_timestamp_ticks=self.trigger_count,
-            camera_timestamp_frequency_hz=125_000_000,
+            exposure_started_ticks=self.trigger_count,
+            exposure_timestamp_frequency_hz=125_000_000,
+            exposure_timestamp_source="camera",
         )
 
     def close(self) -> None:
@@ -214,6 +215,7 @@ def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
     assert [row.target_elapsed_ms for row, _ in session.rows] == [0.0, 1.0]
     assert [row.camera_timestamp_ticks for row, _ in session.rows] == [1, 2]
     assert worker.requests[0].metadata["camera_timestamp_frequency_hz"] == 125_000_000
+    assert worker.requests[0].metadata["camera_timestamp_source"] == "camera"
     assert saved_counts == [1, 2]
 
 
