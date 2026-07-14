@@ -1,11 +1,14 @@
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import tifffile
 
+from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
+from rheed_capture.application.ports.camera import FrameReadback
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
@@ -15,6 +18,7 @@ from rheed_capture.data_formats.storage_naming import (
     ANGLE_DIR_PATTERN,
     ANGLE_SCAN_TIFF_FILENAME_PATTERN,
 )
+from rheed_capture.domain.capture_condition import CaptureCondition as DomainCaptureCondition
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
 
@@ -84,6 +88,44 @@ def test_experiment_storage_save_sequence() -> None:
         expected_filename2 = f"{storage.date_str}-2_expo2000_gain1.5.tiff"
         assert saved_path2.name == expected_filename2
         assert saved_path2.exists()
+
+
+def test_sequence_tiff_round_trips_requested_condition_and_camera_readback() -> None:
+    """Sequence TIFFで要求条件とcamera読戻し値を区別して保存する。"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(root_dir=temp_dir)
+        session = storage.start_sequence_session()
+        captured_frame = CapturedFrame(
+            image=np.zeros((2, 2), dtype=np.uint16),
+            condition=DomainCaptureCondition(exposure_ms=50.0, gain=1),
+            readback=FrameReadback(
+                exposure_ms=49.5,
+                gain=2,
+                camera_timestamp_ticks=987654,
+                camera_timestamp_frequency_hz=125_000_000,
+                source="camera",
+            ),
+            timing=CaptureTiming(
+                trigger_issued_at=datetime.fromisoformat("2026-07-11T12:00:00+09:00"),
+                trigger_issued_monotonic_sec=1.0,
+            ),
+        )
+
+        saved_path = session.save_frame(captured_frame)
+
+        with tifffile.TiffFile(saved_path) as tif:
+            page = tif.pages[0]
+            assert isinstance(page, tifffile.TiffPage)
+            metadata = json.loads(page.tags["ImageDescription"].value)
+
+        assert metadata["timestamp"] == "2026-07-11T12:00:00+09:00"
+        assert metadata["exposure_ms"] == 50.0
+        assert metadata["gain"] == 1
+        assert metadata["camera_exposure_ms"] == 49.5
+        assert metadata["camera_gain"] == 2
+        assert metadata["camera_timestamp_ticks"] == 987654
+        assert metadata["camera_timestamp_frequency_hz"] == 125_000_000
+        assert metadata["camera_timestamp_source"] == "camera"
 
 
 def test_root_change_and_branch_detection() -> None:

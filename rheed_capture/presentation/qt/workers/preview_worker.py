@@ -1,3 +1,4 @@
+import threading
 import time
 
 import numpy as np
@@ -34,10 +35,25 @@ class PreviewWorker(QThread):
 
         self._pause_requested = False
         self._is_paused = False
+        self._settings_lock = threading.Lock()
+        self._pending_exposure_ms: float | None = None
+        self._pending_gain: int | None = None
 
     def run(self) -> None:
+        """所有スレッド内でプレビューloopを実行し、終了時に取得を停止する。"""
         self._is_running = True
 
+        try:
+            self._run_preview_loop()
+        finally:
+            try:
+                self.camera_device.stop_grabbing()
+            except CameraError as e:
+                # 終了処理の失敗は握りつぶさず、UIへ診断情報を通知する。
+                self.error_occurred.emit(str(e))
+
+    def _run_preview_loop(self) -> None:
+        """pauseと設定変更を処理しながらプレビューフレームを取得する。"""
         while self._is_running:
             if self._pause_requested:
                 self.camera_device.stop_grabbing()
@@ -50,6 +66,7 @@ class PreviewWorker(QThread):
                 continue
 
             try:
+                self._apply_pending_camera_settings()
                 self.camera_device.start_preview_grab()
                 exposure_ms = self.camera_device.get_exposure()
                 timeout_ms = min(
@@ -67,14 +84,44 @@ class PreviewWorker(QThread):
             else:
                 time.sleep(PREVIEW_IDLE_SLEEP_SEC)
 
+    def _apply_pending_camera_settings(self) -> None:
+        """取得を止めてからUIスレッドで予約された露光時間とGainを適用する。"""
+        with self._settings_lock:
+            exposure_ms = self._pending_exposure_ms
+            gain = self._pending_gain
+            self._pending_exposure_ms = None
+            self._pending_gain = None
+
+        if exposure_ms is None and gain is None:
+            return
+
+        # Basler nodeを取得中に変更しないよう、所有スレッドで明示的にIDLEへ戻す。
+        self.camera_device.stop_grabbing()
+        if exposure_ms is not None:
+            self.camera_device.set_exposure(exposure_ms)
+        if gain is not None:
+            self.camera_device.set_gain(gain)
+
     def stop(self) -> None:
         self._is_running = False
 
     def request_pause(self) -> None:
+        """次のloopでプレビューを停止するよう要求する。"""
         self._pause_requested = True
 
     def resume(self) -> None:
+        """pause状態を解除して次のloopでプレビューを再開する。"""
         self._is_paused = False
+
+    def request_exposure(self, exposure_ms: float) -> None:
+        """所有スレッドで適用する露光時間を予約する。"""
+        with self._settings_lock:
+            self._pending_exposure_ms = exposure_ms
+
+    def request_gain(self, gain: int) -> None:
+        """所有スレッドで適用するGainを予約する。"""
+        with self._settings_lock:
+            self._pending_gain = gain
 
     def set_processing_enabled(self, enabled: bool) -> None:
         self.enable_processing = enabled

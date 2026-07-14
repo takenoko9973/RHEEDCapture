@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from rheed_capture.infrastructure.camera.basler_camera import BaslerCamera
 from rheed_capture.infrastructure.camera.basler_configurators import (
-    CAMERA_EMULATION_ENV_VAR,
     BaslerCameraConfigurator,
-    BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
 )
 from rheed_capture.infrastructure.motor.azd_cd.motor import (
@@ -25,11 +22,8 @@ if TYPE_CHECKING:
 
 
 def create_camera() -> BaslerCamera:
-    """実行環境に応じたBaslerカメラ実装を生成して接続する。"""
+    """Baslerカメラを生成し、列挙された先頭デバイスへ接続する。"""
     configurators: list[BaslerCameraConfigurator] = [BaslerMandatorySettings()]
-    if os.environ.get(CAMERA_EMULATION_ENV_VAR):
-        configurators.append(BaslerCameraEmulationSettings())
-
     camera = BaslerCamera(configurators=configurators)
     camera.connect()
     return camera
