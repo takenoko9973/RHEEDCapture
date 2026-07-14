@@ -155,6 +155,34 @@ def test_frame_capturer_retries_with_successful_attempt_timing(monkeypatch) -> N
     assert all(session.closed for session in camera.sessions)
 
 
+def test_frame_capturer_retries_when_session_start_fails(monkeypatch) -> None:  # noqa: ANN001
+    """初回のCamera Session開始失敗後に新しいSessionで再試行する。"""
+    image = np.ones((2, 2), dtype=np.uint16)
+    camera = _FakeCamera([_camera_frame(image)])
+    original_start = camera.start_software_trigger_session
+    start_attempts = 0
+
+    def start_session(*, expected_frames: int | None) -> _FakeSoftwareTriggerSession:
+        """初回だけ開始エラーを発生させ、以後は通常Sessionを返す。"""
+        nonlocal start_attempts
+        start_attempts += 1
+        if start_attempts == 1:
+            msg = "temporary start failure"
+            raise CameraError(msg)
+
+        return original_start(expected_frames=expected_frames)
+
+    monkeypatch.setattr(camera, "start_software_trigger_session", start_session)
+    capturer = FrameCapturer(camera, retry_interval_sec=0)
+
+    captured = capturer.capture(CaptureCondition(exposure_ms=20.0, gain=1))
+
+    assert np.array_equal(captured.image, image)
+    assert start_attempts == 2
+    assert camera.expected_frames == [1]
+    assert camera.sessions[0].closed
+
+
 def test_frame_capturer_passes_remaining_shared_deadline(monkeypatch) -> None:  # noqa: ANN001
     """ready待機とretrieveへ別枠でなく共通deadlineの残時間を渡す。"""
     image = np.ones((2, 2), dtype=np.uint16)

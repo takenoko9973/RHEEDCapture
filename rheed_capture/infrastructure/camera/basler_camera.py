@@ -150,8 +150,22 @@ class BaslerCamera:
                 )
 
             except GenericException as e:
+                self._cleanup_failed_connection()
                 msg = f"カメラへの接続に失敗しました: {e}"
                 raise CameraError(msg) from e
+
+    def _cleanup_failed_connection(self) -> None:
+        """接続初期化に失敗したカメラを閉じて未接続状態へ戻す。"""
+        camera = self._camera
+        try:
+            if camera is not None and camera.IsOpen():
+                camera.Close()
+        except GenericException:
+            # 初期化失敗の原因を置き換えず、Close失敗はログへ残す。
+            logger.exception("接続初期化失敗後のカメラ切断にも失敗しました")
+        finally:
+            self._camera = None
+            self._state = CameraState.DISCONNECTED
 
     def disconnect(self) -> None:
         """IDLE状態のカメラを切断する。"""

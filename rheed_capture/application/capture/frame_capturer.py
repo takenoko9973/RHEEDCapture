@@ -157,8 +157,7 @@ class FrameGrabberSession:
         self._camera_session: SoftwareTriggerSession | None = None
 
     def __enter__(self) -> Self:
-        """最初のカメラセッションを開始する。"""
-        self._open_camera_session()
+        """取得時にカメラSessionを開始するApplication Sessionを返す。"""
         return self
 
     def __exit__(

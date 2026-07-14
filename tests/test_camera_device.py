@@ -55,6 +55,33 @@ def test_camera_emulation_roi(camera_device: CameraDevice) -> None:
     assert camera_device.camera.Height.GetValue() == expected_height
 
 
+def test_camera_connection_failure_closes_open_camera(monkeypatch) -> None:  # noqa: ANN001
+    """Open後の初期化失敗時はカメラを閉じて未接続状態へ戻す。"""
+    factory = MagicMock()
+    factory.EnumerateDevices.return_value = [object()]
+    factory.CreateFirstDevice.return_value = object()
+    factory_type = MagicMock()
+    factory_type.GetInstance.return_value = factory
+
+    instant_camera = MagicMock()
+    instant_camera.IsOpen.return_value = True
+    device_info = instant_camera.GetDeviceInfo.return_value
+    device_info.GetDeviceClass.return_value = "BaslerGigE"
+
+    configurator = MagicMock()
+    configurator.apply.side_effect = basler_module.GenericException("initialization failed")
+    monkeypatch.setattr(basler_module, "TlFactory", factory_type)
+    monkeypatch.setattr(basler_module, "InstantCamera", MagicMock(return_value=instant_camera))
+    camera_device = CameraDevice(configurators=[configurator])
+
+    with pytest.raises(CameraError, match="接続に失敗"):
+        camera_device.connect()
+
+    instant_camera.Close.assert_called_once_with()
+    assert not camera_device.is_connected()
+    assert camera_device.state is CameraState.DISCONNECTED
+
+
 def test_camera_bounds(camera_device: CameraDevice) -> None:
     """カメラから設定可能な最小・最大値が取得できるかのテスト"""
     expo_min, expo_max = camera_device.get_exposure_bounds()
