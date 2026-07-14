@@ -43,6 +43,14 @@ The following commands are safe to run without additional confirmation:
 * `uv run ruff check .`
 * `uv run ty check`
 
+## Git and Commits
+
+* Before committing, inspect roughly the latest 10 commit subjects and follow the
+  established format.
+* Use an English Conventional Commit type and scope with a Japanese description.
+* Stage only files related to the requested change and verify the staged diff before
+  committing.
+
 ## Coding Guidelines
 
 * Follow the existing architecture before adding a new abstraction.
