@@ -79,9 +79,9 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 
 ### 5.3 Recording機能
 
-* 露光時間とゲインを設定後、`expected_frames=None` のソフトトリガーSessionをRecording全体で再利用する。
+* 露光時間とゲインを設定後、`expected_frames=None` の取得Sessionを用意する。カメラ側のソフトトリガーSessionは最初のフレーム撮影時に開始し、正常な間はRecording全体で再利用する。
 * 各フレームはPCの元の予定時刻まで待機し、`TriggerReady` 待機後に1回triggerを発行する。遅延時もframe indexを飛ばさない。
-* 1フレーム取得が失敗した場合は異常Sessionを閉じ、新しいSessionで同じframe indexを最大3回まで再試行する。
+* Session開始または1フレーム取得が失敗した場合は異常Sessionを閉じ、新しいSessionで同じframe indexを最大3回まで再試行する。
 * `actual_elapsed_ms` はソフトトリガー命令を発行する直前のmonotonic時刻を基準にする。
 
 ### 5.4 データ・ディレクトリ管理機能
@@ -161,6 +161,8 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 ## 7. エラー・例外処理
 
 * **リトライ制御 (CaptureService)**:
-`TriggerReady` 待機、trigger発行、`RetrieveResult`、Grab成否、必須Chunk読戻し、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
+ソフトトリガーSession開始（必須node設定、Chunk準備、`StartGrabbing`）、`TriggerReady` 待機、trigger発行、`RetrieveResult`、Grab成否、必須Chunk読戻し、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
+* **接続初期化失敗時の保護**:
+カメラをOpenした後のデバイス情報取得または初期設定で失敗した場合は、カメラをCloseして未接続状態へ戻し、起動エラーとして通知する。
 * **致命的エラー時の保護**:
 リトライ上限に達した場合は、シーケンス全体を中断し、ユーザーにダイアログで通知する。中断が発生した場合でも、`finally` ブロックにより必ずプレビュー機能を復帰させる（ハードウェアリソースをロックしたままにしない）。

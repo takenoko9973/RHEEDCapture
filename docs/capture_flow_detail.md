@@ -47,12 +47,12 @@
    - 1試行の共通deadlineは `露光時間 + 500ms` とし、ready待機と取得には残り時間だけを渡す。
 8. Sessionを閉じ、`TriggerMode = Off` へ戻す。
 9. 要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
-8. 現在の `image_nnn` フォルダへTIFF保存する。
+10. 現在の `image_nnn` フォルダへTIFF保存する。
    - 現在の実装上のファイル名は `{実験フォルダ名}-{シーケンス番号}_expo{露光時間:g}_gain{ゲイン:g}.tiff`。
 
 ### 1.5 リトライと中断
 
-1. ready待機、trigger発行、フレーム取得、Timestamp Chunk、画像変換、カメラ通信の失敗は撮影エラーとして扱う。
+1. Session開始（必須node設定、Chunk準備、`StartGrabbing`）、ready待機、trigger発行、フレーム取得、Timestamp Chunk、画像変換、カメラ通信の失敗は撮影エラーとして扱う。
 2. 1つの条件につき最大3回まで撮影を再試行する。
 3. 異常Sessionを停止・解除し、0.5秒待機後に新しいSessionで再triggerする。
 4. 3回とも失敗した場合は通常シーケンス全体を中断する。
@@ -167,7 +167,7 @@
 
 ### 2.7 リトライと中断
 
-1. ソフトトリガーSession内のready待機、trigger発行、取得、必須Chunk読戻し、画像変換、カメラ通信の失敗を撮影エラーとして扱う。
+1. ソフトトリガーSession開始、ready待機、trigger発行、取得、必須Chunk読戻し、画像変換、カメラ通信の失敗を撮影エラーとして扱う。
 2. 1つの角度・露光時間・ゲイン条件につき最大3回まで撮影を再試行する。
 3. 再試行前には0.5秒待機する。
 4. 3回とも失敗した場合は回転撮影全体を中断する。
@@ -185,12 +185,12 @@
 ## 3. Recording
 
 1. プレビュー停止完了後、固定した露光時間とゲインを設定する。
-2. `expected_frames=None` のソフトトリガーSessionを開始し、正常な間はRecording全体で再利用する。
+2. `expected_frames=None` の取得Sessionを用意し、カメラ側のソフトトリガーSessionは最初の撮影時に開始して正常な間はRecording全体で再利用する。
 3. `frame_index` から求めた元の予定時刻まで、キャンセルを監視しながら待つ。
 4. 予定時刻を過ぎていてもindexを飛ばさず、`TriggerReady` 待機後にtriggerを1回発行する。
 5. trigger直前のmonotonic時刻から `actual_elapsed_ms` を計算する。
 6. TIFF保存キューへ画像とメタデータを投入し、保存完了時に `frames.csv` へ追記する。
-7. 取得失敗時は異常Sessionを閉じ、新しいSessionで同じ `frame_index` を再試行する。
+7. Session開始または取得失敗時は異常Sessionを閉じ、新しいSessionで同じ `frame_index` を再試行する。
 8. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、`TriggerMode = Off` へ戻す。
 
 TIFFと `frames.csv` には、要求条件の `exposure_ms`・`gain` と、フレーム単位の読戻し値 `camera_exposure_ms`・`camera_gain` を区別して保存する。さらにtrigger直前のPC時刻を表す `timestamp`、画像取得開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
