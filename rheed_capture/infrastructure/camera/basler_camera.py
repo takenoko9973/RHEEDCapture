@@ -17,6 +17,7 @@ from rheed_capture.application.ports.camera import (
     CameraFrame,
 )
 from rheed_capture.infrastructure.camera.basler_configurators import (
+    CAMERA_EMULATION_DEVICE_CLASS,
     BaslerCameraConfigurator,
     BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
-_CAMERA_EMULATION_DEVICE_CLASS = "BaslerCamEmu"
 
 
 class _GenicamNode(Protocol):
@@ -127,7 +127,7 @@ class BaslerCamera:
 
                 # PYLON_CAMEMUは列挙台数であり、実際の接続先はDeviceClassで判定する。
                 is_emulation = (
-                    device_info.GetDeviceClass() == _CAMERA_EMULATION_DEVICE_CLASS
+                    device_info.GetDeviceClass() == CAMERA_EMULATION_DEVICE_CLASS
                 )
                 self._frame_readback_provider_factory = (
                     SimulationFrameReadbackProvider
@@ -135,8 +135,12 @@ class BaslerCamera:
                     else ChunkFrameReadbackProvider
                 )
 
-                for configurator in self._configurators:
-                    configurator.apply(self.camera)
+                try:
+                    for configurator in self._configurators:
+                        configurator.apply(self.camera)
+                except CameraError:
+                    self._cleanup_failed_connection()
+                    raise
                 if is_emulation:
                     BaslerCameraEmulationSettings().apply(self.camera)
 
