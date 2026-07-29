@@ -139,6 +139,8 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 * 表示はMainWindowのstatus bar右側に置き、500ms間隔で更新する。Preview停止中とRecording終了後は表示を消去する。
 * 通常のSequence撮影とAngle Scanでは取得統計を表示しない。
 
+実機依存項目の確認状況と記録欄は、[Mono12Packed実機確認チェックリスト](mono12packed_hardware_validation.md)にまとめる。
+
 ## 6. データ保存仕様
 
 ### 6.1 記録形式
