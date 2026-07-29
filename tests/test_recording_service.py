@@ -134,7 +134,7 @@ def test_recording_service_measures_captured_frames_not_saved_counts(
     assert statistics.current_fps == pytest.approx(2.0)
     assert statistics.average_fps == pytest.approx(2 / 0.6)
     assert statistics.frame_count == 2
-    assert statistics.payload_bytes_per_second == pytest.approx(2000.0)
+    assert statistics.payload_bytes_per_second == pytest.approx(4000.0)
     assert service.statistics_snapshot() is None
 
 

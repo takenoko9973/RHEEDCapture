@@ -108,7 +108,7 @@ class AcquisitionStatisticsMeter:
             sample for sample in self._samples if sample[0] >= window_start
         ]
         current_fps = _calculate_current_fps(window_samples)
-        payload_rate = _calculate_payload_rate(window_samples, current_fps)
+        payload_rate = _calculate_payload_rate(window_samples)
 
         average_fps: float | None = None
         if include_average and self._started_at is not None:
@@ -162,14 +162,17 @@ def _calculate_current_fps(
 
 
 def _calculate_payload_rate(
-    samples: Iterable[tuple[float, int | None]], current_fps: float | None
+    samples: Iterable[tuple[float, int | None]],
 ) -> float | None:
-    """既知payloadの窓内平均に現在FPSを掛けて転送量を算出する。"""
-    if current_fps is None:
-        return None
+    """窓内payloadの合計を先頭から末尾までの時間で割る。"""
     sample_list = list(samples)
+    if len(sample_list) < MIN_SAMPLES_FOR_RATE:
+        return None
     payloads = [payload for _, payload in sample_list]
-    if not payloads or any(payload is None for payload in payloads):
+    if any(payload is None for payload in payloads):
+        return None
+    elapsed = sample_list[-1][0] - sample_list[0][0]
+    if elapsed <= 0:
         return None
     known_payloads = [payload for payload in payloads if payload is not None]
-    return (sum(known_payloads) / len(known_payloads)) * current_fps
+    return sum(known_payloads) / elapsed

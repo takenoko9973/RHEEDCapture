@@ -45,7 +45,7 @@ def test_evenly_spaced_frames_calculate_current_and_payload_rates() -> None:
     statistics = meter.snapshot(0.75, include_average=False)
 
     assert statistics.current_fps == pytest.approx(4.0)
-    assert statistics.payload_bytes_per_second == pytest.approx(4000.0)
+    assert statistics.payload_bytes_per_second == pytest.approx(4000 / 0.75)
 
 
 def test_uneven_samples_use_first_and_last_timestamps() -> None:
@@ -67,7 +67,7 @@ def test_old_samples_are_excluded_from_current_window() -> None:
     statistics = meter.snapshot(1.2, include_average=False)
 
     assert statistics.current_fps == pytest.approx(1 / 0.7)
-    assert statistics.payload_bytes_per_second == pytest.approx(250 / 0.7)
+    assert statistics.payload_bytes_per_second == pytest.approx(500 / 0.7)
     assert statistics.frame_count == 3
 
 

@@ -134,7 +134,7 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 * Recording中はCurrent FPSに加え、Recording開始からの正常取得フレーム数と経過時間によるAverage FPSを表示する。
 * Current FPSは単調増加時計を使用し、直近1秒のフレーム時刻について、フレーム間隔数を先頭から末尾までの経過時間で割って求める。
 * FPSはUI描画回数やTIFF保存完了数ではなく、`GrabSucceeded()` が成功したフレームだけを計上する。
-* 取得可能な場合は、GrabResultのPayload byte数をCurrent FPSと組み合わせ、10進単位のMB/sで表示する。変換後の `uint16` 配列の `nbytes` は使用しない。
+* 取得可能な場合は、直近1秒のGrabResultのPayload byte数合計を対象時間で割り、10進単位のMB/sで表示する。変換後の `uint16` 配列の `nbytes` は使用しない。
 * Payloadは画像取得に伴うデータ量であり、NIC全体の通信量ではない。Ethernet、IP、UDP、GigE Visionのヘッダと再送分を含まない。
 * 表示はMainWindowのstatus bar右側に置き、500ms間隔で更新する。Preview停止中とRecording終了後は表示を消去する。
 * 通常のSequence撮影とAngle Scanでは取得統計を表示しない。

@@ -278,6 +278,7 @@ def test_emulator_captures_with_simulation_readback(
         frame = session.retrieve_frame(1000)
 
     assert frame.image.shape == (540, 720)
+    assert frame.image.dtype == np.uint16
     assert frame.readback.exposure_ms == 10.5
     assert frame.readback.gain == 240
     assert frame.readback.camera_timestamp_ticks > 0
