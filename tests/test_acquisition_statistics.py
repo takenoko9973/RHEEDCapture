@@ -180,14 +180,14 @@ def test_timestamp_order_and_start_boundary_are_rejected() -> None:
         meter.snapshot(1.9, include_average=True)
 
 
-def test_timestamp_order_is_shared_by_record_and_snapshot() -> None:
-    """recordとsnapshotをまたぐ時刻逆行を拒否する。"""
+def test_delayed_frame_can_be_recorded_after_newer_snapshot() -> None:
+    """取得済みフレームの記録がsnapshotより遅れても受け入れる。"""
     meter = AcquisitionStatisticsMeter()
     meter.record_frame(1.0, 100)
     meter.snapshot(2.0, include_average=False)
 
-    with pytest.raises(ValueError, match="timestamp"):
-        meter.record_frame(1.5, 100)
+    meter.record_frame(1.5, 100)
+
     with pytest.raises(ValueError, match="non-decreasing"):
         meter.snapshot(1.5, include_average=False)
 

@@ -331,6 +331,10 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
         assert isinstance(img_data, np.ndarray)
         assert img_data.dtype == np.uint16
         assert img_data.shape == (540, 720)
+        sample = camera_device.take_acquisition_sample()
+        assert sample is not None
+        assert sample.payload_bytes is not None
+        assert sample.payload_bytes > 0
 
     camera_device.stop_grabbing()
 
@@ -408,8 +412,9 @@ class _FakeNodeMap:
 class _FakeGrabResult:
     """必須の撮影値Chunkを持つ成功GrabResult。"""
 
-    def __init__(self, timestamp_ticks: int) -> None:
-        """返却するcamera timestampを保持する。"""
+    def __init__(self, timestamp_ticks: int, payload_bytes: int = 123) -> None:
+        """返却するcamera timestampとpayload byte数を保持する。"""
+        self.payload_bytes = payload_bytes
         self.chunk_nodemap = _FakeNodeMap(
             {
                 "ChunkExposureTime": _FakeNode(12_500.0),
@@ -437,6 +442,10 @@ class _FakeGrabResult:
         """撮影値を保持するChunkData node mapを返す。"""
         return self.chunk_nodemap
 
+    def GetPayloadSize(self) -> int:  # noqa: N802
+        """変換前GrabResultのpayload byte数を返す。"""
+        return self.payload_bytes
+
 
 class _FakeInstantCamera:
     """Basler software trigger lifecycleを観測するInstantCamera test double。"""
@@ -462,6 +471,7 @@ class _FakeInstantCamera:
                     self.original_chunk_enabled.copy(),
                 ),
                 "GevTimestampTickFrequency": _FakeNode(125_000_000),
+                "PayloadSize": _FakeNode(456),
             }
         )
         self.start_args: tuple[object, ...] | None = None
@@ -566,6 +576,11 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
         assert frame.readback.camera_timestamp_ticks == 987654
         assert frame.readback.camera_timestamp_frequency_hz == 125_000_000
         assert frame.readback.source == "camera"
+        acquisition_sample = camera_device.take_acquisition_sample()
+        assert acquisition_sample is not None
+        assert acquisition_sample.payload_bytes == 123
+        assert acquisition_sample.payload_bytes != frame.image.nbytes
+        assert camera_device.take_acquisition_sample() is None
 
     assert instant_camera.stop_count == 1
     assert instant_camera.nodemap.nodes["TriggerMode"].value == "Off"
@@ -575,3 +590,35 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
     assert isinstance(chunk_enable, _FakeChunkEnableNode)
     assert chunk_enable.values == instant_camera.original_chunk_enabled
     assert camera_device.state is CameraState.IDLE
+
+
+def test_payload_size_falls_back_to_readable_camera_node(monkeypatch) -> None:  # noqa: ANN001
+    """GrabResult値がない場合はcameraのPayloadSize nodeを使用する。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    camera = _FakeInstantCamera()
+
+    payload_bytes = basler_module._read_payload_bytes(  # noqa: SLF001
+        cast("pylon.InstantCamera", camera),
+        object(),
+    )
+
+    assert payload_bytes == 456
+
+
+def test_missing_payload_size_does_not_fail_acquisition_statistics(monkeypatch) -> None:  # noqa: ANN001
+    """両方のPayloadSizeを読めない場合は値だけを未定義にする。"""
+    monkeypatch.setattr(basler_module.genicam, "IsAvailable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda _: False)
+    camera = _FakeInstantCamera()
+
+    payload_bytes = basler_module._read_payload_bytes(  # noqa: SLF001
+        cast("pylon.InstantCamera", camera),
+        object(),
+    )
+
+    assert payload_bytes is None

@@ -3,6 +3,9 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import PreviewSettings
+from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
+    format_preview_statistics,
+)
 from rheed_capture.presentation.qt.workers.preview_worker import PreviewWorker
 
 
@@ -61,6 +64,13 @@ class PreviewViewModel(QObject):
         if not self._worker.wait(2000):
             self._worker.terminate()
             self._worker.wait(1000)
+
+    def get_acquisition_statistics_text(self) -> str:
+        """現在のPreview取得統計をstatus bar表示用に返す。"""
+        statistics = self._worker.statistics_snapshot()
+        if statistics is None:
+            return ""
+        return format_preview_statistics(statistics)
 
     def pause_preview(self) -> None:
         """シーケンス撮影開始などのため、プレビューを一時停止する"""

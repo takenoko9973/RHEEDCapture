@@ -30,6 +30,14 @@ class AcquisitionStatistics:
     payload_bytes_per_second: float | None
 
 
+@dataclass(frozen=True)
+class AcquisitionSample:
+    """正常取得フレームの到着時刻と転送payloadを保持する。"""
+
+    timestamp: float
+    payload_bytes: int | None
+
+
 class AcquisitionStatisticsMeter:
     """フレーム時刻のスライディング窓から取得統計を計算する。"""
 
@@ -43,7 +51,8 @@ class AcquisitionStatisticsMeter:
         self._window_seconds = window_seconds
         self._started_at: float | None = None
         self._samples: deque[tuple[float, int | None]] = deque()
-        self._last_timestamp: float | None = None
+        self._last_frame_timestamp: float | None = None
+        self._last_snapshot_timestamp: float | None = None
         self._frame_count = 0
 
     def reset(self, started_at: float | None = None) -> None:
@@ -52,7 +61,8 @@ class AcquisitionStatisticsMeter:
             _validate_finite(started_at, "started_at")
         self._started_at = started_at
         self._samples.clear()
-        self._last_timestamp = started_at
+        self._last_frame_timestamp = started_at
+        self._last_snapshot_timestamp = started_at
         self._frame_count = 0
 
     def record_frame(self, timestamp: float, payload_bytes: int | None) -> None:
@@ -60,12 +70,15 @@ class AcquisitionStatisticsMeter:
         _validate_finite(timestamp, "timestamp")
         if self._started_at is not None and timestamp < self._started_at:
             raise ValueError(_ERR_STARTED_AT)
-        if self._last_timestamp is not None and timestamp < self._last_timestamp:
+        if (
+            self._last_frame_timestamp is not None
+            and timestamp < self._last_frame_timestamp
+        ):
             raise ValueError(_ERR_TIMESTAMP_ORDER)
 
         normalized_payload = _validate_payload(payload_bytes)
         self._samples.append((timestamp, normalized_payload))
-        self._last_timestamp = timestamp
+        self._last_frame_timestamp = timestamp
         window_start = timestamp - self._window_seconds
         # 最新フレームより前の窓に戻ることはないため、保持量を窓長に制限する。
         while self._samples and self._samples[0][0] < window_start:
@@ -79,7 +92,15 @@ class AcquisitionStatisticsMeter:
         _validate_finite(timestamp, "timestamp")
         if self._started_at is not None and timestamp < self._started_at:
             raise ValueError(_ERR_STARTED_AT)
-        if self._last_timestamp is not None and timestamp < self._last_timestamp:
+        if (
+            self._last_frame_timestamp is not None
+            and timestamp < self._last_frame_timestamp
+        ):
+            raise ValueError(_ERR_TIMESTAMP_ORDER)
+        if (
+            self._last_snapshot_timestamp is not None
+            and timestamp < self._last_snapshot_timestamp
+        ):
             raise ValueError(_ERR_TIMESTAMP_ORDER)
 
         window_start = timestamp - self._window_seconds
@@ -101,7 +122,7 @@ class AcquisitionStatisticsMeter:
             frame_count=self._frame_count,
             payload_bytes_per_second=payload_rate,
         )
-        self._last_timestamp = timestamp
+        self._last_snapshot_timestamp = timestamp
         return statistics
 
 
