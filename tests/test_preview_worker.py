@@ -1,6 +1,9 @@
+import time
+
 import numpy as np
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.domain.acquisition_statistics import AcquisitionSample
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.presentation.qt.workers.preview_worker import PreviewWorker
 
@@ -13,8 +16,11 @@ class MockCamera(CameraDevice):
         self.is_grabbing = True
         self.exposure_ms = 100.0
         self.gain = 120
+        self.return_frames = True
+        self._acquisition_sample: AcquisitionSample | None = None
 
     def is_connected(self) -> bool:
+        """接続済みとして扱う。"""
         return True
 
     def get_exposure(self) -> float:
@@ -36,18 +42,31 @@ class MockCamera(CameraDevice):
         self.gain = gain
 
     def start_preview_grab(self) -> None:
+        """プレビュー取得中の状態へ切り替える。"""
         self.is_grabbing = True
 
     def stop_grabbing(self) -> None:
+        """プレビュー停止中の状態へ切り替える。"""
         self.is_grabbing = False
 
     def retrieve_preview_frame(self, timeout_ms: int = 1000) -> np.ndarray | None:  # noqa: ARG002
-        if not self.is_grabbing:
+        """成功時だけ取得sampleと16bit画像を返す。"""
+        if not self.is_grabbing or not self.return_frames:
             return None
 
+        self._acquisition_sample = AcquisitionSample(
+            timestamp=time.perf_counter(),
+            payload_bytes=1000,
+        )
         # 12bitのダミーRaw画像を返す
         rng = np.random.default_rng(1234)
         return rng.integers(0, 4096, (512, 512), dtype=np.uint16)
+
+    def take_acquisition_sample(self) -> AcquisitionSample | None:
+        """直前の成功フレームに対応するsampleを1回だけ返す。"""
+        sample = self._acquisition_sample
+        self._acquisition_sample = None
+        return sample
 
 
 def test_preview_worker_signals(qtbot: QtBot) -> None:
@@ -118,3 +137,40 @@ def test_preview_worker_applies_settings_only_after_stopping(qtbot: QtBot) -> No
     worker.wait(1000)
 
     assert not mock_camera.is_grabbing
+
+
+def test_preview_statistics_count_successful_frames_and_reset_on_pause(
+    qtbot: QtBot,
+) -> None:
+    """成功フレームだけを計上し、pauseとresumeで統計を初期化する。"""
+    mock_camera = MockCamera()
+    worker = PreviewWorker(camera_device=mock_camera)
+    worker.start()
+
+    def has_multiple_frames() -> bool:
+        """複数フレームが取得されるまで待機する。"""
+        statistics = worker.statistics_snapshot()
+        return statistics is not None and statistics.frame_count >= 2
+
+    qtbot.waitUntil(has_multiple_frames, timeout=2000)
+
+    statistics = worker.statistics_snapshot()
+    assert statistics is not None
+    assert statistics.current_fps is not None
+    assert statistics.average_fps is None
+
+    with qtbot.waitSignal(worker.preview_paused, timeout=2000):
+        worker.request_pause()
+    assert worker.statistics_snapshot() is None
+
+    # 失敗結果だけの再開では、以前の成功フレームを持ち越さない。
+    mock_camera.return_frames = False
+    worker.resume()
+    resumed_statistics = worker.statistics_snapshot()
+    assert resumed_statistics is not None
+    assert resumed_statistics.frame_count == 0
+    assert resumed_statistics.current_fps is None
+
+    worker.stop()
+    worker.wait(1000)
+    assert worker.statistics_snapshot() is None

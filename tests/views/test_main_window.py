@@ -17,7 +17,11 @@ from rheed_capture.infrastructure.config.schema import (
     SequenceCaptureSettings,
 )
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
-from rheed_capture.presentation.qt.main_window import MainWindow
+from rheed_capture.presentation.qt.main_window import (
+    ACQUISITION_STATISTICS_TOOLTIP,
+    ACQUISITION_STATISTICS_UI_INTERVAL_MS,
+    MainWindow,
+)
 
 
 @pytest.fixture
@@ -193,3 +197,53 @@ def test_settings_save_on_close(
     assert "position_units_per_deg" not in saved_dict["angle_scan"]
     assert "seq_expo_list" not in saved_dict
     assert "angle_scan_expo_list" not in saved_dict
+
+
+def test_acquisition_statistics_status_uses_only_preview_and_recording(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """共通status labelを500 ms更新し、有限撮影では空表示にする。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+
+    assert (
+        window._acquisition_statistics_timer.interval()  # noqa: SLF001
+        == ACQUISITION_STATISTICS_UI_INTERVAL_MS
+    )
+    assert window.acquisition_statistics_label.toolTip() == ACQUISITION_STATISTICS_TOOLTIP
+    assert not window.acquisition_statistics_label.font().bold()
+    assert window.acquisition_statistics_label.styleSheet() == ""
+
+    with patch.object(
+        window.preview_vm,
+        "get_acquisition_statistics_text",
+        return_value="Preview 10.0 fps",
+    ):
+        window.capture_coordinator.active_mode = None
+        window._update_acquisition_statistics_display()  # noqa: SLF001
+    assert window.acquisition_statistics_label.text() == "Preview 10.0 fps"
+
+    window.capture_coordinator.active_mode = "sequence"
+    window._update_acquisition_statistics_display()  # noqa: SLF001
+    assert window.acquisition_statistics_label.text() == ""
+
+    window.capture_coordinator.active_mode = "angle_scan"
+    window._update_acquisition_statistics_display()  # noqa: SLF001
+    assert window.acquisition_statistics_label.text() == ""
+
+    with patch.object(
+        window.recording_vm,
+        "get_acquisition_statistics_text",
+        return_value="Recording 9.0 fps | Avg 8.0 fps",
+    ):
+        window.capture_coordinator.active_mode = "recording"
+        window._update_acquisition_statistics_display()  # noqa: SLF001
+    assert (
+        window.acquisition_statistics_label.text()
+        == "Recording 9.0 fps | Avg 8.0 fps"
+    )
+
+    window.capture_coordinator.active_mode = None
+    window.close()

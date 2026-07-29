@@ -33,10 +33,27 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 
 ### 4.1 センサおよびピクセルフォーマット
 
-* **PixelFormat**: `Mono16`
-* **センサ有効ビット深度**: 12bit
-* **ビットアライメント**: **`MsbAligned`** を適用。
-* 12bitデータ(0〜4095)を16bitコンテナの上位に詰め、0〜65520のフルスケールとして出力する。これにより、Python側での手動ビットシフト演算を排除し、安全かつ一貫したデータ正規化を実現する。
+カメラからPCへの転送形式と、pypylon変換後にアプリケーションが扱う形式を区別する。
+
+**カメラ転送形式**：
+
+* 実機Basler acA720-290gm：`PixelFormat = Mono12Packed`
+* pylon Camera Emulation：`PixelFormat = Mono12`
+
+接続先はDevice Classで判定し、`BaslerCamEmu`だけをエミュレータとして扱う。
+`PixelFormat` は撮影データの意味を決める必須設定であり、nodeの利用可否と書込可否を確認し、設定後の読戻し値が期待値と一致しない場合は接続を失敗させる。
+実機で `Mono12Packed` を設定できない場合に、`Mono12` や `Mono8` へフォールバックしない。
+
+**pypylon変換後の形式**：
+
+* `OutputPixelFormat = Mono16`
+* `OutputBitAlignment = MsbAligned`
+* NumPy dtype：`uint16`
+* センサ有効ビット深度：12bit
+
+実機とエミュレータのどちらも、pypylon公式の `ImageFormatConverter` で変換する。
+PythonやNumPyによる `Mono12Packed` の手動アンパックは行わない。
+12bitデータ（0〜4095）を16bitコンテナの上位ビットへ配置し、0〜65520のスケールとしてプレビュー処理、解析処理、保存処理へ渡す。
 
 ### 4.2 強制初期化設定 (生データ保証)
 
@@ -111,12 +128,26 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 * プレビューグリッド表示のON/OFF状態 (`show_preview_grid`)
 * プレビューグリッド分割数 (`preview_grid_rows`, `preview_grid_cols`)
 
+### 5.7 取得統計表示
+
+* Preview中は、正常な `GrabResult` の到着時刻を基準としたCurrent FPSを表示する。
+* Recording中はCurrent FPSに加え、Recording開始からの正常取得フレーム数と経過時間によるAverage FPSを表示する。
+* Current FPSは単調増加時計を使用し、直近1秒のフレーム時刻について、フレーム間隔数を先頭から末尾までの経過時間で割って求める。
+* FPSはUI描画回数やTIFF保存完了数ではなく、`GrabSucceeded()` が成功したフレームだけを計上する。
+* 取得可能な場合は、直近1秒のGrabResultのPayload byte数合計を対象時間で割り、10進単位のMB/sで表示する。変換後の `uint16` 配列の `nbytes` は使用しない。
+* Payloadは画像取得に伴うデータ量であり、NIC全体の通信量ではない。Ethernet、IP、UDP、GigE Visionのヘッダと再送分を含まない。
+* 表示はMainWindowのstatus bar右側に置き、500ms間隔で更新する。Preview停止中とRecording終了後は表示を消去する。
+* 通常のSequence撮影とAngle Scanでは取得統計を表示しない。
+
+実機依存項目の確認状況と記録欄は、[Mono12Packed実機確認チェックリスト](mono12packed_hardware_validation.md)にまとめる。
+
 ## 6. データ保存仕様
 
 ### 6.1 記録形式
 
 * **フォーマット**: 非圧縮 TIFF (`.tiff`)
 * **データ型**: `uint16` (MsbAligned処理済み)
+* **保存値スケール**: 12bitセンサ値を16bitコンテナの上位ビットへ配置した0〜65520
 * **画像加工**: 画像処理（CLAHE等）は一切適用せず、コンバータから得た配列をそのまま書き込む。
 
 ### 6.2 メタデータ仕様
@@ -141,6 +172,8 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 ```
 
 `exposure_ms` と `gain` はアプリが要求した撮影条件、`camera_exposure_ms` と `camera_gain` は取得フレームに対応するカメラ読戻し値を表す。実機ではExposure Time、Gain All、Timestamp Chunkから読戻し、pylonエミュレータでは設定nodeと仮想timestampから同じ項目を作る。`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` は画像取得開始時のカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測値ではない。Recordingではcamera読戻し項目をTIFFと `frames.csv` の両方へ保存する。
+
+取得統計は実行時の診断表示であり、`pixel_format`、`transport_format`、`fps`、`average_fps`、`payload_rate` をTIFFメタデータへ追加しない。
 
 ### 6.3 ディレクトリ構造とファイル命名規則
 

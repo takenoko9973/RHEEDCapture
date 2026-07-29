@@ -6,6 +6,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -43,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 BRANCH_STATUS_MESSAGE_MS = 5000
 CAPTURE_COMPLETE_STATUS_MESSAGE_MS = 10000
+ACQUISITION_STATISTICS_UI_INTERVAL_MS = 500
+ACQUISITION_STATISTICS_MIN_WIDTH_PX = 360
+ACQUISITION_STATISTICS_TOOLTIP = (
+    "画像ペイロードの推定または取得値です。\n"
+    "Ethernet、IP、UDP、GigE Visionのヘッダや再送分は含みません。"
+)
 
 
 class MainWindow(QMainWindow):
@@ -71,12 +78,24 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
+        self.acquisition_statistics_label = QLabel()
+        self.acquisition_statistics_label.setObjectName("acquisitionStatisticsLabel")
+        self.acquisition_statistics_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        # 桁数が変わっても主要status messageの配置が動かない幅を確保する。
+        self.acquisition_statistics_label.setMinimumWidth(
+            ACQUISITION_STATISTICS_MIN_WIDTH_PX
+        )
+        self.acquisition_statistics_label.setToolTip(ACQUISITION_STATISTICS_TOOLTIP)
+        self.status_bar.addPermanentWidget(self.acquisition_statistics_label)
 
         self._setup_ui()
         self._setup_viewmodels()
         self._setup_bindings()
         self._setup_sequence_preview_timer()
         self._setup_capture_coordinator()
+        self._setup_acquisition_statistics_timer()
         self._load_settings()
 
         self.preview_vm.start_preview()
@@ -346,6 +365,30 @@ class MainWindow(QMainWindow):
         self._sequence_preview_timer.timeout.connect(self._on_sequence_preview_timer)
         self._sequence_preview_timer.start()
 
+    def _setup_acquisition_statistics_timer(self) -> None:
+        """取得統計のstatus bar表示を500 ms間隔で更新する。"""
+        self._acquisition_statistics_timer = QTimer(self)
+        self._acquisition_statistics_timer.setInterval(
+            ACQUISITION_STATISTICS_UI_INTERVAL_MS
+        )
+        self._acquisition_statistics_timer.timeout.connect(
+            self._update_acquisition_statistics_display
+        )
+        self._acquisition_statistics_timer.start()
+
+    @Slot()
+    def _update_acquisition_statistics_display(self) -> None:
+        """現在の取得モードに対応する統計文字列だけを表示する。"""
+        active_mode = self.capture_coordinator.active_mode
+        if active_mode == "recording":
+            text = self.recording_vm.get_acquisition_statistics_text()
+        elif active_mode is None:
+            text = self.preview_vm.get_acquisition_statistics_text()
+        else:
+            # SequenceとAngle Scanでは診断表示を追加しない。
+            text = ""
+        self.acquisition_statistics_label.setText(text)
+
     def _update_storage_display(self, *, refresh_counters: bool = True) -> None:
         """Storage状態を各Panelの保存先プレビューへ反映する。"""
         # set_root_dir()直後のように既に再スキャン済みの場面では、
@@ -400,6 +443,7 @@ class MainWindow(QMainWindow):
     @Slot(list, list)
     def _on_start_sequence_requested(self) -> None:
         """Sequence開始要求をCoordinatorへ渡す。"""
+        self.acquisition_statistics_label.clear()
         self.capture_coordinator.begin_sequence(
             self._arm_sequence_start_after_preview_pause
         )
@@ -414,6 +458,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_start_recording_requested(self) -> None:
         """Recording開始要求をCoordinatorへ渡す。"""
+        self.acquisition_statistics_label.clear()
         self.capture_coordinator.begin_recording(
             self._arm_recording_start_after_preview_pause
         )
@@ -437,6 +482,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_start_angle_scan_requested(self) -> None:
         """Angle Scan開始要求をCoordinatorへ渡す。"""
+        self.acquisition_statistics_label.clear()
         self.capture_coordinator.begin_angle_scan(self.angle_scan_vm.start_angle_scan)
 
     @Slot(bool, str)
@@ -450,6 +496,7 @@ class MainWindow(QMainWindow):
     @Slot(bool, str)
     def _on_recording_finished(self, success: bool, saved_dir_name: str) -> None:
         """Recording終了後にUI状態を戻し、成功時は保存先を表示する。"""
+        self.acquisition_statistics_label.clear()
         self.capture_coordinator.leave()
         if success:
             msg = f"Recording Finished: Saved to '{saved_dir_name}'"
@@ -527,6 +574,7 @@ class MainWindow(QMainWindow):
         AppSettings.save(settings_to_save)
 
         self._sequence_preview_timer.stop()
+        self._acquisition_statistics_timer.stop()
 
         # バックグラウンドスレッドの停止とカメラの切断
         self.preview_vm.stop_preview()

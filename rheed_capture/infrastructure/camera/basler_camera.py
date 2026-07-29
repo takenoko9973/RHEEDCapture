@@ -16,7 +16,9 @@ from rheed_capture.application.ports.camera import (
     CameraError,
     CameraFrame,
 )
+from rheed_capture.domain.acquisition_statistics import AcquisitionSample
 from rheed_capture.infrastructure.camera.basler_configurators import (
+    CAMERA_EMULATION_DEVICE_CLASS,
     BaslerCameraConfigurator,
     BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
@@ -34,7 +36,6 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
-_CAMERA_EMULATION_DEVICE_CLASS = "BaslerCamEmu"
 
 
 class _GenicamNode(Protocol):
@@ -86,6 +87,7 @@ class BaslerCamera:
         self._state = CameraState.DISCONNECTED
         self._owner_thread_id: int | None = None
         self._active_trigger_session: _BaslerSoftwareTriggerSession | None = None
+        self._latest_acquisition_sample: AcquisitionSample | None = None
         self._frame_readback_provider_factory: (
             type[ChunkFrameReadbackProvider | SimulationFrameReadbackProvider]
         )
@@ -108,6 +110,13 @@ class BaslerCamera:
         """現在の所有状態を返す。"""
         return self._state
 
+    def take_acquisition_sample(self) -> AcquisitionSample | None:
+        """直前の正常取得sampleを1回だけ返す。"""
+        with self._lock:
+            sample = self._latest_acquisition_sample
+            self._latest_acquisition_sample = None
+            return sample
+
     def connect(self) -> None:
         """最初に見つかったBaslerカメラへ接続して初期設定を適用する。"""
         with self._lock:
@@ -127,7 +136,7 @@ class BaslerCamera:
 
                 # PYLON_CAMEMUは列挙台数であり、実際の接続先はDeviceClassで判定する。
                 is_emulation = (
-                    device_info.GetDeviceClass() == _CAMERA_EMULATION_DEVICE_CLASS
+                    device_info.GetDeviceClass() == CAMERA_EMULATION_DEVICE_CLASS
                 )
                 self._frame_readback_provider_factory = (
                     SimulationFrameReadbackProvider
@@ -135,8 +144,12 @@ class BaslerCamera:
                     else ChunkFrameReadbackProvider
                 )
 
-                for configurator in self._configurators:
-                    configurator.apply(self.camera)
+                try:
+                    for configurator in self._configurators:
+                        configurator.apply(self.camera)
+                except CameraError:
+                    self._cleanup_failed_connection()
+                    raise
                 if is_emulation:
                     BaslerCameraEmulationSettings().apply(self.camera)
 
@@ -166,6 +179,7 @@ class BaslerCamera:
         finally:
             self._camera = None
             self._state = CameraState.DISCONNECTED
+            self._latest_acquisition_sample = None
 
     def disconnect(self) -> None:
         """IDLE状態のカメラを切断する。"""
@@ -176,6 +190,7 @@ class BaslerCamera:
             self.camera.Close()
             self._camera = None
             self._state = CameraState.DISCONNECTED
+            self._latest_acquisition_sample = None
 
     def is_connected(self) -> bool:
         """カメラがオープン済みかどうかを返す。"""
@@ -241,6 +256,7 @@ class BaslerCamera:
 
             self._state = CameraState.PREVIEW
             self._owner_thread_id = threading.get_ident()
+            self._latest_acquisition_sample = None
             # 既存プレビューの開始直後に空応答が続くのを避けるための待機を維持する。
             time.sleep(0.1)
 
@@ -265,6 +281,7 @@ class BaslerCamera:
             finally:
                 self._state = CameraState.IDLE
                 self._owner_thread_id = None
+                self._latest_acquisition_sample = None
 
     def start_software_trigger_session(
         self,
@@ -288,6 +305,7 @@ class BaslerCamera:
             self._state = CameraState.SOFTWARE_TRIGGER
             self._owner_thread_id = threading.get_ident()
             self._active_trigger_session = session
+            self._latest_acquisition_sample = None
             return session
 
     def _is_valid_grab_result(self, result: object) -> bool:
@@ -303,6 +321,7 @@ class BaslerCamera:
             if self._state is not CameraState.PREVIEW:
                 return None
             self._require_owner_thread("プレビューフレーム取得")
+            self._latest_acquisition_sample = None
 
             try:
                 with self.camera.RetrieveResult(
@@ -313,6 +332,7 @@ class BaslerCamera:
                         return None
 
                     if result.GrabSucceeded():
+                        self._record_successful_acquisition(result)
                         image = self.converter.Convert(result)
                         return image.GetArray()
 
@@ -322,6 +342,14 @@ class BaslerCamera:
                 logger.exception("プレビュー画像の取得中にエラーが発生しました")
                 msg = f"プレビュー画像の取得に失敗しました: {e}"
                 raise CameraError(msg) from e
+
+    def _record_successful_acquisition(self, result: object) -> None:
+        """正常GrabResultの到着時刻と転送payloadを保存する。"""
+        payload_bytes = _read_payload_bytes(self.camera, result)
+        self._latest_acquisition_sample = AcquisitionSample(
+            timestamp=time.perf_counter(),
+            payload_bytes=payload_bytes,
+        )
 
     def _require_state(self, expected: CameraState, operation: str) -> None:
         """操作に必要な状態でなければ暗黙切替せず失敗させる。"""
@@ -429,6 +457,7 @@ class _BaslerSoftwareTriggerSession:
         """発行済みtriggerに対応するRaw画像とcamera timestampを返す。"""
         with self._camera_device._lock:
             self._require_active("トリガーフレーム取得")
+            self._camera_device._latest_acquisition_sample = None
             try:
                 with self._camera_device.camera.RetrieveResult(
                     timeout_ms,
@@ -441,6 +470,7 @@ class _BaslerSoftwareTriggerSession:
                         msg = f"GrabSucceeded=False: {result.GetErrorDescription()}"
                         raise CameraError(msg)
 
+                    self._camera_device._record_successful_acquisition(result)
                     readback = self._readback_provider.read(
                         self._camera_device.camera,
                         result,
@@ -569,6 +599,41 @@ def _read_required_node_string(nodemap: _GenicamNodeMap, node_name: str) -> str:
     except genicam.LogicalErrorException as e:
         msg = f"必須GenICam node '{node_name}' の読み取りに失敗しました: {e}"
         raise CameraError(msg) from e
+
+
+def _read_payload_bytes(camera: InstantCamera, result: object) -> int | None:
+    """GrabResultを優先し、取得不能時だけcamera nodeからpayload byte数を読む。"""
+    get_payload_size = getattr(result, "GetPayloadSize", None)
+    if callable(get_payload_size):
+        try:
+            payload_bytes = int(get_payload_size())
+        except (genicam.GenericException, TypeError, ValueError) as e:
+            # Payload診断の取得失敗で、正常な画像取得自体を失敗させない。
+            logger.debug("GrabResultのPayloadSize取得に失敗しました: %s", e)
+        else:
+            if payload_bytes >= 0:
+                return payload_bytes
+
+    return _read_camera_payload_bytes(camera)
+
+
+def _read_camera_payload_bytes(camera: InstantCamera) -> int | None:
+    """読み取り可能なPayloadSize nodeからpayload byte数を返す。"""
+    try:
+        node = camera.GetNodeMap().GetNode("PayloadSize")
+        if (
+            node is None
+            or not genicam.IsAvailable(node)
+            or not genicam.IsReadable(node)
+        ):
+            return None
+        payload_bytes = int(node.GetValue())
+    except (genicam.GenericException, TypeError, ValueError) as e:
+        # node値も診断専用なので、取得不能時はPayload表示だけを省略する。
+        logger.debug("camera nodeのPayloadSize取得に失敗しました: %s", e)
+        return None
+
+    return payload_bytes if payload_bytes >= 0 else None
 
 
 CameraDevice = BaslerCamera

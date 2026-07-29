@@ -11,6 +11,9 @@ from rheed_capture.application.capture.recording import (
     normalize_duration_ms,
 )
 from rheed_capture.infrastructure.config.schema import RecordingCaptureSettings
+from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
+    format_recording_statistics,
+)
 from rheed_capture.presentation.qt.workers.recording_service import (
     RecordingService,
     RecordingSettings,
@@ -129,6 +132,15 @@ class RecordingViewModel(QObject):
     def is_running(self) -> bool:
         """RecordingServiceが実行中かを返す。"""
         return self._recording_service is not None and self._recording_service.isRunning()
+
+    def get_acquisition_statistics_text(self) -> str:
+        """現在のRecording取得統計をstatus bar表示用に返す。"""
+        if self._recording_service is None:
+            return ""
+        statistics = self._recording_service.statistics_snapshot()
+        if statistics is None:
+            return ""
+        return format_recording_statistics(statistics)
 
     def _build_recording_settings(self) -> RecordingSettings:
         """UI入力値をUse Caseが要求するRecordingSettingsへ変換する。"""

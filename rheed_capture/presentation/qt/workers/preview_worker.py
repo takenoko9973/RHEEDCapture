@@ -5,6 +5,10 @@ import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
 from rheed_capture.application.ports.camera import CameraError
+from rheed_capture.domain.acquisition_statistics import (
+    AcquisitionStatistics,
+    AcquisitionStatisticsMeter,
+)
 from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.presentation.qt.preview.processor import PreviewPipeline
@@ -38,10 +42,14 @@ class PreviewWorker(QThread):
         self._settings_lock = threading.Lock()
         self._pending_exposure_ms: float | None = None
         self._pending_gain: int | None = None
+        self._statistics_lock = threading.Lock()
+        self._statistics_meter = AcquisitionStatisticsMeter()
+        self._statistics_active = False
 
     def run(self) -> None:
         """所有スレッド内でプレビューloopを実行し、終了時に取得を停止する。"""
         self._is_running = True
+        self._reset_statistics(active=True)
 
         try:
             self._run_preview_loop()
@@ -51,6 +59,7 @@ class PreviewWorker(QThread):
             except CameraError as e:
                 # 終了処理の失敗は握りつぶさず、UIへ診断情報を通知する。
                 self.error_occurred.emit(str(e))
+            self._reset_statistics(active=False)
 
     def _run_preview_loop(self) -> None:
         """pauseと設定変更を処理しながらプレビューフレームを取得する。"""
@@ -59,6 +68,7 @@ class PreviewWorker(QThread):
                 self.camera_device.stop_grabbing()
                 self._is_paused = True
                 self._pause_requested = False
+                self._reset_statistics(active=False)
                 self.preview_paused.emit()
 
             if self._is_paused:
@@ -80,9 +90,40 @@ class PreviewWorker(QThread):
                 continue
 
             if raw_image is not None:
+                self._record_acquisition()
                 self.raw_frame_ready.emit(raw_image)
             else:
                 time.sleep(PREVIEW_IDLE_SLEEP_SEC)
+
+    def statistics_snapshot(self) -> AcquisitionStatistics | None:
+        """表示時点のPreview取得統計を返す。"""
+        with self._statistics_lock:
+            if not self._statistics_active:
+                return None
+            return self._statistics_meter.snapshot(
+                time.perf_counter(),
+                include_average=False,
+            )
+
+    def _record_acquisition(self) -> None:
+        """正常取得フレームをmeterへ記録する。"""
+        sample = self.camera_device.take_acquisition_sample()
+        if sample is None:
+            # Payloadを取得できないadapterでも、成功フレーム数によるFPSは維持する。
+            timestamp = time.perf_counter()
+            payload_bytes = None
+        else:
+            timestamp = sample.timestamp
+            payload_bytes = sample.payload_bytes
+
+        with self._statistics_lock:
+            self._statistics_meter.record_frame(timestamp, payload_bytes)
+
+    def _reset_statistics(self, *, active: bool) -> None:
+        """Preview開始、停止、再開の境界でmeterを初期化する。"""
+        with self._statistics_lock:
+            self._statistics_meter.reset()
+            self._statistics_active = active
 
     def _apply_pending_camera_settings(self) -> None:
         """取得を止めてからUIスレッドで予約された露光時間とGainを適用する。"""
@@ -103,6 +144,7 @@ class PreviewWorker(QThread):
             self.camera_device.set_gain(gain)
 
     def stop(self) -> None:
+        """プレビューloopへ終了を要求する。"""
         self._is_running = False
 
     def request_pause(self) -> None:
@@ -111,6 +153,7 @@ class PreviewWorker(QThread):
 
     def resume(self) -> None:
         """pause状態を解除して次のloopでプレビューを再開する。"""
+        self._reset_statistics(active=True)
         self._is_paused = False
 
     def request_exposure(self, exposure_ms: float) -> None:
@@ -124,5 +167,6 @@ class PreviewWorker(QThread):
             self._pending_gain = gain
 
     def set_processing_enabled(self, enabled: bool) -> None:
+        """プレビュー画像処理の有効状態を更新する。"""
         self.enable_processing = enabled
         self.pipeline.set_processing_enabled(enabled)
