@@ -5,6 +5,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
+
+from rheed_capture.application.capture.cancellation import CaptureCancelled
 from rheed_capture.application.capture.frame_capturer import (
     CaptureConditionApplier,
     FrameGrabber,
@@ -12,13 +15,9 @@ from rheed_capture.application.capture.frame_capturer import (
 )
 from rheed_capture.application.capture.save_worker import SaveRequest, TiffSaveWorker
 from rheed_capture.data_formats.recording import RecordingFrameRow
-from rheed_capture.data_formats.storage_naming import (
-    RECORDING_TIFF_COMPRESSION,
-)
+from rheed_capture.data_formats.storage_naming import RECORDING_TIFF_COMPRESSION
 from rheed_capture.domain.capture_condition import CaptureCondition
-from rheed_capture.domain.capture_defaults import (
-    DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS,
-)
+from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,6 +28,9 @@ if TYPE_CHECKING:
 RateMode = Literal["fps", "interval"]
 SavedFrameCallback = Callable[[int], None]
 FrameCallback = Callable[[GrabbedFrame], None]
+PreviewCallback = Callable[[np.ndarray], None]
+ProgressCallback = Callable[[int, int], None]
+WaitingCallback = Callable[[bool], None]
 
 
 @dataclass(frozen=True)
@@ -42,8 +44,8 @@ class RecordingSettings:
     duration_ms: float | None
 
     def __post_init__(self) -> None:
-        """生成時に撮影開始前の入力制約を検証する。"""
-        validate_recording_settings(self)
+        """生成時にモードに依存しない入力制約を検証する。"""
+        validate_recording_settings(self, enforce_software_schedule=False)
 
 
 @dataclass(frozen=True)
@@ -52,10 +54,13 @@ class RecordingHooks:
 
     on_saved_frames_changed: SavedFrameCallback | None = None
     on_frame_captured: FrameCallback | None = None
+    on_preview_frame_completed: PreviewCallback | None = None
+    on_accumulation_progress: ProgressCallback | None = None
+    on_waiting_for_trigger_changed: WaitingCallback | None = None
 
 
 class RecordingCapture:
-    """一定間隔でフレームを取得し、保存ワーカーへ順次投入するUse Case。"""
+    """SoftwareまたはHardware triggerでRecording Rawを逐次保存するUse Case。"""
 
     def __init__(
         self,
@@ -65,13 +70,28 @@ class RecordingCapture:
         settings: RecordingSettings,
         *,
         save_worker: TiffSaveWorker,
+        accumulation_frames: int = 1,
+        trigger_wait_timeout_sec: float = 0,
     ) -> None:
         """カメラ操作、保存先Session、保存ワーカーを注入して初期化する。"""
+        if accumulation_frames <= 0:
+            msg = "蓄積フレーム数は1以上にしてください。"
+            raise ValueError(msg)
+        if trigger_wait_timeout_sec < 0:
+            msg = "Trigger待機時間は0以上にしてください。"
+            raise ValueError(msg)
+
+        validate_recording_settings(
+            settings,
+            enforce_software_schedule=frame_grabber.trigger_settings.mode == "software",
+        )
         self.condition_applier = condition_applier
         self.frame_grabber = frame_grabber
         self.session = session
         self.settings = settings
         self.save_worker = save_worker
+        self.accumulation_frames = accumulation_frames
+        self.trigger_wait_timeout_sec = trigger_wait_timeout_sec
 
     def run(
         self,
@@ -82,14 +102,13 @@ class RecordingCapture:
         """撮影条件を適用して録画を実行し、Sessionの終了状態を記録する。"""
         hooks = hooks or RecordingHooks()
         cancelled = False
-        completed = False
         worker_started = False
 
         try:
             self._apply_condition()
             self.save_worker.start()
             worker_started = True
-            completed, cancelled = self._run_capture_loop(cancellation_token, hooks)
+            _, cancelled = self._run_capture_loop(cancellation_token, hooks)
         except Exception as e:
             if worker_started:
                 # 保存スレッドを閉じてから失敗状態を書き、未完了のjoin漏れを防ぐ。
@@ -105,8 +124,6 @@ class RecordingCapture:
 
         if cancelled:
             self.session.mark_cancelled()
-        elif completed:
-            self.session.mark_completed()
         else:
             self.session.mark_completed()
 
@@ -115,18 +132,28 @@ class RecordingCapture:
         cancellation_token: CancellationToken,
         hooks: RecordingHooks,
     ) -> tuple[bool, bool]:
-        """予定時刻に合わせて撮影し、完了またはキャンセル状態を返す。"""
+        """Trigger modeに対応する取得ループを実行する。"""
+        if self.frame_grabber.trigger_settings.mode == "hardware":
+            return self._run_hardware_capture_loop(cancellation_token, hooks)
+        return self._run_software_capture_loop(cancellation_token, hooks)
+
+    def _run_software_capture_loop(
+        self,
+        cancellation_token: CancellationToken,
+        hooks: RecordingHooks,
+    ) -> tuple[bool, bool]:
+        """従来の予定時刻基準Software schedulingでRawを取得する。"""
         start_monotonic = time.perf_counter()
         timeout_ms = int(self.settings.exposure_ms + DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS)
         frame_index = 1
+        group_index = 1
+        group_sum: np.ndarray | None = None
 
         # Recordingは正常なカメラSessionを全フレームで共有し、失敗時だけ再作成する。
         with self.frame_grabber.start_session(expected_frames=None) as trigger_session:
             while True:
-                # frame 1は開始時刻そのものを目標にし、以後はintervalで固定する。
                 target_elapsed_ms = (frame_index - 1) * self.settings.target_interval_ms
                 target_time = start_monotonic + target_elapsed_ms / 1000.0
-
                 if not self._wait_until(target_time, cancellation_token):
                     return False, True
 
@@ -134,20 +161,25 @@ class RecordingCapture:
                 actual_elapsed_ms = (
                     grabbed.timing.trigger_issued_monotonic_sec - start_monotonic
                 ) * 1000.0
-                self._enqueue_frame(
+                raw_index = self._raw_index_in_group(frame_index)
+                group_sum = self._save_and_notify_raw(
                     frame_index,
+                    group_index,
+                    raw_index,
                     target_elapsed_ms,
                     actual_elapsed_ms,
                     grabbed,
+                    group_sum,
                     hooks,
                 )
 
-                if hooks.on_frame_captured is not None:
-                    hooks.on_frame_captured(grabbed)
+                if raw_index == self.accumulation_frames:
+                    self._notify_completed_preview(group_sum, hooks)
+                    group_sum = None
+                    group_index += 1
 
                 if cancellation_token.is_cancelled():
                     return False, True
-
                 if (
                     self.settings.duration_ms is not None
                     and actual_elapsed_ms >= self.settings.duration_ms
@@ -155,6 +187,87 @@ class RecordingCapture:
                     return True, False
 
                 # 遅延時も番号を飛ばさず、次の元の予定時刻を同じ式で評価する。
+                frame_index += 1
+
+    def _run_hardware_capture_loop(
+        self,
+        cancellation_token: CancellationToken,
+        hooks: RecordingHooks,
+    ) -> tuple[bool, bool]:
+        """初回timeoutとduration境界を分離してHardware Rawを取得する。"""
+        frame_index = 1
+        group_index = 1
+        group_sum: np.ndarray | None = None
+        first_raw_monotonic: float | None = None
+        duration_deadline: float | None = None
+
+        with self.frame_grabber.start_session(expected_frames=None) as trigger_session:
+            while True:
+                raw_index = self._raw_index_in_group(frame_index)
+                completing_existing_group = raw_index != 1
+                if (
+                    duration_deadline is not None
+                    and not completing_existing_group
+                    and time.perf_counter() >= duration_deadline
+                ):
+                    return True, False
+
+                wait_timeout_sec = self._hardware_wait_timeout(
+                    first_raw_monotonic,
+                    duration_deadline,
+                    completing_existing_group,
+                )
+
+                try:
+                    self._set_waiting(hooks, True)
+                    grabbed = trigger_session.grab_hardware(
+                        wait_timeout_sec=wait_timeout_sec,
+                        cancellation_token=cancellation_token,
+                    )
+                except CaptureCancelled:
+                    return False, True
+                except TimeoutError as e:
+                    if first_raw_monotonic is None:
+                        msg = "Trigger Wait Timeout Error"
+                        raise TimeoutError(msg) from e
+                    # group外のduration残時間を使い切った場合は正常終了にする。
+                    return True, False
+                finally:
+                    self._set_waiting(hooks, False)
+
+                arrived_monotonic = grabbed.timing.trigger_issued_monotonic_sec
+                if (
+                    duration_deadline is not None
+                    and raw_index == 1
+                    and arrived_monotonic >= duration_deadline
+                ):
+                    # deadline以降に到着したRawを新groupとして保存しない。
+                    return True, False
+
+                if first_raw_monotonic is None:
+                    first_raw_monotonic = arrived_monotonic
+                    if self.settings.duration_ms is not None:
+                        duration_deadline = (
+                            first_raw_monotonic + self.settings.duration_ms / 1000.0
+                        )
+
+                actual_elapsed_ms = (arrived_monotonic - first_raw_monotonic) * 1000.0
+                group_sum = self._save_and_notify_raw(
+                    frame_index,
+                    group_index,
+                    raw_index,
+                    None,
+                    actual_elapsed_ms,
+                    grabbed,
+                    group_sum,
+                    hooks,
+                )
+
+                if raw_index == self.accumulation_frames:
+                    self._notify_completed_preview(group_sum, hooks)
+                    group_sum = None
+                    group_index += 1
+
                 frame_index += 1
 
     def _apply_condition(self) -> None:
@@ -166,29 +279,100 @@ class RecordingCapture:
             )
         )
 
+    def _hardware_wait_timeout(
+        self,
+        first_raw_monotonic: float | None,
+        duration_deadline: float | None,
+        completing_existing_group: bool,
+    ) -> float:
+        """Hardware Rawの現在の待機理由に対応するtimeoutを返す。"""
+        if first_raw_monotonic is None:
+            return self.trigger_wait_timeout_sec
+        if completing_existing_group or duration_deadline is None:
+            # 開始済みgroupはduration後でもN枚まで保持し、共通timeoutを使わない。
+            return 0
+        return max(0, duration_deadline - time.perf_counter())
+
     def _wait_until(self, target_time: float, cancellation_token: CancellationToken) -> bool:
         """キャンセルを監視しながら指定monotonic時刻まで待機する。"""
         while True:
             if cancellation_token.is_cancelled():
                 return False
-
             remaining_sec = target_time - time.perf_counter()
             if remaining_sec <= 0:
                 return True
-
             if cancellation_token.wait(remaining_sec):
                 return False
+
+    def _save_and_notify_raw(
+        self,
+        frame_index: int,
+        group_index: int,
+        raw_index: int,
+        target_elapsed_ms: float | None,
+        actual_elapsed_ms: float,
+        grabbed: GrabbedFrame,
+        group_sum: np.ndarray | None,
+        hooks: RecordingHooks,
+    ) -> np.ndarray:
+        """Rawを直ちに保存キューへ渡し、統計と積算状態を通知する。"""
+        self._enqueue_frame(
+            frame_index,
+            group_index,
+            raw_index,
+            target_elapsed_ms,
+            actual_elapsed_ms,
+            grabbed,
+            hooks,
+        )
+        if hooks.on_frame_captured is not None:
+            hooks.on_frame_captured(grabbed)
+        if hooks.on_accumulation_progress is not None:
+            hooks.on_accumulation_progress(raw_index, self.accumulation_frames)
+
+        image_wide = np.asarray(grabbed.image, dtype=np.uint64)
+        return image_wide if group_sum is None else group_sum + image_wide
+
+    def _notify_completed_preview(
+        self,
+        group_sum: np.ndarray | None,
+        hooks: RecordingHooks,
+    ) -> None:
+        """完了groupだけをuint16飽和画像としてPreviewへ通知する。"""
+        if group_sum is None:
+            msg = "蓄積撮影でRawフレームを取得できませんでした。"
+            raise RuntimeError(msg)
+        if hooks.on_preview_frame_completed is not None:
+            preview_image = np.clip(group_sum, 0, np.iinfo(np.uint16).max).astype(np.uint16)
+            hooks.on_preview_frame_completed(preview_image)
+
+    def _raw_index_in_group(self, frame_index: int) -> int:
+        """Raw通番から1始まりのgroup内Raw番号を返す。"""
+        return (frame_index - 1) % self.accumulation_frames + 1
+
+    def _set_waiting(self, hooks: RecordingHooks, waiting: bool) -> None:
+        """Hardware trigger待機状態をUIへ通知する。"""
+        if hooks.on_waiting_for_trigger_changed is not None:
+            hooks.on_waiting_for_trigger_changed(waiting)
 
     def _enqueue_frame(
         self,
         frame_index: int,
-        target_elapsed_ms: float,
+        group_index: int,
+        raw_index: int,
+        target_elapsed_ms: float | None,
         actual_elapsed_ms: float,
         grabbed: GrabbedFrame,
         hooks: RecordingHooks,
     ) -> None:
-        """取得済みフレームを保存リクエストへ変換してキューへ投入する。"""
-        file_path = self.session.build_frame_path(frame_index)
+        """取得済みRawを保存リクエストへ変換してキューへ投入する。"""
+        if self.accumulation_frames == 1:
+            file_path = self.session.build_frame_path(frame_index)
+            filename = file_path.name
+        else:
+            file_path = self.session.build_accumulation_frame_path(group_index, raw_index)
+            filename = file_path.relative_to(self.session.session_dir).as_posix()
+
         row = RecordingFrameRow(
             frame_index=frame_index,
             target_elapsed_ms=target_elapsed_ms,
@@ -199,20 +383,16 @@ class RecordingCapture:
             camera_exposure_ms=grabbed.readback.exposure_ms,
             camera_gain=grabbed.readback.gain,
             camera_timestamp_ticks=grabbed.readback.camera_timestamp_ticks,
-            camera_timestamp_frequency_hz=(
-                grabbed.readback.camera_timestamp_frequency_hz
-            ),
+            camera_timestamp_frequency_hz=grabbed.readback.camera_timestamp_frequency_hz,
             camera_timestamp_source=grabbed.readback.source,
-            filename=file_path.name,
+            filename=filename,
         )
-        metadata = self._build_metadata(row)
-
         self.save_worker.enqueue(
             SaveRequest(
                 file_path=file_path,
                 # 保存中に次の撮影でバッファが再利用されても内容が変わらないようにする。
                 image=grabbed.image.copy(),
-                metadata=metadata,
+                metadata=self._build_metadata(row),
                 compression=RECORDING_TIFF_COMPRESSION,
                 on_saved=self._build_saved_callback(row, hooks),
             )
@@ -225,15 +405,15 @@ class RecordingCapture:
     ) -> Callable[[Path, float], None]:
         """保存完了時にCSVへ追記し、保存枚数を通知するcallbackを作る。"""
         def on_saved(_file_path: Path, save_elapsed_ms: float) -> None:
-            """1フレーム保存後にSession状態とUI通知を更新する。"""
+            """1 Raw保存後にSession状態とUI通知を更新する。"""
             saved_frames = self.session.append_saved_frame(row, save_elapsed_ms)
             if hooks.on_saved_frames_changed is not None:
                 hooks.on_saved_frames_changed(saved_frames)
 
         return on_saved
 
-    def _build_metadata(self, row: RecordingFrameRow) -> dict:
-        """Build metadata embedded in each Recording TIFF."""
+    def _build_metadata(self, row: RecordingFrameRow) -> dict[str, object]:
+        """Build Raw-level metadata embedded in a Recording TIFF."""
         return {
             "capture_mode": "recording",
             "frame_index": row.frame_index,
@@ -250,8 +430,12 @@ class RecordingCapture:
         }
 
 
-def validate_recording_settings(settings: RecordingSettings) -> None:
-    """Recording開始前に撮影条件と間隔の制約を検証する。"""
+def validate_recording_settings(
+    settings: RecordingSettings,
+    *,
+    enforce_software_schedule: bool,
+) -> None:
+    """Recording開始前にモードに対応する撮影条件を検証する。"""
     if settings.exposure_ms <= 0:
         msg = "露光時間は正の値にしてください。"
         raise ValueError(msg)
@@ -264,8 +448,8 @@ def validate_recording_settings(settings: RecordingSettings) -> None:
     if settings.duration_ms is not None and settings.duration_ms <= 0:
         msg = "撮影時間は正の値にしてください。"
         raise ValueError(msg)
-    if settings.exposure_ms > settings.target_interval_ms:
-        # 露光が間隔を超えるとフレーム落ちなしの録画条件を満たせない。
+    if enforce_software_schedule and settings.exposure_ms > settings.target_interval_ms:
+        # Hardware triggerは外部時刻で進むため、このSoftware scheduling制約を適用しない。
         msg = (
             "露光時間が撮影間隔より長いため、録画を開始できません。\n\n"
             f"露光時間: {settings.exposure_ms:g} ms\n"
@@ -281,7 +465,6 @@ def interval_from_fps(fps: float) -> float:
     if fps <= 0:
         msg = "FPSは正の値にしてください。"
         raise ValueError(msg)
-
     return 1000.0 / fps
 
 
@@ -289,5 +472,4 @@ def normalize_duration_ms(duration_sec: float) -> float | None:
     """0秒以下を無期限として扱い、それ以外をmsへ変換する。"""
     if duration_sec <= 0:
         return None
-
     return duration_sec * 1000.0

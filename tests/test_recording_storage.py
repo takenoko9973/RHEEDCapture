@@ -111,3 +111,53 @@ def test_recording_counter_uses_existing_record_suffixes() -> None:
         storage.refresh_recording_counter_from_disk()
 
         assert storage.get_next_recording_dir_name() == "record-5"
+
+
+def test_accumulation_recording_uses_group_raw_paths_and_relative_csv_filename() -> None:
+    """積算Recordingだけがgroup配下Raw保存形式とそのJSON契約を使う。"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(temp_dir)
+        session = storage.start_recording_session(
+            sample_name="STO",
+            exposure_ms=50.0,
+            gain=0,
+            rate_mode="interval",
+            target_interval_ms=300.0,
+            duration_ms=None,
+            accumulation_frames=2,
+        )
+        raw_path = session.build_accumulation_frame_path(1, 2)
+        assert raw_path.relative_to(session.session_dir).as_posix() == "group_000001/raw_0002.tiff"
+
+        session.append_saved_frame(
+            RecordingFrameRow(
+                frame_index=2,
+                target_elapsed_ms=None,
+                actual_elapsed_ms=10.0,
+                timestamp="2026-06-25T15:00:00+09:00",
+                camera_timestamp_ticks=123456,
+                camera_timestamp_frequency_hz=125_000_000,
+                camera_timestamp_source="host",
+                exposure_ms=50.0,
+                gain=0,
+                camera_exposure_ms=49.5,
+                camera_gain=1,
+                filename="group_000001/raw_0002.tiff",
+            ),
+            3.25,
+        )
+        session.mark_completed()
+
+        with (Path(session.session_dir) / "frames.csv").open(encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+        with (Path(session.session_dir) / "recording.json").open(encoding="utf-8") as f:
+            document = json.load(f)
+
+        assert rows[0]["target_elapsed_ms"] == ""
+        assert rows[0]["filename"] == "group_000001/raw_0002.tiff"
+        assert document["storage"] == {
+            "folder_name": "record-1",
+            "tiff_compression": "zlib",
+            "group_directory_format": "group_{group_index:06d}",
+            "raw_filename_format": "raw_{raw_index:04d}.tiff",
+        }

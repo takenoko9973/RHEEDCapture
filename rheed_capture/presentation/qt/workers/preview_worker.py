@@ -54,7 +54,11 @@ class PreviewWorker(QThread):
         self.pipeline.histogram_ready.connect(self.histogram_ready)
         self.pipeline.error_occurred.connect(self.error_occurred)
 
+        self._lifecycle_lock = threading.Lock()
         self._is_running = False
+        # QThread.start() はrun()を非同期に呼ぶため、開始直後のstop()を
+        # _is_runningだけで表すとrun()冒頭の初期化で終了要求が消える。
+        self._stop_requested = True
         self.enable_processing = False
 
         self._pause_requested = False
@@ -76,9 +80,21 @@ class PreviewWorker(QThread):
         self._accumulation_target = 1
         self._waiting_for_trigger = False
 
+    def start(
+        self,
+        priority: QThread.Priority = QThread.Priority.InheritPriority,
+    ) -> None:
+        """終了要求を解除してPreview threadを開始する。"""
+        with self._lifecycle_lock:
+            self._stop_requested = False
+        super().start(priority)
+
     def run(self) -> None:
         """Trigger Sessionを所有スレッドで実行し、終了時に必ずcloseする。"""
-        self._is_running = True
+        with self._lifecycle_lock:
+            if self._stop_requested:
+                return
+            self._is_running = True
         self._reset_statistics(active=True)
         self._reset_accumulator()
 
@@ -86,7 +102,9 @@ class PreviewWorker(QThread):
             self._run_preview_loop()
         finally:
             self._close_active_session()
-            self._is_running = False
+            with self._lifecycle_lock:
+                self._is_running = False
+                self._stop_requested = True
             self._reset_statistics(active=False)
 
     def _run_preview_loop(self) -> None:
@@ -156,8 +174,12 @@ class PreviewWorker(QThread):
 
     def _retrieve_and_handle_frame(self) -> None:
         """次のRaw frameを取得し、CameraError時はSessionを再arm可能にする。"""
+        session = self._session
+        if session is None:
+            return
+
         try:
-            camera_frame = self._retrieve_next_frame(self._session)
+            camera_frame = self._retrieve_next_frame(session)
         except CameraError as e:
             self.error_occurred.emit(str(e))
             self._close_active_session()
@@ -315,7 +337,9 @@ class PreviewWorker(QThread):
 
     def stop(self) -> None:
         """Preview loopへ終了を要求する。Session closeはworker側で行う。"""
-        self._is_running = False
+        with self._lifecycle_lock:
+            self._stop_requested = True
+            self._is_running = False
 
     def request_pause(self) -> None:
         """次のloopでSessionを閉じてPreviewをpauseするよう要求する。"""

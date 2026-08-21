@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 class _FakeFrameCapturer:
     def __init__(self) -> None:
         self.conditions: list[CaptureCondition] = []
+        self.group_requests: list[tuple[int, float]] = []
 
     def capture(self, condition: CaptureCondition) -> CapturedFrame:
         self.conditions.append(condition)
@@ -53,8 +54,8 @@ class _FakeFrameCapturer:
         cancellation_token: CancellationToken,
     ) -> Iterator[CapturedFrame]:
         """蓄積撮影用に同じ条件のRawを逐次返す。"""
-        del hardware_wait_timeout_sec, cancellation_token
-        self.conditions.append(condition)
+        del cancellation_token
+        self.group_requests.append((frame_count, hardware_wait_timeout_sec))
         for _ in range(frame_count):
             yield self.capture(condition)
 
@@ -146,6 +147,7 @@ def test_sequence_capture_sorts_conditions_saves_all_and_reports_progress() -> N
         (100.0, 2),
     ]
     assert len(session.saved) == 4
+    assert frame_capturer.group_requests == [(1, 0.0)] * 4
     assert progress == [
         (1, 4, 10.0, 0),
         (2, 4, 10.0, 2),
@@ -291,6 +293,7 @@ def test_angle_scan_capture_moves_by_plan_saves_angles_and_returns_to_start() ->
 
     assert [angle for _frame, angle in session.saved] == [0.0, 0.5, 1.0]
     assert [move[0] for move in motor.moves] == [16, 15, -31]
+    assert frame_capturer.group_requests == [(1, 0.0)] * 3
     assert progress == [(1, 3, 0.0), (2, 3, 0.5), (3, 3, 1.0)]
 
 

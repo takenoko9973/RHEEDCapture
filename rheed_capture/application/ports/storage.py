@@ -56,10 +56,15 @@ class RecordingSession(Protocol):
     """Recording撮影Use Caseが依存する保存SessionのPort。"""
 
     dir_name: str
+    session_dir: Path
     saved_frames: int
 
     def build_frame_path(self, frame_index: int) -> Path:
         """指定frame indexの保存先Pathを返す。"""
+        ...
+
+    def build_accumulation_frame_path(self, group_index: int, raw_index: int) -> Path:
+        """蓄積Recordingのgroup内Raw保存先Pathを返す。"""
         ...
 
     def append_saved_frame(

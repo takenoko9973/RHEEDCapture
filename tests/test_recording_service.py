@@ -12,6 +12,7 @@ from rheed_capture.domain.acquisition_statistics import (
     AcquisitionStatistics,
 )
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.workers import recording_service
 from rheed_capture.presentation.qt.workers.recording_service import (
@@ -181,3 +182,27 @@ def test_recording_service_clears_statistics_after_error(
         service._run_recording_capture(CancellationToken())  # noqa: SLF001
 
     assert service.statistics_snapshot() is None
+
+
+def test_recording_service_rejects_software_rate_above_fps_limit_before_storage() -> None:
+    """Softwareの要求rateがFPS Limit超過ならSession作成前に失敗する。"""
+    camera = MagicMock(spec=CameraDevice)
+    storage = MagicMock(spec=ExperimentStorage)
+    storage.root_dir = Path("STO")
+    service = RecordingService(
+        camera,
+        storage,
+        RecordingSettings(
+            exposure_ms=10.0,
+            gain=0,
+            rate_mode="fps",
+            target_interval_ms=10.0,
+            duration_ms=None,
+        ),
+        AcquisitionSettings(mode="software", fps_limit=50.0),
+    )
+
+    with pytest.raises(ValueError, match="FPS Limit"):
+        service._run_recording_capture(CancellationToken())  # noqa: SLF001
+
+    storage.start_recording_session.assert_not_called()

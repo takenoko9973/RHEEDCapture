@@ -853,7 +853,11 @@ def test_timestamp_enable_rejection_is_not_retried_during_restore(monkeypatch) -
     monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
     instant_camera = _FakeInstantCamera()
     chunk_selector = instant_camera.nodemap.nodes["ChunkSelector"]
-    original_values = instant_camera.nodemap.nodes["ChunkEnable"].values.copy()
+    chunk_enable = cast(
+        "_FakeChunkEnableNode",
+        instant_camera.nodemap.nodes["ChunkEnable"],
+    )
+    original_values = chunk_enable.values.copy()
     rejected_node = _RejectTimestampEnableNode(chunk_selector, original_values.copy())
     instant_camera.nodemap.nodes["ChunkEnable"] = rejected_node
     provider = ChunkFrameReadbackProvider()

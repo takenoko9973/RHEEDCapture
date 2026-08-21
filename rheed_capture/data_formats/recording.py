@@ -9,7 +9,7 @@ class RecordingFrameRow:
     """frames.csvへ1行として記録するRecordingフレーム情報。"""
 
     frame_index: int
-    target_elapsed_ms: float
+    target_elapsed_ms: float | None
     # Recording開始からsoftware trigger発行直前までのPC monotonic経過時間。
     actual_elapsed_ms: float
     # software trigger発行直前のPC時刻。画像受信完了時刻ではない。

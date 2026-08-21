@@ -72,7 +72,9 @@ class PreviewViewModel(QObject):
     def stop_preview(self) -> None:
         """プレビュー停止 (終了処理)"""
         self._worker.stop()
-        self._worker.wait(2000)
+        if not self._worker.wait(2000):
+            msg = "Preview worker did not stop within 2000 ms"
+            raise RuntimeError(msg)
 
     def get_acquisition_statistics_text(self) -> str:
         """現在のPreview取得統計をstatus bar表示用に返す。"""

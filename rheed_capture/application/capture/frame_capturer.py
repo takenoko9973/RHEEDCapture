@@ -348,8 +348,8 @@ class FrameCapturer:
         cancellation_token: CancellationToken,
     ) -> Iterator[CapturedFrame]:
         """条件を1回だけ適用し、同じTrigger SessionからRawを逐次取得する。"""
-        if frame_count <= 1:
-            msg = "複数Raw取得にはframe_countを2以上にしてください。"
+        if frame_count <= 0:
+            msg = "Raw取得数は1以上にしてください。"
             raise ValueError(msg)
 
         self.condition_applier.apply(condition)

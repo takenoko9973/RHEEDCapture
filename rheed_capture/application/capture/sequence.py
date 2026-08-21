@@ -62,11 +62,18 @@ class SequenceCapture:
 
             if self.accumulation_frames == 1:
                 # OFF/N=1は従来の保存先、ファイル名、メタデータ経路を変更しない。
-                captured_frame = self.frame_capturer.capture(condition)
-                self.session.save_frame(captured_frame)
+                # Trigger modeの判定はFrameCapturerへ集約し、Hardware時だけ共通待機
+                # timeout・no retry規則を適用する。
+                for captured_frame in self.frame_capturer.capture_group(
+                    condition,
+                    frame_count=1,
+                    hardware_wait_timeout_sec=self.trigger_wait_timeout_sec,
+                    cancellation_token=cancellation_token,
+                ):
+                    self.session.save_frame(captured_frame)
 
-                if on_frame_captured is not None:
-                    on_frame_captured(captured_frame)
+                    if on_frame_captured is not None:
+                        on_frame_captured(captured_frame)
                 continue
 
             accumulated_image: np.ndarray | None = None

@@ -265,3 +265,56 @@ def test_hardware_group_timeout_does_not_retry_or_discard_saved_raw() -> None:
     assert camera.expected_frames == [2]
     assert len(camera.sessions) == 1
     assert camera.sessions[0].closed
+
+
+def test_hardware_single_frame_group_uses_wait_timeout_without_retry() -> None:
+    """N=1でもHardware trigger待機timeoutは再アームせず即時に失敗する。"""
+    camera = _FakeCamera([TimeoutError("trigger missing")])
+    settings = TriggerSettings(
+        mode="hardware",
+        hardware_source="Line1",
+        hardware_activation="RisingEdge",
+        hardware_delay_us=0,
+        fps_limit=None,
+    )
+    capturer = FrameCapturer(camera, trigger_settings=settings, retry_interval_sec=0)
+
+    frames = capturer.capture_group(
+        CaptureCondition(exposure_ms=10.0, gain=0),
+        frame_count=1,
+        hardware_wait_timeout_sec=0.001,
+        cancellation_token=CancellationToken(),
+    )
+
+    with pytest.raises(TimeoutError, match="設定時間"):
+        next(frames)
+
+    assert camera.expected_frames == [1]
+    assert len(camera.sessions) == 1
+    assert all(name == "retrieve" for name, _timeout_ms in camera.sessions[0].calls)
+    assert camera.sessions[0].closed
+
+
+def test_software_single_frame_group_keeps_existing_retry_behavior() -> None:
+    """N=1のSoftware取得は従来どおりdeadline付きで再試行する。"""
+    image = np.ones((2, 2), dtype=np.uint16)
+    camera = _FakeCamera([CameraError("temporary"), _camera_frame(image)])
+    capturer = FrameCapturer(camera, retry_interval_sec=0)
+
+    frames = list(
+        capturer.capture_group(
+            CaptureCondition(exposure_ms=10.0, gain=0),
+            frame_count=1,
+            hardware_wait_timeout_sec=1,
+            cancellation_token=CancellationToken(),
+        )
+    )
+
+    assert len(frames) == 1
+    assert np.array_equal(frames[0].image, image)
+    assert camera.expected_frames == [1, 1]
+    assert [name for name, _timeout_ms in camera.sessions[0].calls] == [
+        "wait",
+        "trigger",
+        "retrieve",
+    ]

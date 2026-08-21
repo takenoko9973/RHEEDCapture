@@ -2,6 +2,7 @@ import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -301,14 +302,22 @@ def test_accumulation_storage_writes_raw_groups_without_changing_tiff_metadata()
 
         with tifffile.TiffFile(sequence_path) as tif:
             assert np.array_equal(tif.asarray(), captured_frame.image)
-            sequence_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+            sequence_page = cast("tifffile.TiffPage", tif.pages[0])
+            sequence_metadata = json.loads(sequence_page.tags["ImageDescription"].value)
         with tifffile.TiffFile(sequence_regular_path) as tif:
-            sequence_regular_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+            sequence_regular_page = cast("tifffile.TiffPage", tif.pages[0])
+            sequence_regular_metadata = json.loads(
+                sequence_regular_page.tags["ImageDescription"].value
+            )
         with tifffile.TiffFile(angle_path) as tif:
             assert np.array_equal(tif.asarray(), captured_frame.image)
-            angle_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+            angle_page = cast("tifffile.TiffPage", tif.pages[0])
+            angle_metadata = json.loads(angle_page.tags["ImageDescription"].value)
         with tifffile.TiffFile(angle_regular_path) as tif:
-            angle_regular_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+            angle_regular_page = cast("tifffile.TiffPage", tif.pages[0])
+            angle_regular_metadata = json.loads(
+                angle_regular_page.tags["ImageDescription"].value
+            )
 
         assert sequence_metadata == sequence_regular_metadata
         assert angle_metadata == angle_regular_metadata

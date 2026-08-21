@@ -349,6 +349,7 @@ class MainWindow(QMainWindow):
     def _on_acquisition_settings_changed(self, settings: AcquisitionSettings) -> None:
         """Acquisition設定をPreviewへ渡し、Hardware時のrate入力をlockする。"""
         self.preview_vm.set_acquisition_settings(settings)
+        self.recording_vm.set_acquisition_settings(settings)
         self.recording_panel.set_hardware_mode(settings.mode)
         current_settings = self._build_current_settings(settings)
         self.capture_vm.load_settings(current_settings)
@@ -569,6 +570,7 @@ class MainWindow(QMainWindow):
         self.angle_scan_vm.load_settings(settings)
         self.acquisition_settings_panel.apply_settings(settings.acquisition)
         self.preview_vm.load_acquisition_settings(settings.acquisition)
+        self.recording_vm.load_acquisition_settings(settings.acquisition)
         self.recording_panel.set_hardware_mode(settings.acquisition.mode)
         self.recording_panel.apply_settings(settings.recording_capture)
         self.recording_vm.load_settings(settings.recording_capture)

@@ -138,6 +138,19 @@ def test_main_window_initialization(
     window.close()
 
 
+def test_main_window_close_immediately_stops_preview_worker(
+    qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock
+) -> None:
+    """生成直後の終了要求でもPreview workerを起動したままにしない。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    worker = window.preview_vm._worker  # noqa: SLF001
+
+    window.close()
+
+    assert not worker.isRunning()
+
+
 def test_branch_update_logic(qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock) -> None:
     """Branch更新操作でStorage更新と通知Dialogが呼ばれることを確認する。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
@@ -264,6 +277,7 @@ def test_acquisition_controls_lock_during_capture_and_recording_rate_uses_mode(
     assert window.recording_panel.btn_rate_interval.isEnabled() is False
     assert window.recording_panel.btn_rate_fps.isEnabled() is False
     assert window.preview_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
+    assert window.recording_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
     assert window.capture_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
     assert window.angle_scan_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
 
