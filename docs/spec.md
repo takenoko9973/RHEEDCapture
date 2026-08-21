@@ -89,8 +89,10 @@ PythonやNumPyによる `Mono12Packed` の手動アンパックは行わない�
 1. プレビューの完全停止 (`StopGrabbing`)。
 2. 入力された露光時間(ms)リストとゲインリストを**それぞれ昇順にソートする**（カメラの安定性確保のため、小さい値から順に適用する）。
 3. ソートされたリストの**直積（全組み合わせ）**を展開し、順次設定を適用。
-4. 条件ごとに `expected_frames=1` のソフトトリガーSessionを開始し、`TriggerReady` 待機後に1回triggerを発行して `GrabStrategy_OneByOne` で1枚取得する。
+4. 条件ごとに `expected_frames=1` のTrigger Sessionを開始し、選択したTrigger Modeに従って `GrabStrategy_OneByOne` で1枚取得する。
 5. 撮影完了後、プレビューを自動再開。
+
+共通Acquisition設定が `Software` の場合は上記の `TriggerReady` 待機とSoftware Trigger発行を行う。`Hardware` の場合はアプリからSoftware Triggerを発行せず、外部FrameStartに対応するフレームを待つ。HardwareではTrigger Source / Activation / Delayを指定し、利用不能または設定拒否時に別値へ変更せず `CameraError` とする。
 
 * **キャンセルフラグ**: ユーザーによる即時中断（進行中の撮影ループ終了後に停止）をサポート。
 
@@ -171,7 +173,7 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 
 ```
 
-`exposure_ms` と `gain` はアプリが要求した撮影条件、`camera_exposure_ms` と `camera_gain` は取得フレームに対応するカメラ読戻し値を表す。実機ではExposure Time、Gain All、Timestamp Chunkから読戻し、pylonエミュレータでは設定nodeと仮想timestampから同じ項目を作る。`timestamp` はPCがソフトトリガー命令を発行する直前のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` は画像取得開始時のカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測値ではない。Recordingではcamera読戻し項目をTIFFと `frames.csv` の両方へ保存する。
+`exposure_ms` と `gain` はアプリが要求した撮影条件、`camera_exposure_ms` と `camera_gain` は取得フレームに対応するカメラ読戻し値を表す。実機ではExposure Time、Gain Allを必須Chunkから読戻し、Timestamp Chunkが利用可能な場合だけcamera timestampを使う。Timestamp Chunkが欠落・不可読なカメラでも撮影を拒否せず、`camera_timestamp_source` を `host` として `time.time_ns()` を1GHzのtickへ保存する。`timestamp` はSoftwareではPCがSoftware Trigger命令を発行する直前のJST時刻、HardwareではRaw frameをhostが取得した時点のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` は画像取得開始時のカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、Software Trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測値ではない。Recordingではcamera読戻し項目をTIFFと `frames.csv` の両方へ保存する。
 
 取得統計は実行時の診断表示であり、`pixel_format`、`transport_format`、`fps`、`average_fps`、`payload_rate` をTIFFメタデータへ追加しない。
 
@@ -194,7 +196,7 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
 ## 7. エラー・例外処理
 
 * **リトライ制御 (CaptureService)**:
-ソフトトリガーSession開始（必須node設定、Chunk準備、`StartGrabbing`）、`TriggerReady` 待機、trigger発行、`RetrieveResult`、Grab成否、必須Chunk読戻し、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
+Trigger Session開始（Trigger設定、必須node設定、必須Chunk準備、`StartGrabbing`）、Softwareの`TriggerReady` 待機・trigger発行、`RetrieveResult`、Grab成否、必須Chunk読戻し、画像変換、カメラ通信のいずれかが失敗した場合、異常Sessionを閉じて新しいSessionを作り、最大 **3回** まで再撮影する。Timestamp Chunkだけは任意であり、欠落・不可読時はhost timestampへfallbackする。Exposure/Gain readbackの失敗は再試行対象の撮影エラーとする。各試行は `露光時間 + 500ms` の共通deadlineを持ち、待機と取得にはその残り時間だけを渡す。
 * **接続初期化失敗時の保護**:
 カメラをOpenした後のデバイス情報取得または初期設定で失敗した場合は、カメラをCloseして未接続状態へ戻し、起動エラーとして通知する。
 * **致命的エラー時の保護**:

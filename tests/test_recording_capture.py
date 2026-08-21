@@ -19,7 +19,12 @@ from rheed_capture.application.capture.recording import (
     RecordingSettings,
     interval_from_fps,
 )
-from rheed_capture.application.ports.camera import CameraError, CameraFrame, FrameReadback
+from rheed_capture.application.ports.camera import (
+    CameraError,
+    CameraFrame,
+    FrameReadback,
+    TriggerSettings,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,7 +48,7 @@ class _FakeCamera:
         self.sleep_sec = sleep_sec
         self.exposures: list[float] = []
         self.gains: list[int] = []
-        self.sessions: list[_FakeSoftwareTriggerSession] = []
+        self.sessions: list[_FakeTriggerCaptureSession] = []
 
     def set_exposure(self, exposure_ms: float) -> None:
         """設定された露光時間を記録する。"""
@@ -53,18 +58,20 @@ class _FakeCamera:
         """設定されたGainを記録する。"""
         self.gains.append(gain)
 
-    def start_software_trigger_session(
+    def start_trigger_session(
         self,
         *,
+        settings: TriggerSettings,
         expected_frames: int | None,
-    ) -> _FakeSoftwareTriggerSession:
-        """Recording用の長期ソフトトリガーSessionを作成する。"""
-        session = _FakeSoftwareTriggerSession(self, expected_frames=expected_frames)
+    ) -> _FakeTriggerCaptureSession:
+        """Recording用の長期Trigger Sessionを作成する。"""
+        assert settings.mode == "software"
+        session = _FakeTriggerCaptureSession(self, expected_frames=expected_frames)
         self.sessions.append(session)
         return session
 
 
-class _FakeSoftwareTriggerSession:
+class _FakeTriggerCaptureSession:
     """RecordingのSession再利用と再作成を観測するtest double。"""
 
     def __init__(self, camera: _FakeCamera, *, expected_frames: int | None) -> None:
@@ -90,7 +97,7 @@ class _FakeSoftwareTriggerSession:
     def wait_until_ready(self, timeout_ms: int) -> None:
         """テストでは即座にtrigger readyとする。"""
 
-    def execute_trigger(self) -> None:
+    def execute_software_trigger(self) -> None:
         """発行されたソフトトリガー数を記録する。"""
         self.trigger_count += 1
 

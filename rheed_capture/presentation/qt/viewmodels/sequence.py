@@ -43,8 +43,10 @@ class CaptureViewModel(QObject):
             defaults.sequence_capture.selected_exposure_ms_values
         )
         self._selected_gain_values = defaults.sequence_capture.selected_gain_values
+        self._acquisition_settings = defaults.acquisition
 
     def load_settings(self, settings: AppSettingsData) -> None:
+        self._acquisition_settings = settings.acquisition
         self.update_candidate_values(settings.exposure_ms_values, settings.gain_values)
         self.update_selected_exposure_ms_values(
             settings.sequence_capture.selected_exposure_ms_values
@@ -108,7 +110,12 @@ class CaptureViewModel(QObject):
             self.sequence_finished.emit(False, "")
             return
 
-        self._capture_service = CaptureService(self._camera, self._storage, conditions)
+        self._capture_service = CaptureService(
+            self._camera,
+            self._storage,
+            conditions,
+            self._acquisition_settings,
+        )
         self._capture_service.progress_update.connect(self.progress_updated)
         self._capture_service.frame_captured.connect(self.frame_captured)
         self._capture_service.sequence_finished.connect(self.sequence_finished)

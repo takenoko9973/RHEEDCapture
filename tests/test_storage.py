@@ -12,7 +12,9 @@ from rheed_capture.application.ports.camera import FrameReadback
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
+    AngleScanStorageFormat,
     CaptureCondition,
+    CaptureExecutionSettings,
 )
 from rheed_capture.data_formats.storage_naming import (
     ANGLE_DIR_PATTERN,
@@ -210,8 +212,119 @@ def test_angle_scan_storage_uses_independent_counter_and_spec_names() -> None:
         with (scan_dir / "scan.json").open(encoding="utf-8") as f:
             saved_scan = json.load(f)
         assert saved_scan["scan_id"] == "as001"
-        assert saved_scan["storage"]["angle_directory_format"] == ANGLE_DIR_PATTERN
-        assert saved_scan["storage"]["filename_format"] == ANGLE_SCAN_TIFF_FILENAME_PATTERN
+        assert saved_scan["capture"] == {
+            "loop_order": ["angle", "condition"],
+            "retry_limit": 3,
+        }
+        assert saved_scan["storage"] == {
+            "angle_directory_format": ANGLE_DIR_PATTERN,
+            "filename_format": ANGLE_SCAN_TIFF_FILENAME_PATTERN,
+        }
+
+
+def test_accumulation_storage_writes_raw_groups_without_changing_tiff_metadata() -> None:
+    """蓄積時も各Rawを明示的なグループへ既存メタデータのまま保存する。"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(temp_dir)
+        captured_frame = CapturedFrame(
+            image=np.full((2, 2), 40_000, dtype=np.uint16),
+            condition=DomainCaptureCondition(exposure_ms=10.0, gain=2),
+            readback=FrameReadback(
+                exposure_ms=9.5,
+                gain=3,
+                camera_timestamp_ticks=123,
+                camera_timestamp_frequency_hz=125_000_000,
+                source="camera",
+            ),
+            timing=CaptureTiming(
+                trigger_issued_at=datetime.fromisoformat("2026-07-11T12:00:00+09:00"),
+                trigger_issued_monotonic_sec=1.0,
+            ),
+        )
+
+        sequence_session = storage.start_sequence_session()
+        sequence_regular_path = sequence_session.save_frame(captured_frame)
+        sequence_paths = [
+            sequence_session.save_accumulation_frame(
+                captured_frame,
+                group_index=1,
+                raw_index=raw_index,
+            )
+            for raw_index in range(1, 11)
+        ]
+        sequence_path = sequence_paths[0]
+        assert sequence_path.relative_to(sequence_session.session_dir).as_posix() == (
+            "group_0001_expo10_gain2/raw_0001.tiff"
+        )
+
+        scan_document = AngleScanDocument(
+            schema_version=1,
+            scan_id="",
+            created_at="",
+            angle_scan=AngleScanDocumentSettings(
+                coordinate="relative",
+                reference="current_position_at_scan_start",
+                range_deg=0.5,
+                interval_deg=0.5,
+                direction="positive",
+                position_units_per_deg=31.25,
+                capture_angles_deg=[0.0, 0.5],
+                wait_after_move_ms=0,
+                motor_speed_rpm=4.0,
+                return_to_start=False,
+            ),
+            capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=2)],
+            capture=CaptureExecutionSettings.for_accumulation(
+                retry_limit=3,
+                accumulation_frames=10,
+            ),
+            storage=AngleScanStorageFormat.for_accumulation(10),
+        )
+        angle_session = storage.start_angle_scan_session(scan_document)
+        angle_regular_path = angle_session.save_frame(captured_frame, 0.5)
+        angle_paths = [
+            angle_session.save_accumulation_frame(
+                captured_frame,
+                0.5,
+                condition_index=1,
+                raw_index=raw_index,
+            )
+            for raw_index in range(1, 11)
+        ]
+        angle_path = angle_paths[0]
+        assert angle_path.relative_to(angle_session.session_dir).as_posix() == (
+            "angle+000.5/group_0001_exp10_gain2/raw_0001.tiff"
+        )
+        assert len(sequence_paths) == 10
+        assert len(angle_paths) == 10
+        assert all(path.exists() for path in [*sequence_paths, *angle_paths])
+
+        with tifffile.TiffFile(sequence_path) as tif:
+            assert np.array_equal(tif.asarray(), captured_frame.image)
+            sequence_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+        with tifffile.TiffFile(sequence_regular_path) as tif:
+            sequence_regular_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+        with tifffile.TiffFile(angle_path) as tif:
+            assert np.array_equal(tif.asarray(), captured_frame.image)
+            angle_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+        with tifffile.TiffFile(angle_regular_path) as tif:
+            angle_regular_metadata = json.loads(tif.pages[0].tags["ImageDescription"].value)
+
+        assert sequence_metadata == sequence_regular_metadata
+        assert angle_metadata == angle_regular_metadata
+
+        with (angle_session.session_dir / "scan.json").open(encoding="utf-8") as f:
+            saved_scan = json.load(f)
+        assert saved_scan["capture"] == {
+            "loop_order": ["angle", "condition", "raw"],
+            "retry_limit": 3,
+            "accumulation_frames": 10,
+        }
+        assert saved_scan["storage"] == {
+            "angle_directory_format": ANGLE_DIR_PATTERN,
+            "group_directory_format": "group_{condition_index:04d}_exp{exposure_ms:g}_gain{gain:g}",
+            "raw_filename_format": "raw_{raw_index:04d}.tiff",
+        }
 
 
 def test_angle_scan_counter_uses_max_suffix_without_reuse() -> None:

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from rheed_capture.application.capture.cancellation import CancellationToken
     from rheed_capture.domain.capture_condition import CaptureCondition
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+    from rheed_capture.infrastructure.config.schema import AcquisitionSettings
     from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
 logger = logging.getLogger(__name__)
@@ -32,11 +33,19 @@ class CaptureService(CaptureWorker):
         camera_device: CameraDevice,
         storage: ExperimentStorage,
         conditions: list[CaptureCondition],
+        acquisition_settings: AcquisitionSettings,
         parent: QObject | None = None,
     ) -> None:
         self.camera = camera_device
         self.storage = storage
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
+        self._trigger_settings = acquisition_settings.to_trigger_settings()
+        self._accumulation_frames = (
+            acquisition_settings.accumulation_frames
+            if acquisition_settings.accumulation_enabled
+            else 1
+        )
+        self._trigger_wait_timeout_sec = acquisition_settings.trigger_wait_timeout_sec
         # 開始後にUI側の選択が変わっても、今回の撮影条件は固定する。
         self._conditions = list(conditions)
         super().__init__(self._run_sequence_capture, parent=parent)
@@ -48,9 +57,15 @@ class CaptureService(CaptureWorker):
         session = self.storage.start_sequence_session()
         # Application層には解決済み条件だけを渡す。
         capture = SequenceCapture(
-            FrameCapturer(self.camera, max_retries=self.max_retries),
+            FrameCapturer(
+                self.camera,
+                trigger_settings=self._trigger_settings,
+                max_retries=self.max_retries,
+            ),
             session,
             self._conditions,
+            accumulation_frames=self._accumulation_frames,
+            trigger_wait_timeout_sec=self._trigger_wait_timeout_sec,
         )
 
         def emit_progress(

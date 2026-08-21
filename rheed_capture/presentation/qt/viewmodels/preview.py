@@ -2,7 +2,7 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
-from rheed_capture.infrastructure.config.schema import PreviewSettings
+from rheed_capture.infrastructure.config.schema import AcquisitionSettings, PreviewSettings
 from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
     format_preview_statistics,
 )
@@ -39,6 +39,7 @@ class PreviewViewModel(QObject):
         self._exposure = 50.0
         self._gain = 0
         self._clahe_enabled = False
+        self._acquisition_settings = AcquisitionSettings()
 
     def load_settings(self, settings: PreviewSettings) -> None:
         """設定ファイルから状態を復元し、システムに適用する"""
@@ -54,6 +55,16 @@ class PreviewViewModel(QObject):
             enable_clahe=self._clahe_enabled,
         )
 
+    def load_acquisition_settings(self, settings: AcquisitionSettings) -> None:
+        """保存済みAcquisition設定をPreviewWorkerへ反映する。"""
+        self.set_acquisition_settings(settings)
+
+    @Slot(object)
+    def set_acquisition_settings(self, settings: AcquisitionSettings) -> None:
+        """Acquisition設定を保持し、Preview中はSessionを再armする。"""
+        self._acquisition_settings = settings
+        self._worker.set_acquisition_settings(settings)
+
     def start_preview(self) -> None:
         """プレビュー開始"""
         self._worker.start()
@@ -61,9 +72,7 @@ class PreviewViewModel(QObject):
     def stop_preview(self) -> None:
         """プレビュー停止 (終了処理)"""
         self._worker.stop()
-        if not self._worker.wait(2000):
-            self._worker.terminate()
-            self._worker.wait(1000)
+        self._worker.wait(2000)
 
     def get_acquisition_statistics_text(self) -> str:
         """現在のPreview取得統計をstatus bar表示用に返す。"""

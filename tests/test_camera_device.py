@@ -10,8 +10,9 @@ os.environ["PYLON_CAMEMU"] = "1"
 
 from pypylon import genicam, pylon
 
-from rheed_capture.application.ports.camera import CameraError
+from rheed_capture.application.ports.camera import CameraError, TriggerSettings
 from rheed_capture.infrastructure.camera import basler_camera as basler_module
+from rheed_capture.infrastructure.camera import basler_frame_readback as readback_module
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice, CameraState
 from rheed_capture.infrastructure.camera.basler_configurators import (
     CAMERA_EMULATION_ROI,
@@ -20,6 +21,14 @@ from rheed_capture.infrastructure.camera.basler_configurators import (
 from rheed_capture.infrastructure.camera.basler_frame_readback import (
     ChunkFrameReadbackProvider,
     SimulationFrameReadbackProvider,
+)
+
+SOFTWARE_TRIGGER_SETTINGS = TriggerSettings(
+    mode="software",
+    hardware_source="Line1",
+    hardware_activation="RisingEdge",
+    hardware_delay_us=0.0,
+    fps_limit=None,
 )
 
 
@@ -272,9 +281,12 @@ def test_emulator_captures_with_simulation_readback(
     camera_device.set_exposure(10.5)
     camera_device.set_gain(240)
 
-    with camera_device.start_software_trigger_session(expected_frames=1) as session:
+    with camera_device.start_trigger_session(
+        settings=SOFTWARE_TRIGGER_SETTINGS,
+        expected_frames=1,
+    ) as session:
         session.wait_until_ready(1000)
-        session.execute_trigger()
+        session.execute_software_trigger()
         frame = session.retrieve_frame(1000)
 
     assert frame.image.shape == (540, 720)
@@ -310,7 +322,10 @@ def test_preview_grabbing(camera_device: CameraDevice) -> None:
         camera_device.set_exposure(20.0)
 
     with pytest.raises(CameraError, match="idle状態"):
-        camera_device.start_software_trigger_session(expected_frames=1)
+        camera_device.start_trigger_session(
+            settings=SOFTWARE_TRIGGER_SETTINGS,
+            expected_frames=1,
+        )
 
     # 1フレームだけ手動で取り出してみる
     grab_result = camera_device.camera.RetrieveResult(1000, pylon.TimeoutHandling_ThrowException)
@@ -346,16 +361,38 @@ def test_retrieve_preview_frame(camera_device: CameraDevice) -> None:
 class _FakeNode:
     """Basler trigger unit test用の読み書き可能なGenICam node。"""
 
-    def __init__(self, value: str | float) -> None:
-        """初期node値を保持する。"""
+    def __init__(
+        self,
+        value: str | float,
+        *,
+        available: bool = True,
+        writable: bool = True,
+        readable: bool = True,
+        write_error: Exception | None = None,
+    ) -> None:
+        """初期node値と状態を保持する。"""
         self.value = value
+        self.available = available
+        self.writable = writable
+        self.readable = readable
+        self.write_error = write_error
 
     def is_available(self) -> bool:
         """利用可能なnodeとして扱う。"""
-        return True
+        return self.available
+
+    def is_writable(self) -> bool:
+        """書き込み可能なnodeとして扱う。"""
+        return self.writable
+
+    def is_readable(self) -> bool:
+        """読み取り可能なnodeとして扱う。"""
+        return self.readable
 
     def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
         """GenICam文字列表現からnode値を更新する。"""
+        if self.write_error is not None:
+            raise self.write_error
         if isinstance(self.value, int):
             self.value = int(value)
         elif isinstance(self.value, float):
@@ -396,6 +433,23 @@ class _FakeChunkEnableNode(_FakeNode):
     def GetValue(self) -> str:  # noqa: N802
         """選択中Chunkの有効状態を返す。"""
         return self.ToString()
+
+
+class _RejectTimestampEnableNode(_FakeChunkEnableNode):
+    """Timestamp Chunkのenable書込みだけを拒否するtest double。"""
+
+    def __init__(self, selector: _FakeNode, values: dict[str, str]) -> None:
+        """Timestamp enable書込み試行数を初期化する。"""
+        super().__init__(selector, values)
+        self.timestamp_enable_attempts = 0
+
+    def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
+        """Timestamp Chunkの有効化だけをSDK拒否として返す。"""
+        if str(self.selector.value) == "Timestamp" and value == "1":
+            self.timestamp_enable_attempts += 1
+            msg = "timestamp chunk rejected"
+            raise genicam.LogicalErrorException(msg)
+        super().FromString(value)
 
 
 class _FakeNodeMap:
@@ -465,6 +519,10 @@ class _FakeInstantCamera:
                 "TriggerSelector": _FakeNode("FrameStart"),
                 "TriggerMode": _FakeNode("Off"),
                 "TriggerSource": _FakeNode("Line1"),
+                "TriggerActivation": _FakeNode("RisingEdge"),
+                "TriggerDelayAbs": _FakeNode(0.0),
+                "AcquisitionFrameRateEnable": _FakeNode(0),
+                "AcquisitionFrameRateAbs": _FakeNode(100.0),
                 "ChunkModeActive": _FakeNode("False"),
                 "ChunkSelector": chunk_selector,
                 "ChunkEnable": _FakeChunkEnableNode(
@@ -559,11 +617,14 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
     )
     camera_device.converter = cast("pylon.ImageFormatConverter", _FakeConverter())
 
-    with camera_device.start_software_trigger_session(expected_frames=1) as session:
+    with camera_device.start_trigger_session(
+        settings=SOFTWARE_TRIGGER_SETTINGS,
+        expected_frames=1,
+    ) as session:
         with pytest.raises(CameraError, match="idle状態"):
             camera_device.start_preview_grab()
         session.wait_until_ready(100)
-        session.execute_trigger()
+        session.execute_software_trigger()
         frame = session.retrieve_frame(100)
 
         assert instant_camera.start_args == (
@@ -591,6 +652,274 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
     assert isinstance(chunk_enable, _FakeChunkEnableNode)
     assert chunk_enable.values == instant_camera.original_chunk_enabled
     assert camera_device.state is CameraState.IDLE
+
+
+def test_hardware_trigger_session_applies_nodes_without_software_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hardware設定を厳密に適用し、Software Triggerを発行しない。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    instant_camera = _FakeInstantCamera()
+    camera_device = CameraDevice()
+    camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
+    camera_device._state = CameraState.IDLE  # noqa: SLF001
+    camera_device._frame_readback_provider_factory = (  # noqa: SLF001
+        ChunkFrameReadbackProvider
+    )
+    camera_device.converter = cast("pylon.ImageFormatConverter", _FakeConverter())
+    settings = TriggerSettings(
+        mode="hardware",
+        hardware_source="Line3",
+        hardware_activation="FallingEdge",
+        hardware_delay_us=12.5,
+        fps_limit=25.0,
+    )
+
+    with camera_device.start_trigger_session(settings=settings, expected_frames=1) as session:
+        frame = session.retrieve_frame(100)
+
+        with pytest.raises(CameraError, match="Software Trigger"):
+            session.execute_software_trigger()
+
+    nodes = instant_camera.nodemap.nodes
+    assert nodes["TriggerSource"].value == "Line3"
+    assert nodes["TriggerActivation"].value == "FallingEdge"
+    assert nodes["TriggerDelayAbs"].value == 12.5
+    assert nodes["AcquisitionFrameRateEnable"].value == 1
+    assert nodes["AcquisitionFrameRateAbs"].value == 25.0
+    assert instant_camera.trigger_count == 0
+    assert frame.readback.source == "camera"
+
+
+@pytest.mark.parametrize(
+    ("node_name", "settings"),
+    [
+        (
+            "TriggerSource",
+            TriggerSettings(
+                mode="hardware",
+                hardware_source="Line3",
+                hardware_activation="FallingEdge",
+                hardware_delay_us=12.5,
+                fps_limit=None,
+            ),
+        ),
+        (
+            "TriggerActivation",
+            TriggerSettings(
+                mode="hardware",
+                hardware_source="Line3",
+                hardware_activation="FallingEdge",
+                hardware_delay_us=12.5,
+                fps_limit=None,
+            ),
+        ),
+        (
+            "TriggerDelayAbs",
+            TriggerSettings(
+                mode="hardware",
+                hardware_source="Line3",
+                hardware_activation="FallingEdge",
+                hardware_delay_us=12.5,
+                fps_limit=None,
+            ),
+        ),
+        (
+            "AcquisitionFrameRateAbs",
+            TriggerSettings(
+                mode="software",
+                hardware_source="Line1",
+                hardware_activation="RisingEdge",
+                hardware_delay_us=0.0,
+                fps_limit=25.0,
+            ),
+        ),
+    ],
+)
+@pytest.mark.parametrize("failure_kind", ["unavailable", "nonwritable", "rejected"])
+def test_trigger_setting_failures_raise_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    node_name: str,
+    settings: TriggerSettings,
+    failure_kind: str,
+) -> None:
+    """Trigger設定nodeの失敗を明示的に返し、別値へ変更しない。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsWritable",
+        lambda node: node is not None and node.is_writable(),
+    )
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsReadable",
+        lambda node: node is not None and node.is_readable(),
+    )
+    instant_camera = _FakeInstantCamera()
+    node = instant_camera.nodemap.nodes[node_name]
+    original_value = node.value
+    if failure_kind == "unavailable":
+        node.available = False
+    elif failure_kind == "nonwritable":
+        node.writable = False
+    else:
+        node.write_error = genicam.LogicalErrorException("rejected")
+
+    camera_device = CameraDevice()
+    camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
+    camera_device._state = CameraState.IDLE  # noqa: SLF001
+    camera_device._frame_readback_provider_factory = (  # noqa: SLF001
+        ChunkFrameReadbackProvider
+    )
+
+    with pytest.raises(CameraError, match=node_name):
+        camera_device.start_trigger_session(settings=settings, expected_frames=1)
+
+    assert node.value == original_value
+    assert camera_device.state is CameraState.IDLE
+
+
+def test_grab_result_timestamp_falls_back_to_host_time(monkeypatch) -> None:  # noqa: ANN001
+    """GrabResultのTimestamp Chunk欠落時はhost時刻へ限定fallbackする。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    monkeypatch.setattr(readback_module.time, "time_ns", lambda: 9876543210)
+    instant_camera = _FakeInstantCamera()
+    provider = ChunkFrameReadbackProvider()
+    provider.prepare(cast("pylon.InstantCamera", instant_camera))
+    result = _FakeGrabResult(123)
+    result.chunk_nodemap.nodes.pop("ChunkTimestamp")
+
+    frame = provider.read(
+        cast("pylon.InstantCamera", instant_camera),
+        result,
+    )
+
+    assert frame.exposure_ms == 12.5
+    assert frame.gain == 240
+    assert frame.camera_timestamp_ticks == 9876543210
+    assert frame.camera_timestamp_frequency_hz == 1_000_000_000
+    assert frame.source == "host"
+
+
+def test_timestamp_prepare_failure_falls_back_to_host_time(monkeypatch) -> None:  # noqa: ANN001
+    """Timestamp Chunk設定が利用不能でもExposure/Gain取得は継続する。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    monkeypatch.setattr(readback_module.time, "time_ns", lambda: 13579)
+    instant_camera = _FakeInstantCamera()
+    instant_camera.nodemap.nodes.pop("GevTimestampTickFrequency")
+    provider = ChunkFrameReadbackProvider()
+    provider.prepare(cast("pylon.InstantCamera", instant_camera))
+
+    frame = provider.read(
+        cast("pylon.InstantCamera", instant_camera),
+        _FakeGrabResult(123),
+    )
+
+    assert frame.camera_timestamp_ticks == 13579
+    assert frame.camera_timestamp_frequency_hz == 1_000_000_000
+    assert frame.source == "host"
+
+
+def test_timestamp_enable_rejection_is_not_retried_during_restore(monkeypatch) -> None:  # noqa: ANN001
+    """Timestamp enable失敗後は未変更Chunkを復元対象に追加しない。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    instant_camera = _FakeInstantCamera()
+    chunk_selector = instant_camera.nodemap.nodes["ChunkSelector"]
+    original_values = instant_camera.nodemap.nodes["ChunkEnable"].values.copy()
+    rejected_node = _RejectTimestampEnableNode(chunk_selector, original_values.copy())
+    instant_camera.nodemap.nodes["ChunkEnable"] = rejected_node
+    provider = ChunkFrameReadbackProvider()
+
+    provider.prepare(cast("pylon.InstantCamera", instant_camera))
+    provider.restore(cast("pylon.InstantCamera", instant_camera))
+
+    assert rejected_node.timestamp_enable_attempts == 1
+    assert rejected_node.values == original_values
+
+
+@pytest.mark.parametrize(
+    ("invalid_settings", "message"),
+    [
+        ({"mode": "free_run"}, "Trigger mode"),
+        ({"hardware_source": ""}, "Hardware trigger source"),
+        ({"hardware_activation": "   "}, "Hardware trigger activation"),
+        ({"hardware_delay_us": float("nan")}, "Hardware trigger delay"),
+        ({"hardware_delay_us": float("inf")}, "Hardware trigger delay"),
+        ({"hardware_delay_us": -1.0}, "Hardware trigger delay"),
+        ({"fps_limit": float("nan")}, "FPS Limit"),
+        ({"fps_limit": float("inf")}, "FPS Limit"),
+        ({"fps_limit": 0.0}, "FPS Limit"),
+        ({"fps_limit": -1.0}, "FPS Limit"),
+    ],
+)
+def test_trigger_settings_reject_non_finite_or_invalid_values(
+    invalid_settings: dict[str, object],
+    message: str,
+) -> None:
+    """TriggerSettingsは不正なmode、文字列、数値を生成時に拒否する。"""
+    values: dict[str, object] = {
+        "mode": "software",
+        "hardware_source": "Line1",
+        "hardware_activation": "RisingEdge",
+        "hardware_delay_us": 0.0,
+        "fps_limit": None,
+    }
+    values.update(invalid_settings)
+
+    with pytest.raises(ValueError, match=message):
+        TriggerSettings(**values)  # type: ignore[arg-type]
+
+
+def test_unlimited_frame_rate_disables_camera_limit(monkeypatch) -> None:  # noqa: ANN001
+    """Unlimitedではcamera側frame-rate enableを無効にする。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    instant_camera = _FakeInstantCamera()
+    camera_device = CameraDevice()
+    camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
+    camera_device._state = CameraState.IDLE  # noqa: SLF001
+    camera_device._frame_readback_provider_factory = (  # noqa: SLF001
+        ChunkFrameReadbackProvider
+    )
+
+    with camera_device.start_trigger_session(
+        settings=SOFTWARE_TRIGGER_SETTINGS,
+        expected_frames=1,
+    ):
+        assert instant_camera.nodemap.nodes["AcquisitionFrameRateEnable"].value == 0
 
 
 def test_payload_size_falls_back_to_readable_camera_node(monkeypatch) -> None:  # noqa: ANN001

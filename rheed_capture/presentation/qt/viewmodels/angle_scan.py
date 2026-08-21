@@ -87,10 +87,12 @@ class AngleScanViewModel(QObject):
         self._settling_time_ms = scan_defaults.wait_after_move_ms
         self._motor_speed_rpm = scan_defaults.motor_speed_rpm
         self._return_to_start = scan_defaults.return_to_start
+        self._acquisition_settings = defaults.acquisition
 
     def load_settings(self, settings: AppSettingsData) -> None:
         scan_settings = settings.angle_scan
         motor_settings = settings.device.motor
+        self._acquisition_settings = settings.acquisition
 
         self.update_candidate_values(settings.exposure_ms_values, settings.gain_values)
         self.update_selected_exposure_ms_values(
@@ -279,6 +281,7 @@ class AngleScanViewModel(QObject):
                 motor,
                 conditions,
                 settings,
+                self._acquisition_settings,
             )
         except ValueError as e:
             self.error_occurred.emit(str(e))

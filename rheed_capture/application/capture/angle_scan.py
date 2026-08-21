@@ -7,11 +7,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+import numpy as np
+
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, FrameCapture
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
+    AngleScanStorageFormat,
     CaptureExecutionSettings,
 )
 from rheed_capture.data_formats.angle_scan_document import (
@@ -84,12 +87,17 @@ class AngleScanCapture:
         motor: RotationMotor,
         conditions: list[CaptureCondition],
         settings: AngleScanSettings,
+        *,
+        accumulation_frames: int = 1,
+        trigger_wait_timeout_sec: float = 0,
     ) -> None:
         """撮影、保存、モータ操作の依存を受け取り、走査計画を確定する。"""
         self.frame_capturer = frame_capturer
         self.session = session
         self.motor = motor
         self.settings = settings
+        self.accumulation_frames = accumulation_frames
+        self.trigger_wait_timeout_sec = trigger_wait_timeout_sec
 
         self.calibration = MotorAngleCalibration(settings.position_units_per_deg)
         self.plan = self._build_plan(settings)
@@ -98,6 +106,9 @@ class AngleScanCapture:
         if not self.conditions:
             # 空条件では総撮影枚数もscan.jsonの意味も成立しないため、実行前に止める。
             msg = "撮影条件がありません。"
+            raise ValueError(msg)
+        if self.accumulation_frames <= 0:
+            msg = "蓄積フレーム数は1以上にしてください。"
             raise ValueError(msg)
         self.total_shots = len(self.plan.capture_angles) * len(self.conditions)
         self._current_target_units = 0
@@ -160,17 +171,53 @@ class AngleScanCapture:
         if hooks.before_capture_batch is not None:
             hooks.before_capture_batch()
 
-        for condition in self.conditions:
+        for condition_index, condition in enumerate(self.conditions, 1):
             cancellation_token.raise_if_cancelled()
             shot_count += 1
             if hooks.on_progress is not None:
                 hooks.on_progress(shot_count, self.total_shots, move.angle_deg)
 
-            captured_frame = self.frame_capturer.capture(condition)
-            self.session.save_frame(captured_frame, move.angle_deg)
+            if self.accumulation_frames == 1:
+                # OFF/N=1は従来の保存先、ファイル名、メタデータ経路を変更しない。
+                captured_frame = self.frame_capturer.capture(condition)
+                self.session.save_frame(captured_frame, move.angle_deg)
+
+                if hooks.on_frame_captured is not None:
+                    hooks.on_frame_captured(captured_frame)
+                continue
+
+            accumulated_image: np.ndarray | None = None
+            completed_frame: CapturedFrame | None = None
+            for raw_index, captured_frame in enumerate(
+                self.frame_capturer.capture_group(
+                    condition,
+                    frame_count=self.accumulation_frames,
+                    hardware_wait_timeout_sec=self.trigger_wait_timeout_sec,
+                    cancellation_token=cancellation_token,
+                ),
+                1,
+            ):
+                self.session.save_accumulation_frame(
+                    captured_frame,
+                    move.angle_deg,
+                    condition_index=condition_index,
+                    raw_index=raw_index,
+                )
+                accumulated_image = _accumulate_image(accumulated_image, captured_frame.image)
+                completed_frame = captured_frame
 
             if hooks.on_frame_captured is not None:
-                hooks.on_frame_captured(captured_frame)
+                if accumulated_image is None or completed_frame is None:
+                    msg = "蓄積撮影でRawフレームを取得できませんでした。"
+                    raise RuntimeError(msg)
+                hooks.on_frame_captured(
+                    CapturedFrame(
+                        image=_clip_accumulated_image(accumulated_image),
+                        condition=completed_frame.condition,
+                        readback=completed_frame.readback,
+                        timing=completed_frame.timing,
+                    )
+                )
 
         return shot_count
 
@@ -205,6 +252,7 @@ class AngleScanCapture:
             plan=self.plan,
             conditions=self.conditions,
             retry_limit=retry_limit,
+            accumulation_frames=self.accumulation_frames,
         )
 
 
@@ -214,6 +262,7 @@ def build_angle_scan_document(
     plan: AngleScanPlan,
     conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
+    accumulation_frames: int = 1,
 ) -> AngleScanDocument:
     """角度走査計画と撮影条件をscan.json保存モデルへ変換する。"""
     return AngleScanDocument(
@@ -239,7 +288,11 @@ def build_angle_scan_document(
             )
             for condition in conditions
         ],
-        capture=CaptureExecutionSettings(retry_limit=retry_limit),
+        capture=CaptureExecutionSettings.for_accumulation(
+            retry_limit=retry_limit,
+            accumulation_frames=accumulation_frames,
+        ),
+        storage=AngleScanStorageFormat.for_accumulation(accumulation_frames),
     )
 
 
@@ -248,6 +301,7 @@ def build_angle_scan_document_from_conditions(
     settings: AngleScanSettings,
     conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
+    accumulation_frames: int = 1,
 ) -> AngleScanDocument:
     """角度計画と撮影条件からscan.jsonモデルを事前生成する。"""
     calibration = MotorAngleCalibration(settings.position_units_per_deg)
@@ -263,4 +317,22 @@ def build_angle_scan_document_from_conditions(
         plan=plan,
         conditions=conditions,
         retry_limit=retry_limit,
+        accumulation_frames=accumulation_frames,
     )
+
+
+def _accumulate_image(
+    accumulated_image: np.ndarray | None,
+    image: np.ndarray,
+) -> np.ndarray:
+    """Rawのuint16加算で途中の桁あふれを起こさない合計画像を返す。"""
+    image_wide = np.asarray(image, dtype=np.uint64)
+    if accumulated_image is None:
+        return image_wide
+
+    return accumulated_image + image_wide
+
+
+def _clip_accumulated_image(accumulated_image: np.ndarray) -> np.ndarray:
+    """表示通知直前にだけ合計画像をuint16範囲へクリップする。"""
+    return np.clip(accumulated_image, 0, np.iinfo(np.uint16).max).astype(np.uint16)

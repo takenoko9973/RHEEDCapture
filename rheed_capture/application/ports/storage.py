@@ -19,6 +19,16 @@ class SequenceSession(Protocol):
         """Sequenceの1フレームを保存する。"""
         ...
 
+    def save_accumulation_frame(
+        self,
+        captured_frame: CapturedFrame,
+        *,
+        group_index: int,
+        raw_index: int,
+    ) -> object:
+        """蓄積撮影のRawフレームを条件グループ内へ保存する。"""
+        ...
+
 
 class AngleScanSession(Protocol):
     """Angle Scan撮影Use Caseが依存する保存SessionのPort。"""
@@ -28,6 +38,17 @@ class AngleScanSession(Protocol):
 
     def save_frame(self, captured_frame: CapturedFrame, target_angle_deg: float) -> object:
         """Angle Scanの1フレームを目標角度付きで保存する。"""
+        ...
+
+    def save_accumulation_frame(
+        self,
+        captured_frame: CapturedFrame,
+        target_angle_deg: float,
+        *,
+        condition_index: int,
+        raw_index: int,
+    ) -> object:
+        """蓄積撮影のRawフレームを角度・条件グループ内へ保存する。"""
         ...
 
 

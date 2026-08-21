@@ -17,7 +17,7 @@ class RecordingFrameRow:
     # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
-    camera_timestamp_source: Literal["camera", "simulation"]
+    camera_timestamp_source: Literal["camera", "host", "simulation"]
     exposure_ms: float
     gain: int
     camera_exposure_ms: float

@@ -18,7 +18,10 @@ def test_preview_statistics_format_with_payload() -> None:
 
     assert (
         format_preview_statistics(statistics)
-        == "Preview 138.4 fps | Payload 80.7 MB/s"
+        == (
+            "Preview | Raw count 10 | Raw FPS 138.4 | Accumulation 0/1"
+            " | Payload 80.7 MB/s"
+        )
     )
 
 
@@ -31,7 +34,10 @@ def test_preview_statistics_format_without_samples_or_payload() -> None:
         payload_bytes_per_second=None,
     )
 
-    assert format_preview_statistics(statistics) == "Preview -- fps"
+    assert (
+        format_preview_statistics(statistics)
+        == "Preview | Raw count 0 | Raw FPS -- | Accumulation 0/1"
+    )
 
 
 def test_recording_statistics_format_with_payload() -> None:
@@ -44,7 +50,8 @@ def test_recording_statistics_format_with_payload() -> None:
     )
 
     assert format_recording_statistics(statistics) == (
-        "Recording 138.4 fps | Avg 136.9 fps | Payload 80.7 MB/s"
+        "Recording | Raw count 100 | Raw FPS 138.4 | Accumulation 0/1"
+        " | Payload 80.7 MB/s"
     )
 
 
@@ -59,5 +66,23 @@ def test_recording_statistics_format_without_samples_or_payload() -> None:
 
     assert (
         format_recording_statistics(statistics)
-        == "Recording -- fps | Avg -- fps"
+        == "Recording | Raw count 0 | Raw FPS -- | Accumulation 0/1"
+    )
+
+
+def test_preview_statistics_format_shows_accumulation_and_waiting_state() -> None:
+    """積算進捗とHardware trigger待機状態を明示する。"""
+    statistics = AcquisitionStatistics(
+        current_fps=10.0,
+        average_fps=10.0,
+        frame_count=3,
+        payload_bytes_per_second=None,
+        accumulation_progress=1,
+        accumulation_target=4,
+        waiting_for_trigger=True,
+    )
+
+    assert format_preview_statistics(statistics) == (
+        "Preview | Raw count 3 | Raw FPS 10.0 | Accumulation 1/4"
+        " | Waiting for trigger"
     )

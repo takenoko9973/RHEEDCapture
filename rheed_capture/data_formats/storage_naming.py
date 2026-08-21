@@ -7,6 +7,14 @@ SEQUENCE_TIFF_FILENAME_PATTERN = (
     "expo{exposure_ms:g}_gain{gain:g}.tiff"
 )
 
+SEQUENCE_ACCUMULATION_GROUP_DIR_PATTERN = (
+    "group_{group_index:04d}_expo{exposure_ms:g}_gain{gain:g}"
+)
+ANGLE_SCAN_ACCUMULATION_GROUP_DIR_PATTERN = (
+    "group_{condition_index:04d}_exp{exposure_ms:g}_gain{gain:g}"
+)
+ACCUMULATION_RAW_TIFF_FILENAME_PATTERN = "raw_{raw_index:04d}.tiff"
+
 ANGLE_DIR_PATTERN = "angle{angle_deg:+06.1f}"
 
 ANGLE_SCAN_TIFF_FILENAME_PATTERN = (

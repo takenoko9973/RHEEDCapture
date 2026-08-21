@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from math import isfinite
 from typing import Any, Literal, cast
 
+from rheed_capture.application.ports.camera import TriggerSettings
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
 from rheed_capture.domain.angle_scan.model import (
     AngleScanDirection,
@@ -12,6 +14,16 @@ from rheed_capture.domain.angle_scan.model import (
     validate_range,
 )
 from rheed_capture.infrastructure.config.defaults import (
+    ACQUISITION_HARDWARE_ACTIVATIONS,
+    ACQUISITION_HARDWARE_SOURCES,
+    DEFAULT_ACQUISITION_ACCUMULATION_ENABLED,
+    DEFAULT_ACQUISITION_ACCUMULATION_FRAMES,
+    DEFAULT_ACQUISITION_FPS_LIMIT,
+    DEFAULT_ACQUISITION_HARDWARE_ACTIVATION,
+    DEFAULT_ACQUISITION_HARDWARE_DELAY_US,
+    DEFAULT_ACQUISITION_HARDWARE_SOURCE,
+    DEFAULT_ACQUISITION_MODE,
+    DEFAULT_ACQUISITION_TRIGGER_WAIT_TIMEOUT_SEC,
     DEFAULT_ANGLE_SCAN_DIRECTION,
     DEFAULT_ANGLE_SCAN_INTERVAL_DEG,
     DEFAULT_ANGLE_SCAN_RANGE_DEG,
@@ -90,6 +102,149 @@ def filter_existing_float_values(
 def filter_existing_int_values(selected_values: list[int], valid_values: set[int]) -> list[int]:
     """候補リストから消えたゲインを選択状態から除外する。"""
     return [value for value in selected_values if value in valid_values]
+
+
+AcquisitionMode = Literal["software", "hardware"]
+AcquisitionHardwareSource = Literal["Line1", "Line3", "Action1"]
+AcquisitionHardwareActivation = Literal["RisingEdge", "FallingEdge"]
+
+
+def _require_finite_number(value: object, field_name: str) -> float:
+    """設定値を有限な数値へ変換し、型不一致を明示的に拒否する。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        msg = f"{field_name} must be a number."
+        raise ValueError(msg)  # noqa: TRY004
+
+    converted = float(value)
+    if not isfinite(converted):
+        msg = f"{field_name} must be finite."
+        raise ValueError(msg)
+
+    return converted
+
+
+def _require_non_negative_number(value: object, field_name: str) -> float:
+    """有限な0以上の数値を検証する。"""
+    converted = _require_finite_number(value, field_name)
+    if converted < 0:
+        msg = f"{field_name} must be >= 0."
+        raise ValueError(msg)
+
+    return converted
+
+
+@dataclass(frozen=True)
+class AcquisitionSettings:
+    """Previewと保存撮影で共有するTrigger取得設定。"""
+
+    mode: AcquisitionMode = DEFAULT_ACQUISITION_MODE
+    hardware_source: AcquisitionHardwareSource = DEFAULT_ACQUISITION_HARDWARE_SOURCE
+    hardware_activation: AcquisitionHardwareActivation = DEFAULT_ACQUISITION_HARDWARE_ACTIVATION
+    hardware_delay_us: float = DEFAULT_ACQUISITION_HARDWARE_DELAY_US
+    fps_limit: float | None = DEFAULT_ACQUISITION_FPS_LIMIT
+    accumulation_enabled: bool = DEFAULT_ACQUISITION_ACCUMULATION_ENABLED
+    accumulation_frames: int = DEFAULT_ACQUISITION_ACCUMULATION_FRAMES
+    trigger_wait_timeout_sec: float = DEFAULT_ACQUISITION_TRIGGER_WAIT_TIMEOUT_SEC
+
+    def __post_init__(self) -> None:
+        """共有取得設定の列挙値と数値制約を検証する。"""
+        if self.mode not in ("software", "hardware"):
+            msg = f"Unknown acquisition mode: {self.mode}"
+            raise ValueError(msg)
+        if self.hardware_source not in ACQUISITION_HARDWARE_SOURCES:
+            msg = f"Unknown hardware_source: {self.hardware_source}"
+            raise ValueError(msg)
+        if self.hardware_activation not in ACQUISITION_HARDWARE_ACTIVATIONS:
+            msg = f"Unknown hardware_activation: {self.hardware_activation}"
+            raise ValueError(msg)
+
+        _require_non_negative_number(self.hardware_delay_us, "hardware_delay_us")
+        if self.fps_limit is not None:
+            fps_limit = _require_finite_number(self.fps_limit, "fps_limit")
+            if fps_limit <= 0:
+                msg = "fps_limit must be > 0 or None."
+                raise ValueError(msg)
+        if not isinstance(self.accumulation_enabled, bool):
+            msg = "accumulation_enabled must be a boolean."
+            raise ValueError(msg)  # noqa: TRY004
+        if (
+            isinstance(self.accumulation_frames, bool)
+            or not isinstance(self.accumulation_frames, int)
+            or self.accumulation_frames <= 0
+        ):
+            msg = "accumulation_frames must be a positive integer."
+            raise ValueError(msg)
+        _require_non_negative_number(
+            self.trigger_wait_timeout_sec,
+            "trigger_wait_timeout_sec",
+        )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AcquisitionSettings:
+        """settings.jsonのacquisitionセクションから設定を作る。"""
+        defaults = cls()
+        mode = data.get("mode", defaults.mode)
+        hardware_source = data.get("hardware_source", defaults.hardware_source)
+        hardware_activation = data.get("hardware_activation", defaults.hardware_activation)
+        hardware_delay_us = _require_non_negative_number(
+            data.get("hardware_delay_us", defaults.hardware_delay_us),
+            "hardware_delay_us",
+        )
+        fps_value = data.get("fps_limit", defaults.fps_limit)
+        fps_limit = (
+            None
+            if fps_value is None
+            else _require_finite_number(fps_value, "fps_limit")
+        )
+        accumulation_enabled = data.get(
+            "accumulation_enabled",
+            defaults.accumulation_enabled,
+        )
+        accumulation_frames = data.get(
+            "accumulation_frames",
+            defaults.accumulation_frames,
+        )
+        trigger_wait_timeout_sec = _require_non_negative_number(
+            data.get(
+                "trigger_wait_timeout_sec",
+                defaults.trigger_wait_timeout_sec,
+            ),
+            "trigger_wait_timeout_sec",
+        )
+
+        return cls(
+            mode=cast("AcquisitionMode", mode),
+            hardware_source=cast("AcquisitionHardwareSource", hardware_source),
+            hardware_activation=cast("AcquisitionHardwareActivation", hardware_activation),
+            hardware_delay_us=hardware_delay_us,
+            fps_limit=fps_limit,
+            accumulation_enabled=accumulation_enabled,
+            accumulation_frames=accumulation_frames,
+            trigger_wait_timeout_sec=trigger_wait_timeout_sec,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """AcquisitionSettingsをsettings.json保存用dictへ変換する。"""
+        return {
+            "mode": self.mode,
+            "hardware_source": self.hardware_source,
+            "hardware_activation": self.hardware_activation,
+            "hardware_delay_us": self.hardware_delay_us,
+            "fps_limit": self.fps_limit,
+            "accumulation_enabled": self.accumulation_enabled,
+            "accumulation_frames": self.accumulation_frames,
+            "trigger_wait_timeout_sec": self.trigger_wait_timeout_sec,
+        }
+
+    def to_trigger_settings(self) -> TriggerSettings:
+        """Task1のCamera Portへ渡すTrigger設定へ変換する。"""
+        return TriggerSettings(
+            mode=self.mode,
+            hardware_source=self.hardware_source,
+            hardware_activation=self.hardware_activation,
+            hardware_delay_us=self.hardware_delay_us,
+            fps_limit=self.fps_limit,
+        )
 
 
 @dataclass(frozen=True)
@@ -372,6 +527,7 @@ class AppSettingsData:
     exposure_ms_values: list[float] = field(default_factory=_default_exposure_ms_values)
     gain_values: list[int] = field(default_factory=_default_gain_values)
     preview: PreviewSettings = field(default_factory=PreviewSettings)
+    acquisition: AcquisitionSettings = field(default_factory=AcquisitionSettings)
     sequence_capture: SequenceCaptureSettings = field(default_factory=SequenceCaptureSettings)
     angle_scan: AngleScanCaptureSettings = field(default_factory=AngleScanCaptureSettings)
     recording_capture: RecordingCaptureSettings = field(
@@ -393,6 +549,7 @@ class AppSettingsData:
             "exposure_ms_values": self.exposure_ms_values,
             "gain_values": self.gain_values,
             "preview": self.preview.to_dict(),
+            "acquisition": self.acquisition.to_dict(),
             "sequence_capture": self.sequence_capture.to_dict(),
             "angle_scan": self.angle_scan.to_dict(),
             "recording_capture": self.recording_capture.to_dict(),
@@ -423,6 +580,7 @@ class AppSettingsParser:
             _as_mapping(self.data.get("sequence_capture"))
         )
         angle_scan = AngleScanCaptureSettings.from_dict(_as_mapping(self.data.get("angle_scan")))
+        acquisition = self._parse_acquisition()
         recording_capture = self._parse_recording_capture()
         exposure_set = set(exposure_ms_values)
         gain_set = set(gain_values)
@@ -432,6 +590,7 @@ class AppSettingsParser:
             exposure_ms_values=exposure_ms_values,
             gain_values=gain_values,
             preview=PreviewSettings.from_dict(self.data),
+            acquisition=acquisition,
             sequence_capture=replace(
                 sequence_capture,
                 selected_exposure_ms_values=filter_existing_float_values(
@@ -467,3 +626,15 @@ class AppSettingsParser:
             return RecordingCaptureSettings()
 
         return RecordingCaptureSettings.from_dict(section)
+
+    def _parse_acquisition(self) -> AcquisitionSettings:
+        """Acquisition設定を読み込み、セクション欠落時だけ既定値で補う。"""
+        if "acquisition" not in self.data:
+            return AcquisitionSettings()
+
+        section = self.data["acquisition"]
+        if not isinstance(section, dict):
+            msg = "settings section must be an object: acquisition"
+            raise ValueError(msg)  # noqa: TRY004
+
+        return AcquisitionSettings.from_dict(cast("dict[str, Any]", section))

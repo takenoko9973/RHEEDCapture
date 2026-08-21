@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from rheed_capture.data_formats.frame_metadata import SequenceFrameMetadata
 from rheed_capture.data_formats.storage_naming import (
+    ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
+    SEQUENCE_ACCUMULATION_GROUP_DIR_PATTERN,
     SEQUENCE_TIFF_COMPRESSION,
     SEQUENCE_TIFF_FILENAME_PATTERN,
 )
@@ -83,6 +85,47 @@ class SequenceSession:
             file_path,
             image_data,
             metadata,
+            compression=SEQUENCE_TIFF_COMPRESSION,
+        )
+        return file_path
+
+    def save_accumulation_frame(
+        self,
+        captured_frame: CapturedFrame,
+        *,
+        group_index: int,
+        raw_index: int,
+    ) -> Path:
+        """蓄積撮影Rawを条件グループ配下へ既存TIFFメタデータで保存する。"""
+        if not self.session_dir.exists():
+            msg = "シーケンスが開始されていません。"
+            raise RuntimeError(msg)
+
+        metadata = SequenceFrameMetadata(
+            exposure_ms=captured_frame.condition.exposure_ms,
+            gain=captured_frame.condition.gain,
+            camera_exposure_ms=captured_frame.readback.exposure_ms,
+            camera_gain=captured_frame.readback.gain,
+            timestamp=captured_frame.timing.trigger_issued_at.isoformat(),
+            camera_timestamp_ticks=captured_frame.readback.camera_timestamp_ticks,
+            camera_timestamp_frequency_hz=(
+                captured_frame.readback.camera_timestamp_frequency_hz
+            ),
+            camera_timestamp_source=captured_frame.readback.source,
+        )
+        group_dir = self.session_dir / SEQUENCE_ACCUMULATION_GROUP_DIR_PATTERN.format(
+            group_index=group_index,
+            exposure_ms=captured_frame.condition.exposure_ms,
+            gain=captured_frame.condition.gain,
+        )
+        group_dir.mkdir(exist_ok=True)
+        file_path = group_dir / ACCUMULATION_RAW_TIFF_FILENAME_PATTERN.format(
+            raw_index=raw_index
+        )
+        self.tiff_writer.save(
+            file_path,
+            captured_frame.image,
+            metadata.to_dict(),
             compression=SEQUENCE_TIFF_COMPRESSION,
         )
         return file_path

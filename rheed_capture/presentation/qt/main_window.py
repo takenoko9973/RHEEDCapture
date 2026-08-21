@@ -19,12 +19,17 @@ from PySide6.QtWidgets import (
 from rheed_capture.application.ports.motor import RotationMotor
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.json_store import AppSettings
-from rheed_capture.infrastructure.config.schema import AppSettingsData, PreviewSettings
+from rheed_capture.infrastructure.config.schema import (
+    AcquisitionSettings,
+    AppSettingsData,
+    PreviewSettings,
+)
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.capture_coordinator import (
     CaptureCoordinator,
     CaptureCoordinatorHooks,
 )
+from rheed_capture.presentation.qt.panels.acquisition_settings import AcquisitionSettingsPanel
 from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
 from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
@@ -122,6 +127,9 @@ class MainWindow(QMainWindow):
                 set_angle_scan_enabled=self.angle_scan_panel.setEnabled,
                 set_recording_enabled=self.recording_panel.setEnabled,
                 set_motor_settings_enabled=self.motor_settings_panel.setEnabled,
+                set_acquisition_settings_enabled=(
+                    self.acquisition_settings_panel.set_controls_enabled
+                ),
                 set_preview_controls_enabled=self.preview_panel.set_controls_enabled,
                 stop_sequence_preview_timer=self._sequence_preview_timer.stop,
                 start_sequence_preview_timer=self._sequence_preview_timer.start,
@@ -131,7 +139,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def _setup_ui(self) -> None:
+    def _setup_ui(self) -> None:  # noqa: PLR0915
         """MainWindowのWidget生成、配置、基本Signal接続を行う。"""
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -155,6 +163,7 @@ class MainWindow(QMainWindow):
         )
         self.capture_chips_panel = CaptureChipsPanel()
         self.motor_settings_panel = MotorSettingsPanel()
+        self.acquisition_settings_panel = AcquisitionSettingsPanel()
         self.capture_tabs = QTabWidget()
         self.capture_tabs.addTab(self.sequence_panel, "Sequence")
         self.capture_tabs.addTab(self.angle_scan_panel, "Angle Scan")
@@ -183,6 +192,7 @@ class MainWindow(QMainWindow):
         settings_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.addWidget(self.capture_chips_panel)
+        settings_layout.addWidget(self.acquisition_settings_panel)
         settings_layout.addWidget(self.motor_settings_panel)
 
         self.control_tabs.addTab(capture_tab, "Capture")
@@ -211,6 +221,7 @@ class MainWindow(QMainWindow):
         self._setup_sequence_bindings()
         self._setup_angle_scan_bindings()
         self._setup_recording_bindings()
+        self._setup_acquisition_settings_bindings()
         self._setup_motor_settings_bindings()
 
     def _setup_preview_bindings(self) -> None:
@@ -327,6 +338,42 @@ class MainWindow(QMainWindow):
         self.recording_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
         self.recording_vm.recording_finished.connect(self._on_recording_finished)
         self.recording_vm.error_occurred.connect(self._show_error)
+
+    def _setup_acquisition_settings_bindings(self) -> None:
+        """共通Acquisition設定の変更をPreviewとRecordingへ伝播する。"""
+        self.acquisition_settings_panel.settings_changed.connect(
+            self._on_acquisition_settings_changed
+        )
+
+    @Slot(object)
+    def _on_acquisition_settings_changed(self, settings: AcquisitionSettings) -> None:
+        """Acquisition設定をPreviewへ渡し、Hardware時のrate入力をlockする。"""
+        self.preview_vm.set_acquisition_settings(settings)
+        self.recording_panel.set_hardware_mode(settings.mode)
+        current_settings = self._build_current_settings(settings)
+        self.capture_vm.load_settings(current_settings)
+        self.angle_scan_vm.load_settings(current_settings)
+
+    def _build_current_settings(
+        self,
+        acquisition: AcquisitionSettings | None = None,
+    ) -> AppSettingsData:
+        """現在のUIとViewModel状態から撮影設定snapshotを作る。"""
+        return AppSettingsData(
+            root_dir=self.storage_panel.get_settings_to_save().root_dir,
+            exposure_ms_values=self.capture_chips_panel.exposure_ms_values(),
+            gain_values=self.capture_chips_panel.gain_values(),
+            preview=self.preview_vm.get_settings_to_save(),
+            acquisition=(
+                acquisition
+                if acquisition is not None
+                else self.acquisition_settings_panel.get_settings_to_save()
+            ),
+            sequence_capture=self.capture_vm.get_settings_to_save(),
+            angle_scan=self.angle_scan_vm.get_angle_scan_settings(),
+            recording_capture=self.recording_vm.get_settings_to_save(),
+            device=self.angle_scan_vm.get_device_settings(),
+        )
 
     def _setup_motor_settings_bindings(self) -> None:
         """モーター装置設定の結線。"""
@@ -520,6 +567,9 @@ class MainWindow(QMainWindow):
         self.capture_chips_panel.set_values(settings.exposure_ms_values, settings.gain_values)
         self.capture_vm.load_settings(settings)
         self.angle_scan_vm.load_settings(settings)
+        self.acquisition_settings_panel.apply_settings(settings.acquisition)
+        self.preview_vm.load_acquisition_settings(settings.acquisition)
+        self.recording_panel.set_hardware_mode(settings.acquisition.mode)
         self.recording_panel.apply_settings(settings.recording_capture)
         self.recording_vm.load_settings(settings.recording_capture)
         self._apply_grid_settings(settings.preview)
@@ -566,6 +616,7 @@ class MainWindow(QMainWindow):
             exposure_ms_values=self.capture_chips_panel.exposure_ms_values(),
             gain_values=self.capture_chips_panel.gain_values(),
             preview=preview_settings,
+            acquisition=self.acquisition_settings_panel.get_settings_to_save(),
             sequence_capture=self.capture_vm.get_settings_to_save(),
             angle_scan=self.angle_scan_vm.get_angle_scan_settings(),
             recording_capture=self.recording_vm.get_settings_to_save(),

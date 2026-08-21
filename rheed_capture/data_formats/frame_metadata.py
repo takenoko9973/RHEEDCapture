@@ -17,7 +17,7 @@ class SequenceFrameMetadata:
     # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
-    camera_timestamp_source: Literal["camera", "simulation"]
+    camera_timestamp_source: Literal["camera", "host", "simulation"]
     bit_depth_sensor: int = 12
     bit_depth_saved: int = 16
     alignment: str = "MsbAligned"
@@ -54,7 +54,7 @@ class AngleScanFrameMetadata:
     # sourceにより、実機のcamera tickかシミュレーション時刻かを区別する。
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
-    camera_timestamp_source: Literal["camera", "simulation"]
+    camera_timestamp_source: Literal["camera", "host", "simulation"]
     capture_mode: str = "angle_scan"
     actual_angle_deg: float | None = None
     angle_coordinate: str = "relative"

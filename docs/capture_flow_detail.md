@@ -41,18 +41,18 @@
 2. 進捗を `現在枚数 / 総枚数` としてUIへ通知する。
 3. カメラの露光時間を設定する。
 4. カメラのゲインを設定する。
-5. `expected_frames=1` のソフトトリガーSessionを開始する。
-6. `TriggerReady` を待ち、PCのJST時刻とmonotonic時刻を記録してからtriggerを1回発行する。
-7. `GrabStrategy_OneByOne` で1枚取得し、Timestamp ChunkとMono16 / `MsbAligned` 画像を得る。
+5. 共通Acquisition設定の `Software` / `Hardware` に応じた `expected_frames=1` のTrigger Sessionを開始する。
+6. Softwareでは `TriggerReady` を待ち、PCのJST時刻とmonotonic時刻を記録してからSoftware Triggerを1回発行する。Hardwareではアプリからtriggerを発行せず、外部FrameStartに対応するフレームを待つ。
+7. `GrabStrategy_OneByOne` で1枚取得し、必須のExposure/Gain ChunkとMono16 / `MsbAligned` 画像を得る。Timestamp Chunkが利用可能ならcamera timestampを使い、欠落・不可読時はhostの `time.time_ns()` を1GHzのtickとして使う。
    - 1試行の共通deadlineは `露光時間 + 500ms` とし、ready待機と取得には残り時間だけを渡す。
 8. Sessionを閉じ、`TriggerMode = Off` へ戻す。
-9. 要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
+9. 要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、Softwareではtrigger直前・HardwareではRaw取得時点のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
 10. 現在の `image_nnn` フォルダへTIFF保存する。
    - 現在の実装上のファイル名は `{実験フォルダ名}-{シーケンス番号}_expo{露光時間:g}_gain{ゲイン:g}.tiff`。
 
 ### 1.5 リトライと中断
 
-1. Session開始（必須node設定、Chunk準備、`StartGrabbing`）、ready待機、trigger発行、フレーム取得、Timestamp Chunk、画像変換、カメラ通信の失敗は撮影エラーとして扱う。
+1. Session開始（Trigger設定、必須node設定、必須Chunk準備、`StartGrabbing`）、Softwareのready待機・trigger発行、フレーム取得、画像変換、カメラ通信の失敗は撮影エラーとして扱う。Timestamp Chunkだけは任意であり、欠落・不可読時はhost timestampへfallbackする。Exposure/Gain Chunkの欠落・不可読は引き続き撮影エラーとする。
 2. 1つの条件につき最大3回まで撮影を再試行する。
 3. 異常Sessionを停止・解除し、0.5秒待機後に新しいSessionで再triggerする。
 4. 3回とも失敗した場合は通常シーケンス全体を中断する。
@@ -152,8 +152,8 @@
 11. 各撮影前にキャンセル要求を確認する。
 12. 進捗を `現在枚数 / 総枚数 / 現在角度` としてUIへ通知する。
 13. カメラの露光時間とゲインを設定する。
-14. Sequenceと同じ1フレーム用ソフトトリガーSessionで撮影する。
-15. `scan_id`、目標角度、要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
+14. Sequenceと同じ1フレーム用Trigger Sessionで撮影する。Softwareではready待機後にSoftware Triggerを発行し、Hardwareでは外部triggerに対応するフレームを待つ。
+15. `scan_id`、目標角度、要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、Softwareではtrigger直前・HardwareではRaw取得時点のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
 17. 角度別サブフォルダへTIFF保存する。
     - 角度フォルダ名は `angle{角度:+06.1f}`。
     - ファイル名は `{scan_id}_angle{角度:+06.1f}_exp{露光時間:g}_gain{ゲイン:g}.tiff`。
@@ -185,15 +185,15 @@
 ## 3. Recording
 
 1. プレビュー停止完了後、固定した露光時間とゲインを設定する。
-2. `expected_frames=None` の取得Sessionを用意し、カメラ側のソフトトリガーSessionは最初の撮影時に開始して正常な間はRecording全体で再利用する。
+2. `expected_frames=None` のTrigger Sessionを用意し、最初の撮影時に開始して正常な間はRecording全体で再利用する。
 3. `frame_index` から求めた元の予定時刻まで、キャンセルを監視しながら待つ。
-4. 予定時刻を過ぎていてもindexを飛ばさず、`TriggerReady` 待機後にtriggerを1回発行する。
-5. trigger直前のmonotonic時刻から `actual_elapsed_ms` を計算する。
+4. Softwareでは予定時刻を過ぎていてもindexを飛ばさず、`TriggerReady` 待機後にSoftware Triggerを1回発行する。Hardwareでは外部triggerに対応するフレームを待つ。
+5. Softwareではtrigger発行直前、HardwareではRaw frameのhost取得時点のmonotonic時刻から `actual_elapsed_ms` を計算する。
 6. TIFF保存キューへ画像とメタデータを投入し、保存完了時に `frames.csv` へ追記する。
 7. Session開始または取得失敗時は異常Sessionを閉じ、新しいSessionで同じ `frame_index` を再試行する。
 8. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、`TriggerMode = Off` へ戻す。
 
-TIFFと `frames.csv` には、要求条件の `exposure_ms`・`gain` と、フレーム単位の読戻し値 `camera_exposure_ms`・`camera_gain` を区別して保存する。さらにtrigger直前のPC時刻を表す `timestamp`、画像取得開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
+TIFFと `frames.csv` には、要求条件の `exposure_ms`・`gain` と、フレーム単位の読戻し値 `camera_exposure_ms`・`camera_gain` を区別して保存する。さらにSoftwareではtrigger直前、HardwareではRaw frameのhost取得時点を表す `timestamp`、画像取得開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。Timestamp Chunkが使えない場合はsourceを `host` とし、`time.time_ns()` を1GHzのtickとして保存する。pylonエミュレータではsourceを `simulation` とし、Software Trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
 
 ## 4. 通常シーケンス撮影と回転撮影の主な違い
 

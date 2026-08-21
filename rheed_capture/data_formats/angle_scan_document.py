@@ -4,7 +4,9 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from rheed_capture.data_formats.storage_naming import (
+    ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
     ANGLE_DIR_PATTERN,
+    ANGLE_SCAN_ACCUMULATION_GROUP_DIR_PATTERN,
     ANGLE_SCAN_TIFF_FILENAME_PATTERN,
 )
 from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_RETRY_LIMIT
@@ -59,13 +61,34 @@ class CaptureExecutionSettings:
 
     loop_order: list[str] = field(default_factory=lambda: ["angle", "condition"])
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT
+    accumulation_frames: int = 1
+
+    @classmethod
+    def for_accumulation(
+        cls,
+        *,
+        retry_limit: int,
+        accumulation_frames: int,
+    ) -> CaptureExecutionSettings:
+        """蓄積有無に応じて実際の撮影順序だけを保存モデルへ反映する。"""
+        if accumulation_frames == 1:
+            return cls(retry_limit=retry_limit)
+
+        return cls(
+            loop_order=["angle", "condition", "raw"],
+            retry_limit=retry_limit,
+            accumulation_frames=accumulation_frames,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """撮影実行条件をJSON保存用dictへ変換する。"""
-        return {
+        data: dict[str, Any] = {
             "loop_order": self.loop_order,
             "retry_limit": self.retry_limit,
         }
+        if self.accumulation_frames > 1:
+            data["accumulation_frames"] = self.accumulation_frames
+        return data
 
 
 @dataclass(frozen=True)
@@ -73,14 +96,34 @@ class AngleScanStorageFormat:
     """scan.jsonへ保存するAngle Scanの保存形式情報。"""
 
     angle_directory_format: str = ANGLE_DIR_PATTERN
-    filename_format: str = ANGLE_SCAN_TIFF_FILENAME_PATTERN
+    filename_format: str | None = ANGLE_SCAN_TIFF_FILENAME_PATTERN
+    group_directory_format: str | None = None
+    raw_filename_format: str | None = None
+
+    @classmethod
+    def for_accumulation(cls, accumulation_frames: int) -> AngleScanStorageFormat:
+        """蓄積時だけ単一TIFF形式を正確なグループ・Raw形式へ切り替える。"""
+        if accumulation_frames == 1:
+            return cls()
+
+        return cls(
+            filename_format=None,
+            group_directory_format=ANGLE_SCAN_ACCUMULATION_GROUP_DIR_PATTERN,
+            raw_filename_format=ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """保存形式情報をJSON保存用dictへ変換する。"""
-        return {
+        data: dict[str, Any] = {
             "angle_directory_format": self.angle_directory_format,
-            "filename_format": self.filename_format,
         }
+        if self.filename_format is not None:
+            data["filename_format"] = self.filename_format
+        if self.group_directory_format is not None:
+            data["group_directory_format"] = self.group_directory_format
+        if self.raw_filename_format is not None:
+            data["raw_filename_format"] = self.raw_filename_format
+        return data
 
 
 @dataclass(frozen=True)

@@ -174,6 +174,8 @@ def test_settings_save_on_close(
     assert saved_data.preview.grid_cols == 2
     assert saved_data.exposure_ms_values == [10.0, 20.0]
     assert saved_data.gain_values == [0, 1]
+    assert saved_data.acquisition.mode == "software"
+    assert saved_data.acquisition.fps_limit is None
     assert saved_data.sequence_capture.selected_exposure_ms_values == [10.0, 20.0]
     assert saved_data.angle_scan.selected_exposure_ms_values == [10.0]
     assert saved_data.angle_scan.range_deg == 5.0
@@ -246,4 +248,33 @@ def test_acquisition_statistics_status_uses_only_preview_and_recording(
     )
 
     window.capture_coordinator.active_mode = None
+    window.close()
+
+
+def test_acquisition_controls_lock_during_capture_and_recording_rate_uses_mode(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """共通設定は撮影中にlockし、Hardware modeではRecording rateをlockする。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+
+    window.acquisition_settings_panel.cmb_mode.setCurrentText("Hardware")
+    assert window.recording_panel.btn_rate_interval.isEnabled() is False
+    assert window.recording_panel.btn_rate_fps.isEnabled() is False
+    assert window.preview_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
+    assert window.capture_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
+    assert window.angle_scan_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
+
+    window.capture_coordinator.enter("sequence")
+    assert window.acquisition_settings_panel.cmb_mode.isEnabled() is False
+    assert window.acquisition_settings_panel.cmb_source.isEnabled() is False
+    assert window.acquisition_settings_panel.chk_accumulation.isEnabled() is False
+
+    window.capture_coordinator.leave()
+    assert window.acquisition_settings_panel.cmb_mode.isEnabled() is True
+    assert window.acquisition_settings_panel.cmb_source.isEnabled() is True
+    assert window.recording_panel.btn_rate_interval.isEnabled() is False
+    assert window.recording_panel.btn_rate_fps.isEnabled() is False
     window.close()

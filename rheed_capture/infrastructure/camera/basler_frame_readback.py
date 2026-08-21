@@ -10,8 +10,8 @@ from rheed_capture.application.ports.camera import CameraError, FrameReadback
 _REQUIRED_CHUNK_SELECTORS = (
     "ExposureTime",
     "GainAll",
-    "Timestamp",
 )
+_TIMESTAMP_CHUNK_SELECTOR = "Timestamp"
 _SIMULATION_TIMESTAMP_FREQUENCY_HZ = 1_000_000_000
 
 
@@ -80,6 +80,7 @@ class ChunkFrameReadbackProvider:
         self._original_chunk_selector: str | None = None
         self._original_chunk_enabled: dict[str, str] = {}
         self._timestamp_frequency_hz: int | None = None
+        self._use_camera_timestamp = False
 
     def prepare(self, camera: pylon.InstantCamera) -> None:
         """必須Chunkを有効化し、camera timestamp周波数を保持する。"""
@@ -104,10 +105,26 @@ class ChunkFrameReadbackProvider:
             )
             _set_required_node_value(nodemap, "ChunkEnable", True)
 
-        self._timestamp_frequency_hz = _read_required_node_int(
-            nodemap,
-            "GevTimestampTickFrequency",
-        )
+        try:
+            _set_required_node_value(nodemap, "ChunkSelector", _TIMESTAMP_CHUNK_SELECTOR)
+            original_timestamp_enabled = _read_required_node_string(
+                nodemap,
+                "ChunkEnable",
+            )
+            _set_required_node_value(nodemap, "ChunkEnable", True)
+            # enableの書込みが成功した場合だけ、復元対象として記録する。
+            self._original_chunk_enabled[_TIMESTAMP_CHUNK_SELECTOR] = (
+                original_timestamp_enabled
+            )
+            self._timestamp_frequency_hz = _read_required_node_int(
+                nodemap,
+                "GevTimestampTickFrequency",
+            )
+            self._use_camera_timestamp = True
+        except CameraError:
+            # Timestamp Chunkだけは任意とし、撮影値Chunkの必須契約は維持する。
+            self._timestamp_frequency_hz = _SIMULATION_TIMESTAMP_FREQUENCY_HZ
+            self._use_camera_timestamp = False
 
     def on_trigger_executed(self) -> None:
         """実機Chunkはtrigger発行時に追加状態を記録しない。"""
@@ -118,8 +135,9 @@ class ChunkFrameReadbackProvider:
         result: _ChunkGrabResult,
     ) -> FrameReadback:
         """取得フレームのExposure Time、Gain All、Timestamp Chunkを読む。"""
-        if self._timestamp_frequency_hz is None:
-            msg = "camera timestamp周波数が記録されていません。"
+        timestamp_frequency_hz = self._timestamp_frequency_hz
+        if timestamp_frequency_hz is None:
+            msg = "frame timestamp周波数が記録されていません。"
             raise CameraError(msg)
 
         chunk_nodemap = result.GetChunkDataNodeMap()
@@ -127,15 +145,31 @@ class ChunkFrameReadbackProvider:
             chunk_nodemap,
             "ChunkExposureTime",
         )
+        if self._use_camera_timestamp:
+            try:
+                timestamp_ticks = _read_required_node_int(
+                    chunk_nodemap,
+                    "ChunkTimestamp",
+                )
+            except CameraError:
+                # Timestamp ChunkだけはGrabResultごとに欠落する機種があるため、
+                # 必須のExposure/Gainを読んだ後にhost時刻へ切り替える。
+                timestamp_ticks = time.time_ns()
+                timestamp_frequency_hz = _SIMULATION_TIMESTAMP_FREQUENCY_HZ
+                timestamp_source = "host"
+            else:
+                timestamp_source = "camera"
+        else:
+            timestamp_ticks = time.time_ns()
+            timestamp_frequency_hz = _SIMULATION_TIMESTAMP_FREQUENCY_HZ
+            timestamp_source = "host"
+
         return FrameReadback(
             exposure_ms=exposure_us / 1000.0,
             gain=_read_required_node_int(chunk_nodemap, "ChunkGainAll"),
-            camera_timestamp_ticks=_read_required_node_int(
-                chunk_nodemap,
-                "ChunkTimestamp",
-            ),
-            camera_timestamp_frequency_hz=self._timestamp_frequency_hz,
-            source="camera",
+            camera_timestamp_ticks=timestamp_ticks,
+            camera_timestamp_frequency_hz=timestamp_frequency_hz,
+            source=timestamp_source,
         )
 
     def restore(self, camera: pylon.InstantCamera) -> None:
@@ -252,13 +286,21 @@ def _read_required_node_string(nodemap: _GenicamNodeMap, node_name: str) -> str:
 def _read_required_node_int(nodemap: _GenicamNodeMap, node_name: str) -> int:
     """必須GenICam nodeの現在値を整数で取得する。"""
     value = _read_required_node_value(nodemap, node_name)
-    return int(cast("int | float | str", value))
+    try:
+        return int(cast("int | float | str", value))
+    except (TypeError, ValueError, OverflowError) as e:
+        msg = f"必須GenICam node '{node_name}' の値を整数として読めません: {e}"
+        raise CameraError(msg) from e
 
 
 def _read_required_node_float(nodemap: _GenicamNodeMap, node_name: str) -> float:
     """必須GenICam nodeの現在値を浮動小数点数で取得する。"""
     value = _read_required_node_value(nodemap, node_name)
-    return float(cast("int | float | str", value))
+    try:
+        return float(cast("int | float | str", value))
+    except (TypeError, ValueError, OverflowError) as e:
+        msg = f"必須GenICam node '{node_name}' の値を浮動小数点数として読めません: {e}"
+        raise CameraError(msg) from e
 
 
 def _read_required_node_value(nodemap: _GenicamNodeMap, node_name: str) -> object:

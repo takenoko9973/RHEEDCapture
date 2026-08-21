@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from rheed_capture.application.ports.motor import RotationMotor
     from rheed_capture.domain.capture_condition import CaptureCondition
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+    from rheed_capture.infrastructure.config.schema import AcquisitionSettings
     from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class AngleScanService(CaptureWorker):
         motor: RotationMotor,
         conditions: list[CaptureCondition],
         settings: AngleScanSettings,
+        acquisition_settings: AcquisitionSettings,
         parent: QObject | None = None,
     ) -> None:
         self.camera = camera_device
@@ -57,11 +59,19 @@ class AngleScanService(CaptureWorker):
         # 開始後にUI側の選択が変わっても、今回のscan.jsonと撮影条件は固定する。
         self._conditions = list(conditions)
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
+        self._trigger_settings = acquisition_settings.to_trigger_settings()
+        self._accumulation_frames = (
+            acquisition_settings.accumulation_frames
+            if acquisition_settings.accumulation_enabled
+            else 1
+        )
+        self._trigger_wait_timeout_sec = acquisition_settings.trigger_wait_timeout_sec
         # scan.jsonはセッション開始時に必要なため、角度計画と条件を事前に文書化する。
         self._scan_document = build_angle_scan_document_from_conditions(
             settings=self.settings,
             conditions=self._conditions,
             retry_limit=self.max_retries,
+            accumulation_frames=self._accumulation_frames,
         )
         super().__init__(self._run_angle_scan_capture, parent=parent)
         self.finished.connect(self.scan_finished)
@@ -72,11 +82,17 @@ class AngleScanService(CaptureWorker):
         session = self.storage.start_angle_scan_session(self._scan_document)
         # Application層には解決済み条件だけを渡す。
         capture = AngleScanCapture(
-            FrameCapturer(self.camera, max_retries=self.max_retries),
+            FrameCapturer(
+                self.camera,
+                trigger_settings=self._trigger_settings,
+                max_retries=self.max_retries,
+            ),
             session,
             self.motor,
             self._conditions,
             self.settings,
+            accumulation_frames=self._accumulation_frames,
+            trigger_wait_timeout_sec=self._trigger_wait_timeout_sec,
         )
         capture.run(
             cancellation_token,

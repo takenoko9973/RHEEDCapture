@@ -15,6 +15,7 @@ from pypylon.pylon import GenericException, InstantCamera, TlFactory
 from rheed_capture.application.ports.camera import (
     CameraError,
     CameraFrame,
+    TriggerSettings,
 )
 from rheed_capture.domain.acquisition_statistics import AcquisitionSample
 from rheed_capture.infrastructure.camera.basler_configurators import (
@@ -68,7 +69,7 @@ class CameraState(Enum):
     DISCONNECTED = "disconnected"
     IDLE = "idle"
     PREVIEW = "preview"
-    SOFTWARE_TRIGGER = "software_trigger"
+    TRIGGER_CAPTURE = "trigger_capture"
 
 
 class BaslerCamera:
@@ -86,7 +87,7 @@ class BaslerCamera:
         self._configurators = tuple(configurators or (BaslerMandatorySettings(),))
         self._state = CameraState.DISCONNECTED
         self._owner_thread_id: int | None = None
-        self._active_trigger_session: _BaslerSoftwareTriggerSession | None = None
+        self._active_trigger_session: _BaslerTriggerCaptureSession | None = None
         self._latest_acquisition_sample: AcquisitionSample | None = None
         self._frame_readback_provider_factory: (
             type[ChunkFrameReadbackProvider | SimulationFrameReadbackProvider]
@@ -267,8 +268,8 @@ class BaslerCamera:
                 return
             if self._state is CameraState.IDLE:
                 return
-            if self._state is CameraState.SOFTWARE_TRIGGER:
-                msg = "ソフトトリガー取得はSession.close()で停止してください。"
+            if self._state is CameraState.TRIGGER_CAPTURE:
+                msg = "Trigger取得はSession.close()で停止してください。"
                 raise CameraError(msg)
 
             self._require_owner_thread("プレビュー停止")
@@ -283,26 +284,31 @@ class BaslerCamera:
                 self._owner_thread_id = None
                 self._latest_acquisition_sample = None
 
-    def start_software_trigger_session(
+    def start_trigger_session(
         self,
         *,
+        settings: TriggerSettings,
         expected_frames: int | None,
-    ) -> _BaslerSoftwareTriggerSession:
-        """IDLE状態から必須能力を設定し、ソフトトリガーSessionを開始する。"""
+    ) -> _BaslerTriggerCaptureSession:
+        """IDLE状態から指定modeのTrigger Sessionを開始する。"""
         if expected_frames is not None and expected_frames <= 0:
             msg = "expected_framesは正の整数またはNoneにしてください。"
             raise ValueError(msg)
 
         with self._lock:
-            self._require_state(CameraState.IDLE, "ソフトトリガーSession開始")
-            session = _BaslerSoftwareTriggerSession(self, expected_frames=expected_frames)
+            self._require_state(CameraState.IDLE, "Trigger Session開始")
+            session = _BaslerTriggerCaptureSession(
+                self,
+                settings=settings,
+                expected_frames=expected_frames,
+            )
             try:
                 session._start()
             except (CameraError, GenericException):
                 session._cleanup_after_failed_start()
                 raise
 
-            self._state = CameraState.SOFTWARE_TRIGGER
+            self._state = CameraState.TRIGGER_CAPTURE
             self._owner_thread_id = threading.get_ident()
             self._active_trigger_session = session
             self._latest_acquisition_sample = None
@@ -364,12 +370,19 @@ class BaslerCamera:
             raise CameraError(msg)
 
 
-class _BaslerSoftwareTriggerSession:
+class _BaslerTriggerCaptureSession:
     """Basler固有のGenICam設定とtrigger取得ライフサイクルを所有する。"""
 
-    def __init__(self, camera_device: BaslerCamera, *, expected_frames: int | None) -> None:
+    def __init__(
+        self,
+        camera_device: BaslerCamera,
+        *,
+        settings: TriggerSettings,
+        expected_frames: int | None,
+    ) -> None:
         """対象カメラと予定フレーム数を保持する。"""
         self._camera_device = camera_device
+        self._settings = settings
         self._expected_frames = expected_frames
         self._closed = False
         self._readback_provider: BaslerFrameReadbackProvider = (
@@ -392,7 +405,7 @@ class _BaslerSoftwareTriggerSession:
         except CameraError:
             if exc_value is None:
                 raise
-            logger.exception("取得失敗後のソフトトリガーSession終了にも失敗しました")
+            logger.exception("取得失敗後のTrigger Session終了にも失敗しました")
 
     def _start(self) -> None:
         """必須nodeを検証・設定し、OneByOne取得を開始する。"""
@@ -400,9 +413,27 @@ class _BaslerSoftwareTriggerSession:
         nodemap = camera.GetNodeMap()
 
         _set_required_node_value(nodemap, "AcquisitionMode", "Continuous")
+        _apply_frame_rate_limit(nodemap, self._settings.fps_limit)
         _set_required_node_value(nodemap, "TriggerSelector", "FrameStart")
         _set_required_node_value(nodemap, "TriggerMode", "On")
-        _set_required_node_value(nodemap, "TriggerSource", "Software")
+        if self._settings.mode == "software":
+            _set_required_node_value(nodemap, "TriggerSource", "Software")
+        else:
+            _set_required_node_value(
+                nodemap,
+                "TriggerSource",
+                self._settings.hardware_source,
+            )
+            _set_required_node_value(
+                nodemap,
+                "TriggerActivation",
+                self._settings.hardware_activation,
+            )
+            _set_required_node_value(
+                nodemap,
+                "TriggerDelayAbs",
+                self._settings.hardware_delay_us,
+            )
         self._readback_provider.prepare(camera)
 
         try:
@@ -426,6 +457,9 @@ class _BaslerSoftwareTriggerSession:
         """カメラがFrameStart triggerを受理できるまで待つ。"""
         with self._camera_device._lock:
             self._require_active("TriggerReady待機")
+            if self._settings.mode != "software":
+                msg = "Hardware modeではTriggerReady待機を実行できません。"
+                raise CameraError(msg)
             try:
                 ready = self._camera_device.camera.WaitForFrameTriggerReady(
                     timeout_ms,
@@ -442,10 +476,13 @@ class _BaslerSoftwareTriggerSession:
                 msg = f"WaitForFrameTriggerReadyが{timeout_ms} msで失敗しました。"
                 raise TimeoutError(msg)
 
-    def execute_trigger(self) -> None:
+    def execute_software_trigger(self) -> None:
         """ソフトウェアFrameStart triggerを1回発行する。"""
         with self._camera_device._lock:
             self._require_active("ソフトトリガー発行")
+            if self._settings.mode != "software":
+                msg = "Hardware modeではSoftware Triggerを発行できません。"
+                raise CameraError(msg)
             try:
                 self._camera_device.camera.ExecuteSoftwareTrigger()
                 self._readback_provider.on_trigger_executed()
@@ -499,7 +536,7 @@ class _BaslerSoftwareTriggerSession:
         with self._camera_device._lock:
             if self._closed:
                 return
-            self._camera_device._require_owner_thread("ソフトトリガーSession終了")
+            self._camera_device._require_owner_thread("Trigger Session終了")
             self._closed = True
 
             cleanup_error: CameraError | None = None
@@ -532,7 +569,7 @@ class _BaslerSoftwareTriggerSession:
                 camera.StopGrabbing()
             self._restore_nodes()
         except (CameraError, GenericException):
-            logger.exception("ソフトトリガーSession開始失敗後の復元に失敗しました")
+            logger.exception("Trigger Session開始失敗後の復元に失敗しました")
         finally:
             self._closed = True
 
@@ -547,11 +584,24 @@ class _BaslerSoftwareTriggerSession:
 
     def _require_active(self, operation: str) -> None:
         """このSessionが現在のカメラ所有者であることを確認する。"""
-        self._camera_device._require_state(CameraState.SOFTWARE_TRIGGER, operation)
+        self._camera_device._require_state(CameraState.TRIGGER_CAPTURE, operation)
         self._camera_device._require_owner_thread(operation)
         if self._closed or self._camera_device._active_trigger_session is not self:
-            msg = f"{operation}に使用したソフトトリガーSessionは終了済みです。"
+            msg = f"{operation}に使用したTrigger Sessionは終了済みです。"
             raise CameraError(msg)
+
+
+def _apply_frame_rate_limit(
+    nodemap: _GenicamNodeMap,
+    fps_limit: float | None,
+) -> None:
+    """camera側FPS LimitをUnlimitedまたは指定正値へ設定する。"""
+    if fps_limit is None:
+        _set_required_node_value(nodemap, "AcquisitionFrameRateEnable", False)
+        return
+
+    _set_required_node_value(nodemap, "AcquisitionFrameRateEnable", True)
+    _set_required_node_value(nodemap, "AcquisitionFrameRateAbs", fps_limit)
 
 
 def _get_required_node(nodemap: _GenicamNodeMap, node_name: str) -> _GenicamNode:
