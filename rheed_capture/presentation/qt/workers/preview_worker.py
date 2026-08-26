@@ -19,7 +19,10 @@ from rheed_capture.domain.acquisition_statistics import (
     AcquisitionStatisticsMeter,
 )
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings
-from rheed_capture.presentation.qt.preview.processor import PreviewPipeline
+from rheed_capture.presentation.qt.preview.processor import (
+    PreviewDiagnostics,
+    PreviewPipeline,
+)
 
 if TYPE_CHECKING:
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
@@ -49,7 +52,6 @@ class PreviewWorker(QThread):
         super().__init__(parent)
         self.camera_device = camera_device
         self.pipeline = PreviewPipeline()
-        self.raw_frame_ready.connect(self.pipeline.process_frame)
         self.pipeline.image_ready.connect(self.image_ready)
         self.pipeline.histogram_ready.connect(self.histogram_ready)
         self.pipeline.error_occurred.connect(self.error_occurred)
@@ -87,6 +89,7 @@ class PreviewWorker(QThread):
         """終了要求を解除してPreview threadを開始する。"""
         with self._lifecycle_lock:
             self._stop_requested = False
+        self.pipeline.start()
         super().start(priority)
 
     def run(self) -> None:
@@ -97,6 +100,7 @@ class PreviewWorker(QThread):
             self._is_running = True
         self._reset_statistics(active=True)
         self._reset_accumulator()
+        self.pipeline.reset_rates()
 
         try:
             self._run_preview_loop()
@@ -133,6 +137,7 @@ class PreviewWorker(QThread):
         self._is_paused = True
         self._reset_statistics(active=False)
         self._reset_accumulator()
+        self.pipeline.reset_rates()
         self.preview_paused.emit()
 
     def _wait_while_paused(self) -> bool:
@@ -142,6 +147,7 @@ class PreviewWorker(QThread):
             self._is_paused = False
             self._reset_statistics(active=True)
             self._reset_accumulator()
+            self.pipeline.reset_rates()
             return False
 
         if not self._is_paused:
@@ -157,6 +163,7 @@ class PreviewWorker(QThread):
         if settings_changed:
             self._reset_statistics(active=True)
             self._reset_accumulator()
+            self.pipeline.reset_rates()
 
     def _start_preview_session(self) -> bool:
         """現在設定のUnlimited Trigger Sessionを開始する。"""
@@ -234,6 +241,7 @@ class PreviewWorker(QThread):
         self._accumulation_progress += 1
         if self._accumulation_target == 1:
             self.raw_frame_ready.emit(raw_image)
+            self.submit_frame(raw_image)
             return
 
         image_uint64 = np.asarray(raw_image, dtype=np.uint64)
@@ -247,6 +255,7 @@ class PreviewWorker(QThread):
 
         accumulated_image = np.clip(self._accumulator, 0, 65535).astype(np.uint16)
         self.raw_frame_ready.emit(accumulated_image)
+        self.submit_frame(accumulated_image)
 
     def statistics_snapshot(self) -> AcquisitionStatistics | None:
         """表示時点のPreview取得統計を返す。"""
@@ -377,3 +386,19 @@ class PreviewWorker(QThread):
         """プレビュー画像処理の有効状態を更新する。"""
         self.enable_processing = enabled
         self.pipeline.set_processing_enabled(enabled)
+
+    def submit_frame(self, frame: object) -> bool:
+        """Raw frameをPreviewとGraphのmailboxへ待たずに投入する。"""
+        return self.pipeline.submit_frame(frame)
+
+    def refresh_display(self) -> bool:
+        """GUI refresh tickでPreviewとGraphの最新結果だけを反映する。"""
+        return self.pipeline.poll_results()
+
+    def set_display_refresh_rate(self, refresh_rate_hz: float) -> None:
+        """表示refresh rateを診断用にPreview pipelineへ渡す。"""
+        self.pipeline.set_display_refresh_rate(refresh_rate_hz)
+
+    def diagnostics_snapshot(self) -> PreviewDiagnostics:
+        """Preview、Graph、表示の診断値を返す。"""
+        return self.pipeline.diagnostics_snapshot()

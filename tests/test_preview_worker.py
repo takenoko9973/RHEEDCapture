@@ -131,6 +131,7 @@ def _stop_worker(worker: PreviewWorker) -> None:
     """workerへ停止要求を送り、所有threadの終了を待つ。"""
     worker.stop()
     assert worker.wait(1000)
+    worker.pipeline.stop()
 
 
 def _as_camera_device(
@@ -158,7 +159,7 @@ def test_preview_worker_software_trigger_call_order_and_count(qtbot: QtBot) -> N
     camera = FakeCamera([session])
     worker = PreviewWorker(_as_camera_device(camera))
 
-    with qtbot.waitSignal(worker.image_ready, timeout=2000):
+    with qtbot.waitSignal(worker.raw_frame_ready, timeout=2000):
         _start_worker(worker)
     _stop_worker(worker)
 
@@ -302,6 +303,56 @@ def test_preview_worker_pause_resume_closes_and_reopens_session(qtbot: QtBot) ->
     assert worker._is_paused is False  # noqa: SLF001
     _stop_worker(worker)
     assert second_session.closed
+
+
+def test_preview_worker_resets_realtime_rate_at_pause_and_resume(
+    qtbot: QtBot,
+) -> None:
+    """pause後に処理FPSをidleへ戻し、resume後は新しいrate窓から再開する。"""
+
+    class SpacedSession(FakeSession):
+        """連続frameがPreview mailboxで置換されないよう取得間隔を空ける。"""
+
+        def retrieve_frame(self, timeout_ms: int) -> CameraFrame:
+            """親Sessionから取得後、次frameまで短く待つ。"""
+            frame = super().retrieve_frame(timeout_ms)
+            time.sleep(0.02)
+            return frame
+
+    first_session = SpacedSession(
+        [_frame(100), _frame(200)],
+        default_response=TimeoutError(),
+    )
+    second_session = FakeSession([], default_response=TimeoutError())
+    camera = FakeCamera([first_session, second_session])
+    worker = PreviewWorker(_as_camera_device(camera))
+    worker.set_acquisition_settings(AcquisitionSettings(mode="hardware"))
+    _start_worker(worker)
+
+    try:
+        qtbot.waitUntil(
+            lambda: worker.pipeline.preview_processor.processed_count >= 2
+            and not worker.pipeline.preview_processor.busy,
+            timeout=2000,
+        )
+        qtbot.waitUntil(
+            lambda: worker.diagnostics_snapshot().preview_processing_fps > 0.0,
+            timeout=1000,
+        )
+
+        with qtbot.waitSignal(worker.preview_paused, timeout=2000):
+            worker.request_pause()
+        paused = worker.diagnostics_snapshot()
+        assert paused.preview_processing_fps == 0.0
+        assert paused.graph_processing_fps == 0.0
+
+        worker.resume()
+        qtbot.waitUntil(lambda: len(camera.started_sessions) == 2, timeout=2000)
+        resumed_without_frames = worker.diagnostics_snapshot()
+        assert resumed_without_frames.preview_processing_fps == 0.0
+        assert resumed_without_frames.graph_processing_fps == 0.0
+    finally:
+        _stop_worker(worker)
 
 
 def test_preview_worker_applies_exposure_and_gain_after_session_close(

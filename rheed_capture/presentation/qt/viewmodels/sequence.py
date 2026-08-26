@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.config.schema import (
@@ -117,7 +117,11 @@ class CaptureViewModel(QObject):
             self._acquisition_settings,
         )
         self._capture_service.progress_update.connect(self.progress_updated)
-        self._capture_service.frame_captured.connect(self.frame_captured)
+        # Preview受信側はmailbox投入だけなので、Raw frameをGUI eventへ蓄積しない。
+        self._capture_service.frame_captured.connect(
+            self.frame_captured,
+            Qt.ConnectionType.DirectConnection,
+        )
         self._capture_service.sequence_finished.connect(self.sequence_finished)
         self._capture_service.error_occurred.connect(self.error_occurred)
         self._capture_service.start()

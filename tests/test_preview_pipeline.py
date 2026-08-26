@@ -12,15 +12,17 @@ from rheed_capture.presentation.qt.preview.processor import PreviewPipeline
 def test_preview_pipeline_processes_raw_ndarray(qtbot: QtBot) -> None:
     pipeline = PreviewPipeline()
     raw = np.arange(16, dtype=np.uint16).reshape(4, 4) << 8
+    images: list[np.ndarray] = []
+    pipeline.image_ready.connect(images.append)
+    pipeline.start()
 
-    with (
-        qtbot.waitSignal(pipeline.image_ready, timeout=1000) as image_blocker,
-        qtbot.waitSignal(pipeline.histogram_ready, timeout=1000),
-    ):
+    try:
         pipeline.process_frame(raw)
+        qtbot.waitUntil(pipeline.poll_results, timeout=1000)
+    finally:
+        pipeline.stop()
 
-    assert image_blocker.args is not None
-    image = image_blocker.args[0]
+    image = images[0]
     assert image.dtype == np.uint8
     assert image.shape == raw.shape
 
@@ -43,5 +45,13 @@ def test_preview_pipeline_processes_captured_frame(qtbot: QtBot) -> None:
         ),
     )
 
-    with qtbot.waitSignal(pipeline.image_ready, timeout=1000):
+    images: list[np.ndarray] = []
+    pipeline.image_ready.connect(images.append)
+    pipeline.start()
+    try:
         pipeline.process_frame(frame)
+        qtbot.waitUntil(pipeline.poll_results, timeout=1000)
+    finally:
+        pipeline.stop()
+
+    assert len(images) == 1

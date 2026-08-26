@@ -12,7 +12,8 @@ from rheed_capture.presentation.qt.viewmodels.angle_scan import AngleScanViewMod
 
 
 class _FakeSignal:
-    def connect(self, slot: object) -> None:  # noqa: ARG002
+    def connect(self, slot: object, *connection_types: object) -> None:  # noqa: ARG002
+        """Qt signalのslotと接続種別を受け取るfake接続を記録しない。"""
         return
 
 

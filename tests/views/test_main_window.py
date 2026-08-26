@@ -1,9 +1,12 @@
+import threading
 import time
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
+from PySide6.QtCore import QObject, Signal
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
@@ -22,6 +25,22 @@ from rheed_capture.presentation.qt.main_window import (
     ACQUISITION_STATISTICS_UI_INTERVAL_MS,
     MainWindow,
 )
+from rheed_capture.presentation.qt.workers.recording_service import RecordingService
+
+
+class _FakeScreen(QObject):
+    """表示refresh rate変更を再現するQScreen相当のdouble。"""
+
+    refreshRateChanged = Signal(float)  # noqa: N815
+
+    def __init__(self, rate_hz: float) -> None:
+        """初期refresh rateを保持する。"""
+        super().__init__()
+        self.rate_hz = rate_hz
+
+    def refreshRate(self) -> float:  # noqa: N802
+        """現在のrefresh rateを返す。"""
+        return self.rate_hz
 
 
 @pytest.fixture
@@ -231,33 +250,55 @@ def test_acquisition_statistics_status_uses_only_preview_and_recording(
     assert not window.acquisition_statistics_label.font().bold()
     assert window.acquisition_statistics_label.styleSheet() == ""
 
-    with patch.object(
-        window.preview_vm,
-        "get_acquisition_statistics_text",
-        return_value="Preview 10.0 fps",
+    with (
+        patch.object(
+            window.preview_vm,
+            "get_acquisition_statistics_text",
+            return_value="Preview 10.0 fps",
+        ),
+        patch.object(
+            window.preview_vm,
+            "get_realtime_diagnostics_text",
+            return_value="Realtime diagnostics",
+        ),
     ):
         window.capture_coordinator.active_mode = None
         window._update_acquisition_statistics_display()  # noqa: SLF001
-    assert window.acquisition_statistics_label.text() == "Preview 10.0 fps"
-
-    window.capture_coordinator.active_mode = "sequence"
-    window._update_acquisition_statistics_display()  # noqa: SLF001
-    assert window.acquisition_statistics_label.text() == ""
-
-    window.capture_coordinator.active_mode = "angle_scan"
-    window._update_acquisition_statistics_display()  # noqa: SLF001
-    assert window.acquisition_statistics_label.text() == ""
+    assert (
+        window.acquisition_statistics_label.text()
+        == "Preview 10.0 fps | Realtime diagnostics"
+    )
 
     with patch.object(
-        window.recording_vm,
-        "get_acquisition_statistics_text",
-        return_value="Recording 9.0 fps | Avg 8.0 fps",
+        window.preview_vm,
+        "get_realtime_diagnostics_text",
+        return_value="Realtime diagnostics",
+    ):
+        window.capture_coordinator.active_mode = "sequence"
+        window._update_acquisition_statistics_display()  # noqa: SLF001
+        assert window.acquisition_statistics_label.text() == "Realtime diagnostics"
+
+        window.capture_coordinator.active_mode = "angle_scan"
+        window._update_acquisition_statistics_display()  # noqa: SLF001
+        assert window.acquisition_statistics_label.text() == "Realtime diagnostics"
+
+    with (
+        patch.object(
+            window.recording_vm,
+            "get_acquisition_statistics_text",
+            return_value="Recording 9.0 fps | Avg 8.0 fps",
+        ),
+        patch.object(
+            window.preview_vm,
+            "get_realtime_diagnostics_text",
+            return_value="Realtime diagnostics",
+        ),
     ):
         window.capture_coordinator.active_mode = "recording"
         window._update_acquisition_statistics_display()  # noqa: SLF001
     assert (
         window.acquisition_statistics_label.text()
-        == "Recording 9.0 fps | Avg 8.0 fps"
+        == "Recording 9.0 fps | Avg 8.0 fps | Realtime diagnostics"
     )
 
     window.capture_coordinator.active_mode = None
@@ -291,4 +332,94 @@ def test_acquisition_controls_lock_during_capture_and_recording_rate_uses_mode(
     assert window.acquisition_settings_panel.cmb_source.isEnabled() is True
     assert window.recording_panel.btn_rate_interval.isEnabled() is False
     assert window.recording_panel.btn_rate_fps.isEnabled() is False
+    window.close()
+
+
+def test_display_refresh_tracks_active_screen_and_rate_changes(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """表示Timerがscreen移動とrefresh rate変更に追従する。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    first_screen = _FakeScreen(60.0)
+    second_screen = _FakeScreen(144.0)
+
+    window._on_display_screen_changed(first_screen)  # noqa: SLF001
+    assert window._display_refresh_timer.interval() == 17  # noqa: SLF001
+    assert window._active_display_hz == 60.0  # noqa: SLF001
+
+    first_screen.rate_hz = 120.0
+    first_screen.refreshRateChanged.emit(120.0)
+    assert window._display_refresh_timer.interval() == 9  # noqa: SLF001
+    assert window._active_display_hz == 120.0  # noqa: SLF001
+
+    window._on_display_screen_changed(second_screen)  # noqa: SLF001
+    assert window._display_refresh_timer.interval() == 7  # noqa: SLF001
+    assert window._active_display_hz == 144.0  # noqa: SLF001
+
+    first_screen.rate_hz = 30.0
+    first_screen.refreshRateChanged.emit(30.0)
+    assert window._display_refresh_timer.interval() == 7  # noqa: SLF001
+    window.close()
+
+
+def test_recording_preview_submission_does_not_wait_for_gui_thread(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """実RecordingServiceからのPreview入力はGUI処理待ちせずsubmitする。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    submit_called = threading.Event()
+    submit_thread_id: list[int] = []
+    emitter_thread_id: list[int] = []
+
+    def submit_frame(_frame: object) -> bool:
+        """mailbox投入の呼出threadを記録する。"""
+        submit_thread_id.append(threading.get_ident())
+        submit_called.set()
+        return True
+
+    monkeypatch.setattr(window.preview_vm._worker, "submit_frame", submit_frame)  # noqa: SLF001
+    monkeypatch.setattr(RecordingService, "start", lambda _service: None)
+    window.recording_vm.start_recording()
+    service = window.recording_vm._recording_service  # noqa: SLF001
+    assert service is not None
+
+    def emit_frame() -> None:
+        """Emit a Preview frame from a Recording-worker-like thread."""
+        emitter_thread_id.append(threading.get_ident())
+        service.frame_captured.emit(np.ones((2, 2), dtype=np.uint16))
+
+    emitter = threading.Thread(target=emit_frame)
+    emitter.start()
+    emitter.join(timeout=1.0)
+    assert submit_called.wait(1.0)
+    assert emitter_thread_id == submit_thread_id
+    window.close()
+
+
+def test_realtime_diagnostics_are_visible_in_existing_status_label(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """Preview/Graphの処理・表示FPSとactive Hzを既存status labelへ表示する。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    window.preview_vm.set_display_refresh_rate(60.0)
+    window.capture_coordinator.active_mode = None
+
+    window._update_acquisition_statistics_display()  # noqa: SLF001
+
+    status_text = window.acquisition_statistics_label.text()
+    assert "Realtime" in status_text
+    assert "Preview proc/display" in status_text
+    assert "Graph proc/display" in status_text
+    assert "Active display 60.0 Hz" in status_text
+    assert "Drops P/G" in status_text
     window.close()

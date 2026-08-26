@@ -3,7 +3,9 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings, PreviewSettings
+from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
 from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
+    format_preview_realtime_diagnostics,
     format_preview_statistics,
 )
 from rheed_capture.presentation.qt.workers.preview_worker import PreviewWorker
@@ -75,6 +77,7 @@ class PreviewViewModel(QObject):
         if not self._worker.wait(2000):
             msg = "Preview worker did not stop within 2000 ms"
             raise RuntimeError(msg)
+        self._worker.pipeline.stop()
 
     def get_acquisition_statistics_text(self) -> str:
         """現在のPreview取得統計をstatus bar表示用に返す。"""
@@ -82,6 +85,10 @@ class PreviewViewModel(QObject):
         if statistics is None:
             return ""
         return format_preview_statistics(statistics)
+
+    def get_realtime_diagnostics_text(self) -> str:
+        """PreviewとGraphの処理・表示診断値をstatus bar表示用に返す。"""
+        return format_preview_realtime_diagnostics(self.diagnostics_snapshot())
 
     def pause_preview(self) -> None:
         """シーケンス撮影開始などのため、プレビューを一時停止する"""
@@ -129,4 +136,18 @@ class PreviewViewModel(QObject):
 
     @Slot(object)
     def process_captured_frame(self, frame: object) -> None:
-        self._worker.pipeline.process_frame(frame)
+        """撮影中のPreview frameを処理mailboxへ待たずに投入する。"""
+        self._worker.submit_frame(frame)
+
+    @Slot()
+    def refresh_display(self) -> None:
+        """表示refresh tickで最新のPreviewとGraph結果だけを反映する。"""
+        self._worker.refresh_display()
+
+    def set_display_refresh_rate(self, refresh_rate_hz: float) -> None:
+        """active screenのrefresh rateを診断値へ反映する。"""
+        self._worker.set_display_refresh_rate(refresh_rate_hz)
+
+    def diagnostics_snapshot(self) -> PreviewDiagnostics:
+        """Preview、Graph、表示の診断値を返す。"""
+        return self._worker.diagnostics_snapshot()

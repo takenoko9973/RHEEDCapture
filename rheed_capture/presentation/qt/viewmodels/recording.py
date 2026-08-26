@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, cast
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from rheed_capture.application.capture.recording import (
     RateMode,
@@ -138,7 +138,11 @@ class RecordingViewModel(QObject):
         )
         # ServiceのSignalをViewModelのSignalとして中継し、PanelとMainWindowを疎結合に保つ。
         self._recording_service.saved_frames_updated.connect(self.saved_frames_updated)
-        self._recording_service.frame_captured.connect(self.frame_captured)
+        # Preview受信側はmailbox投入だけなので、Raw frameをGUI eventへ蓄積しない。
+        self._recording_service.frame_captured.connect(
+            self.frame_captured,
+            Qt.ConnectionType.DirectConnection,
+        )
         self._recording_service.recording_finished.connect(self.recording_finished)
         self._recording_service.error_occurred.connect(self.error_occurred)
         self._recording_service.start()

@@ -1,8 +1,10 @@
 import logging
+import math
 from collections.abc import Callable
+from typing import Any, cast
 
 from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -57,6 +59,14 @@ ACQUISITION_STATISTICS_TOOLTIP = (
 )
 
 
+def _display_interval_ms(refresh_rate_hz: float) -> int:
+    """表示refresh rateを超えないQTimer間隔へ変換する。"""
+    if refresh_rate_hz <= 0:
+        msg = "Display refresh rate must be greater than zero."
+        raise ValueError(msg)
+    return max(1, math.ceil(1000.0 / refresh_rate_hz))
+
+
 class MainWindow(QMainWindow):
     preview_vm: PreviewViewModel
     capture_vm: CaptureViewModel
@@ -101,6 +111,7 @@ class MainWindow(QMainWindow):
         self._setup_sequence_preview_timer()
         self._setup_capture_coordinator()
         self._setup_acquisition_statistics_timer()
+        self._setup_display_refresh_timer()
         self._load_settings()
 
         self.preview_vm.start_preview()
@@ -258,7 +269,11 @@ class MainWindow(QMainWindow):
         self.sequence_panel.cancel_requested.connect(self.capture_vm.cancel_sequence)
 
         self.capture_vm.progress_updated.connect(self.sequence_panel.update_progress)
-        self.capture_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
+        # 受信側はmailbox投入だけなので、capture threadから直接呼び出してGUI eventを蓄積しない。
+        self.capture_vm.frame_captured.connect(
+            self.preview_vm.process_captured_frame,
+            Qt.ConnectionType.DirectConnection,
+        )
         self.capture_vm.sequence_finished.connect(self._on_sequence_finished)
         self.capture_vm.error_occurred.connect(self._show_error)
 
@@ -312,7 +327,10 @@ class MainWindow(QMainWindow):
         self.angle_scan_panel.start_requested.connect(self._on_start_angle_scan_requested)
         self.angle_scan_panel.cancel_requested.connect(self.angle_scan_vm.cancel_angle_scan)
         self.angle_scan_vm.progress_updated.connect(self.angle_scan_panel.update_progress)
-        self.angle_scan_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
+        self.angle_scan_vm.frame_captured.connect(
+            self.preview_vm.process_captured_frame,
+            Qt.ConnectionType.DirectConnection,
+        )
         self.angle_scan_vm.angle_scan_finished.connect(self._on_angle_scan_finished)
         self.angle_scan_vm.error_occurred.connect(self._show_error)
         self._setup_angle_scan_preview_bindings()
@@ -335,7 +353,10 @@ class MainWindow(QMainWindow):
         self.recording_vm.expected_frames_updated.connect(
             self.recording_panel.update_expected_frames
         )
-        self.recording_vm.frame_captured.connect(self.preview_vm.process_captured_frame)
+        self.recording_vm.frame_captured.connect(
+            self.preview_vm.process_captured_frame,
+            Qt.ConnectionType.DirectConnection,
+        )
         self.recording_vm.recording_finished.connect(self._on_recording_finished)
         self.recording_vm.error_occurred.connect(self._show_error)
 
@@ -424,17 +445,91 @@ class MainWindow(QMainWindow):
         )
         self._acquisition_statistics_timer.start()
 
+    def _setup_display_refresh_timer(self) -> None:
+        """active QScreenのrefresh rateで表示結果をpullするTimerを設定する。"""
+        self._display_refresh_timer = QTimer(self)
+        self._display_refresh_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._display_refresh_timer.timeout.connect(self.preview_vm.refresh_display)
+        self._active_display_hz = 0.0
+        self._display_screen: object | None = None
+        self._display_refresh_signal: object | None = None
+        self._display_window_handle: object | None = None
+        self._bind_display_screen()
+
+    def _bind_display_screen(self) -> None:
+        """MainWindowのscreenChangedを接続し、現在screenを同期する。"""
+        window_handle = self.windowHandle()
+        if window_handle is not None and window_handle is not self._display_window_handle:
+            window_handle.screenChanged.connect(self._on_display_screen_changed)
+            self._display_window_handle = window_handle
+
+        active_screen = self.screen()
+        if active_screen is not self._display_screen:
+            self._on_display_screen_changed(active_screen)
+        elif active_screen is not None:
+            self._on_display_refresh_rate_changed()
+
+    def _on_display_screen_changed(self, screen: object | None) -> None:
+        """screen移動時にrefresh rate signalと表示Timerを切り替える。"""
+        if self._display_refresh_signal is not None:
+            cast("Any", self._display_refresh_signal).disconnect(
+                self._on_display_refresh_rate_changed
+            )
+            self._display_refresh_signal = None
+
+        self._display_screen = screen
+        if screen is None:
+            self._display_refresh_timer.stop()
+            self._active_display_hz = 0.0
+            self.preview_vm.set_display_refresh_rate(0.0)
+            return
+
+        refresh_signal = getattr(screen, "refreshRateChanged", None)
+        if refresh_signal is not None:
+            refresh_signal.connect(self._on_display_refresh_rate_changed)
+            self._display_refresh_signal = refresh_signal
+        self._on_display_refresh_rate_changed()
+
+    def _on_display_refresh_rate_changed(self, refresh_rate_hz: float | None = None) -> None:
+        """refresh rate変更をTimer間隔とPreview診断値へ反映する。"""
+        if refresh_rate_hz is None:
+            screen = self._display_screen
+            if screen is None:
+                return
+            refresh_rate_hz = float(cast("Any", screen).refreshRate())
+
+        if refresh_rate_hz <= 0:
+            self._display_refresh_timer.stop()
+            self._active_display_hz = 0.0
+            self.preview_vm.set_display_refresh_rate(0.0)
+            return
+
+        self._active_display_hz = float(refresh_rate_hz)
+        self._display_refresh_timer.setInterval(
+            _display_interval_ms(self._active_display_hz)
+        )
+        self.preview_vm.set_display_refresh_rate(self._active_display_hz)
+        if not self._display_refresh_timer.isActive():
+            self._display_refresh_timer.start()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        """表示後に確定したnative windowのactive screenを再同期する。"""
+        super().showEvent(event)
+        self._bind_display_screen()
+
     @Slot()
     def _update_acquisition_statistics_display(self) -> None:
-        """現在の取得モードに対応する統計文字列だけを表示する。"""
+        """取得統計とPreview/GraphのRealtime診断値をstatus barへ表示する。"""
         active_mode = self.capture_coordinator.active_mode
         if active_mode == "recording":
             text = self.recording_vm.get_acquisition_statistics_text()
         elif active_mode is None:
             text = self.preview_vm.get_acquisition_statistics_text()
         else:
-            # SequenceとAngle Scanでは診断表示を追加しない。
+            # SequenceとAngle Scanでは従来どおり取得統計を表示しない。
             text = ""
+        realtime_text = self.preview_vm.get_realtime_diagnostics_text()
+        text = " | ".join(part for part in (text, realtime_text) if part)
         self.acquisition_statistics_label.setText(text)
 
     def _update_storage_display(self, *, refresh_counters: bool = True) -> None:
@@ -628,6 +723,7 @@ class MainWindow(QMainWindow):
 
         self._sequence_preview_timer.stop()
         self._acquisition_statistics_timer.stop()
+        self._display_refresh_timer.stop()
 
         # バックグラウンドスレッドの停止とカメラの切断
         self.preview_vm.stop_preview()

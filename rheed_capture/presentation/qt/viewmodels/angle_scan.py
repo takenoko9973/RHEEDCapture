@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 from rheed_capture.domain.angle_scan.model import (
     AngleScanDirection,
@@ -300,7 +300,11 @@ class AngleScanViewModel(QObject):
 
     def _connect_angle_scan_service(self, service: AngleScanService) -> None:
         service.progress_update.connect(self.progress_updated)
-        service.frame_captured.connect(self.frame_captured)
+        # Preview受信側はmailbox投入だけなので、Raw frameをGUI eventへ蓄積しない。
+        service.frame_captured.connect(
+            self.frame_captured,
+            Qt.ConnectionType.DirectConnection,
+        )
         service.scan_finished.connect(self.angle_scan_finished)
         service.error_occurred.connect(self.error_occurred)
         service.preview_resume_requested.connect(self.preview_resume_requested)
