@@ -14,7 +14,11 @@ def format_preview_statistics(statistics: AcquisitionStatistics) -> str:
 def format_recording_statistics(statistics: AcquisitionStatistics) -> str:
     """RecordingのRaw count、Raw FPS、積算進捗、待機状態を整形する。"""
     text = _format_acquisition_status("Recording", statistics)
-    return _append_payload(text, statistics.payload_bytes_per_second)
+    text = _append_payload(text, statistics.payload_bytes_per_second)
+    return (
+        f"{text} | Save queue "
+        f"{statistics.save_queue_depth}/{statistics.save_queue_peak_depth}"
+    )
 
 
 def _format_acquisition_status(

@@ -38,6 +38,7 @@ from rheed_capture.infrastructure.config.defaults import (
     DEFAULT_PREVIEW_GRID_COLS,
     DEFAULT_PREVIEW_GRID_ENABLED,
     DEFAULT_PREVIEW_GRID_ROWS,
+    DEFAULT_RECORDING_TIFF_COMPRESSION_ENABLED,
 )
 from rheed_capture.infrastructure.motor.defaults import (
     DEFAULT_MOTOR_PORT,
@@ -89,6 +90,14 @@ def _require_positive_motor_speed(motor_speed_rpm: float) -> None:
     if motor_speed_rpm <= 0:
         msg = "モーター速度は正の値にしてください。"
         raise ValueError(msg)
+
+
+def _require_bool(value: object, field_name: str) -> bool:
+    """設定値がJSON booleanであることを検証して返す。"""
+    if not isinstance(value, bool):
+        msg = f"{field_name} must be a boolean."
+        raise ValueError(msg)  # noqa: TRY004
+    return value
 
 
 def filter_existing_float_values(
@@ -420,12 +429,14 @@ class RecordingCaptureSettings:
     fps: float = 10.0
     interval_ms: float = 100.0
     duration_sec: float = 0.0
+    tiff_compression_enabled: bool = DEFAULT_RECORDING_TIFF_COMPRESSION_ENABLED
 
     def __post_init__(self) -> None:
         """Recordingのrate_modeが既知の入力モードであることを検証する。"""
         if self.rate_mode not in ("fps", "interval"):
             msg = "Recording rate_mode must be 'fps' or 'interval'."
             raise ValueError(msg)
+        _require_bool(self.tiff_compression_enabled, "tiff_compression_enabled")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RecordingCaptureSettings:
@@ -437,6 +448,13 @@ class RecordingCaptureSettings:
             fps=float(data["fps"]),
             interval_ms=float(data["interval_ms"]),
             duration_sec=float(data["duration_sec"]),
+            tiff_compression_enabled=_require_bool(
+                data.get(
+                    "tiff_compression_enabled",
+                    DEFAULT_RECORDING_TIFF_COMPRESSION_ENABLED,
+                ),
+                "tiff_compression_enabled",
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -448,6 +466,7 @@ class RecordingCaptureSettings:
             "fps": self.fps,
             "interval_ms": self.interval_ms,
             "duration_sec": self.duration_sec,
+            "tiff_compression_enabled": self.tiff_compression_enabled,
         }
 
 

@@ -19,12 +19,26 @@ class SaveRequest:
     metadata: dict
     compression: str | None = None
     on_saved: Callable[[Path, float], None] | None = None
+    on_enqueued: Callable[[int], None] | None = None
+
+
+@dataclass(frozen=True)
+class SaveQueueTelemetry:
+    """保存待機要求の現在値とRecording中の最大値を表す。"""
+
+    current_depth: int
+    peak_depth: int
 
 
 class TiffSaveWorker(Protocol):
     """Use Caseが依存するTIFF保存ワーカーのProtocol。"""
 
     errors: list[Exception]
+
+    @property
+    def queue_telemetry(self) -> SaveQueueTelemetry:
+        """保存queueのcurrent/peak待機深さを返す。"""
+        ...
 
     def start(self) -> None:
         """保存処理を開始する。"""

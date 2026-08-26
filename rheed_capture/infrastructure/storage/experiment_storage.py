@@ -226,6 +226,7 @@ class ExperimentStorage:
         target_interval_ms: float,
         duration_ms: float | None,
         accumulation_frames: int = 1,
+        tiff_compression_enabled: bool = True,
     ) -> RecordingSession:
         """次の `record-N` を確定し、RecordingSessionを生成する。"""
         # RecordingはSequence/Angle Scanと独立した番号系列で保存する。
@@ -247,6 +248,7 @@ class ExperimentStorage:
             target_interval_ms=target_interval_ms,
             duration_ms=duration_ms,
             accumulation_frames=accumulation_frames,
+            tiff_compression_enabled=tiff_compression_enabled,
         )
         logger.info("新規録画作成: %s", recording_dir)
         return self._current_recording_session

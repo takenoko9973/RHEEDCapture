@@ -2,6 +2,8 @@
 
 この文書は、現在の実装に基づいて通常シーケンス撮影、回転撮影、Recordingの処理順を整理したものである。回転撮影はUI上では `Angle Scan` として実装されている。
 
+TIFF圧縮はSequenceとAngle Scanでは `zlib` 固定、Recordingではboolean設定により `zlib` または非圧縮とする。
+
 ## 0. 共通Acquisition設定とTrigger Session
 
 Preview、Sequence、Angle Scan、Recordingは、共通Acquisition設定から作った同じTrigger Session経路を使用する。
@@ -241,6 +243,8 @@ ExposureとGainの必須Chunk読戻しは緩和しない。
 8. TIFF保存キューへ元のRaw画像とメタデータを投入し、保存完了時に `frames.csv` へ追記する。
    - Accumulation OFFは `record-N` 直下へTIFFを保存する。
    - Accumulation ONは `record-N/group_{group_index:06d}/raw_{raw_index:04d}.tiff` へRawを保存する。group途中で停止またはエラーになっても、既に保存したRawは削除しない。
+   - 待機queueの容量は1000 framesとし、満杯時は空きができるまで待機する。投入済み要求は破棄せず、終了時にdrainする。
+   - 各frameの投入時待機depthを `frames.csv` の `save_queue_depth` に記録する。
 9. Accumulation OFFでは取得したRawをPreviewへ通知する。ONではgroup完成時にだけ、Rawの総和を `uint16` 範囲へclipした積算画像をPreviewへ通知する。積算画像は保存しない。
 10. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、Trigger設定を解除してカメラを通常状態へ戻す。
 
@@ -250,6 +254,8 @@ sourceが `camera` のtickはPTPを自動有効化しないため絶対日時と
 Timestamp Chunkが使えない場合はsourceを `host` とし、`time.time_ns()` を1GHzのtickとして保存する。
 pylonエミュレータではsourceを `simulation` とし、Software Trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
 Accumulation ONでは `frames.csv` の `filename` に `group_000001/raw_0001.tiff` のようなsession相対POSIXパスを記録する。
+Recordingの圧縮booleanがONの場合は `zlib`、OFFの場合は非圧縮とし、`recording.json` の `storage.tiff_compression` に実使用状態を記録する。
+Recording中の診断表示では、保存処理中を除くcurrent save queue depthとRecording中のpeak depthを表示する。
 
 ## 4. 撮影モードの主な違い
 

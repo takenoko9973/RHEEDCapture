@@ -31,6 +31,8 @@ class AcquisitionStatistics:
     accumulation_progress: int = 0
     accumulation_target: int = 1
     waiting_for_trigger: bool = False
+    save_queue_depth: int = 0
+    save_queue_peak_depth: int = 0
 
 
 @dataclass(frozen=True)

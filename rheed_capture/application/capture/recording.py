@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -42,6 +42,7 @@ class RecordingSettings:
     rate_mode: RateMode
     target_interval_ms: float
     duration_ms: float | None
+    tiff_compression_enabled: bool = True
 
     def __post_init__(self) -> None:
         """生成時にモードに依存しない入力制約を検証する。"""
@@ -387,25 +388,40 @@ class RecordingCapture:
             camera_timestamp_source=grabbed.readback.source,
             filename=filename,
         )
+        row_holder: list[RecordingFrameRow | None] = [None]
+
+        def on_enqueued(queue_depth: int) -> None:
+            """enqueue admission時の待機深さを保存対象行へ束縛する。"""
+            row_holder[0] = replace(row, save_queue_depth=queue_depth)
+
         self.save_worker.enqueue(
             SaveRequest(
                 file_path=file_path,
                 # 保存中に次の撮影でバッファが再利用されても内容が変わらないようにする。
                 image=grabbed.image.copy(),
                 metadata=self._build_metadata(row),
-                compression=RECORDING_TIFF_COMPRESSION,
-                on_saved=self._build_saved_callback(row, hooks),
+                compression=(
+                    RECORDING_TIFF_COMPRESSION
+                    if self.settings.tiff_compression_enabled
+                    else None
+                ),
+                on_saved=self._build_saved_callback(row_holder, hooks),
+                on_enqueued=on_enqueued,
             )
         )
 
     def _build_saved_callback(
         self,
-        row: RecordingFrameRow,
+        row_holder: list[RecordingFrameRow | None],
         hooks: RecordingHooks,
     ) -> Callable[[Path, float], None]:
-        """保存完了時にCSVへ追記し、保存枚数を通知するcallbackを作る。"""
+        """保存完了時にenqueue時の行をCSVへ追記するcallbackを作る。"""
         def on_saved(_file_path: Path, save_elapsed_ms: float) -> None:
             """1 Raw保存後にSession状態とUI通知を更新する。"""
+            row = row_holder[0]
+            if row is None:
+                msg = "保存要求のqueue depthが確定していません。"
+                raise RuntimeError(msg)
             saved_frames = self.session.append_saved_frame(row, save_elapsed_ms)
             if hooks.on_saved_frames_changed is not None:
                 hooks.on_saved_frames_changed(saved_frames)

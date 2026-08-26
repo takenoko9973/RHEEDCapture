@@ -33,6 +33,8 @@ if TYPE_CHECKING:
     from rheed_capture.application.capture.save_worker import SaveRequest
     from rheed_capture.data_formats.recording import RecordingFrameRow
 
+from rheed_capture.application.capture.save_worker import SaveQueueTelemetry
+
 
 class _FakeCamera:
     """RecordingCaptureへ渡すテスト用Camera。"""
@@ -187,15 +189,30 @@ class _SaveWorker:
         """保存要求と任意の1枚目キャンセルTokenを保持する。"""
         self.requests: list[SaveRequest] = []
         self.errors: list[Exception] = []
+        self.current_queue_depth = 0
+        self.peak_queue_depth = 0
         self.cancel_after_first = cancel_after_first
         self.cancel_after_frames = cancel_after_frames
+
+    @property
+    def queue_telemetry(self) -> SaveQueueTelemetry:
+        """同期workerの保存queue統計を返す。"""
+        return SaveQueueTelemetry(
+            current_depth=self.current_queue_depth,
+            peak_depth=self.peak_queue_depth,
+        )
 
     def start(self) -> None:
         """同期テスト用なので開始処理は行わない。"""
 
     def enqueue(self, request: SaveRequest) -> None:
         """保存要求を記録し、完了callbackを即時実行する。"""
+        self.current_queue_depth += 1
+        self.peak_queue_depth = max(self.peak_queue_depth, self.current_queue_depth)
         self.requests.append(request)
+        on_enqueued = getattr(request, "on_enqueued", None)
+        if on_enqueued is not None:
+            on_enqueued(self.current_queue_depth)
         if request.on_saved is not None:
             request.on_saved(request.file_path, 1.5)
         should_cancel = (
@@ -205,9 +222,39 @@ class _SaveWorker:
         )
         if self.cancel_after_first is not None and should_cancel:
             self.cancel_after_first.cancel()
+        self.current_queue_depth -= 1
 
     def finish(self) -> None:
         """同期テスト用なので終了処理は行わない。"""
+
+
+class _DeferredSaveWorker(_SaveWorker):
+    """enqueue時depthを確定し、finishまで保存callbackを遅延するtest worker。"""
+
+    def __init__(self, cancellation_token: CancellationToken) -> None:
+        """遅延callbackと2枚目後の停止Tokenを初期化する。"""
+        super().__init__()
+        self.cancellation_token = cancellation_token
+        self.pending_requests: list[SaveRequest] = []
+
+    def enqueue(self, request: SaveRequest) -> None:
+        """要求を待機させ、enqueue時点のdepth callbackだけを実行する。"""
+        self.current_queue_depth += 1
+        self.peak_queue_depth = max(self.peak_queue_depth, self.current_queue_depth)
+        self.requests.append(request)
+        on_enqueued = getattr(request, "on_enqueued", None)
+        if on_enqueued is not None:
+            on_enqueued(self.current_queue_depth)
+        self.pending_requests.append(request)
+        if len(self.requests) == 2:
+            self.cancellation_token.cancel()
+
+    def finish(self) -> None:
+        """待機中要求を投入順にcallback処理してqueueを空にする。"""
+        for request in self.pending_requests:
+            if request.on_saved is not None:
+                request.on_saved(request.file_path, 1.5)
+            self.current_queue_depth -= 1
 
 
 def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
@@ -254,7 +301,70 @@ def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
     assert worker.requests[0].metadata["camera_gain"] == 3
     assert worker.requests[0].metadata["camera_timestamp_frequency_hz"] == 125_000_000
     assert worker.requests[0].metadata["camera_timestamp_source"] == "camera"
+    assert worker.requests[0].image is not images[0]
+    assert np.array_equal(worker.requests[0].image, images[0])
+    assert worker.requests[0].compression == "zlib"
     assert saved_counts == [1, 2]
+    assert [row.save_queue_depth for row, _ in session.rows] == [1, 1]
+
+
+def test_recording_compression_off_passes_none_to_save_request() -> None:
+    """Recording圧縮OFFではTIFF保存要求へNoneを渡す。"""
+    camera = _FakeCamera([np.ones((2, 2), dtype=np.uint16)])
+    session = _Session()
+    worker = _SaveWorker()
+    capture = RecordingCapture(
+        CaptureConditionApplier(camera),
+        FrameGrabber(camera, retry_interval_sec=0),
+        session,
+        RecordingSettings(
+            exposure_ms=1.0,
+            gain=0,
+            rate_mode="interval",
+            target_interval_ms=1.0,
+            duration_ms=0.001,
+            tiff_compression_enabled=False,
+        ),
+        save_worker=worker,
+    )
+
+    capture.run(CancellationToken())
+
+    assert len(worker.requests) == 1
+    assert worker.requests[0].compression is None
+
+
+def test_recording_queue_depth_stays_bound_to_each_frame_until_save_callback() -> None:
+    """保存callbackが遅延しても各CSV行が投入時depthに対応する。"""
+    token = CancellationToken()
+    camera = _FakeCamera(
+        [
+            np.ones((2, 2), dtype=np.uint16),
+            np.full((2, 2), 2, dtype=np.uint16),
+        ]
+    )
+    session = _Session()
+    worker = _DeferredSaveWorker(token)
+    capture = RecordingCapture(
+        CaptureConditionApplier(camera),
+        FrameGrabber(camera, retry_interval_sec=0),
+        session,
+        RecordingSettings(
+            exposure_ms=1.0,
+            gain=0,
+            rate_mode="interval",
+            target_interval_ms=1.0,
+            duration_ms=None,
+        ),
+        save_worker=worker,
+    )
+
+    capture.run(token)
+
+    assert [row.frame_index for row, _ in session.rows] == [1, 2]
+    assert [row.save_queue_depth for row, _ in session.rows] == [1, 2]
+    assert worker.current_queue_depth == 0
+    assert worker.peak_queue_depth == 2
 
 
 def test_recording_stop_after_grab_saves_frame_then_cancels() -> None:

@@ -76,6 +76,7 @@ class RecordingService(CaptureWorker):
         self._statistics_active = False
         self._accumulation_progress = 0
         self._waiting_for_trigger = False
+        self._save_worker: AsyncTiffSaveWorker | None = None
         super().__init__(self._run_recording_capture, parent=parent)
         self.finished.connect(self.recording_finished)
 
@@ -96,6 +97,7 @@ class RecordingService(CaptureWorker):
                     target_interval_ms=self.settings.target_interval_ms,
                     duration_ms=self.settings.duration_ms,
                     accumulation_frames=self._accumulation_frames,
+                    tiff_compression_enabled=self.settings.tiff_compression_enabled,
                 )
             else:
                 session = self.storage.start_recording_session(
@@ -105,7 +107,12 @@ class RecordingService(CaptureWorker):
                     rate_mode=self.settings.rate_mode,
                     target_interval_ms=self.settings.target_interval_ms,
                     duration_ms=self.settings.duration_ms,
+                    tiff_compression_enabled=self.settings.tiff_compression_enabled,
                 )
+            save_worker = AsyncTiffSaveWorker(
+                max_queue_size=RECORDING_SAVE_QUEUE_MAX_SIZE
+            )
+            self._save_worker = save_worker
             capture = RecordingCapture(
                 CaptureConditionApplier(self.camera),
                 FrameGrabber(
@@ -115,9 +122,7 @@ class RecordingService(CaptureWorker):
                 ),
                 session,
                 self.settings,
-                save_worker=AsyncTiffSaveWorker(
-                    max_queue_size=RECORDING_SAVE_QUEUE_MAX_SIZE
-                ),
+                save_worker=save_worker,
                 accumulation_frames=self._accumulation_frames,
                 trigger_wait_timeout_sec=self._trigger_wait_timeout_sec,
             )
@@ -132,7 +137,9 @@ class RecordingService(CaptureWorker):
                 ),
             )
         finally:
-            self._reset_statistics(active=False)
+            with self._statistics_lock:
+                self._save_worker = None
+                self._reset_statistics_locked(active=False)
 
         logger.info("録画が終了しました。")
         return str(session.dir_name)
@@ -142,15 +149,27 @@ class RecordingService(CaptureWorker):
         with self._statistics_lock:
             if not self._statistics_active:
                 return None
+            save_worker = self._save_worker
             statistics = self._statistics_meter.snapshot(
                 time.perf_counter(),
                 include_average=True,
+            )
+            queue_telemetry = (
+                save_worker.queue_telemetry
+                if save_worker is not None
+                else None
             )
             return replace(
                 statistics,
                 accumulation_progress=self._accumulation_progress,
                 accumulation_target=self._accumulation_frames,
                 waiting_for_trigger=self._waiting_for_trigger,
+                save_queue_depth=(
+                    queue_telemetry.current_depth if queue_telemetry is not None else 0
+                ),
+                save_queue_peak_depth=(
+                    queue_telemetry.peak_depth if queue_telemetry is not None else 0
+                ),
             )
 
     def _on_frame_captured(self, _frame: GrabbedFrame) -> None:
@@ -201,7 +220,16 @@ class RecordingService(CaptureWorker):
     ) -> None:
         """Recording全体の開始と終了に合わせてmeterを初期化する。"""
         with self._statistics_lock:
-            self._statistics_meter.reset(started_at=started_at)
-            self._statistics_active = active
-            self._accumulation_progress = 0
-            self._waiting_for_trigger = False
+            self._reset_statistics_locked(active=active, started_at=started_at)
+
+    def _reset_statistics_locked(
+        self,
+        *,
+        active: bool,
+        started_at: float | None = None,
+    ) -> None:
+        """statistics lockを保持した状態でRecording統計を初期化する。"""
+        self._statistics_meter.reset(started_at=started_at)
+        self._statistics_active = active
+        self._accumulation_progress = 0
+        self._waiting_for_trigger = False

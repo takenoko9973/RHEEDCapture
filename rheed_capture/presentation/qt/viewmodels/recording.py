@@ -50,6 +50,7 @@ class RecordingViewModel(QObject):
         self._fps = 10.0
         self._interval_ms = 100.0
         self._duration_sec = 0.0
+        self._tiff_compression_enabled = True
 
     def load_settings(self, settings: RecordingCaptureSettings) -> None:
         """保存済みRecording設定をViewModelへ読み込む。"""
@@ -59,6 +60,7 @@ class RecordingViewModel(QObject):
         self._fps = settings.fps
         self._interval_ms = settings.interval_ms
         self._duration_sec = settings.duration_sec
+        self._tiff_compression_enabled = settings.tiff_compression_enabled
         self._emit_expected_frames()
 
     def get_settings_to_save(self) -> RecordingCaptureSettings:
@@ -70,6 +72,7 @@ class RecordingViewModel(QObject):
             fps=self._fps,
             interval_ms=self._interval_ms,
             duration_sec=self._duration_sec,
+            tiff_compression_enabled=self._tiff_compression_enabled,
         )
 
     def load_acquisition_settings(self, settings: AcquisitionSettings) -> None:
@@ -172,6 +175,7 @@ class RecordingViewModel(QObject):
             rate_mode=self._rate_mode,
             target_interval_ms=target_interval_ms,
             duration_ms=normalize_duration_ms(self._duration_sec),
+            tiff_compression_enabled=self._tiff_compression_enabled,
         )
 
     def _emit_expected_frames(self) -> None:

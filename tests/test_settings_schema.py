@@ -1,6 +1,11 @@
+from typing import cast
+
 import pytest
 
-from rheed_capture.infrastructure.config.schema import AppSettingsData
+from rheed_capture.infrastructure.config.schema import (
+    AppSettingsData,
+    RecordingCaptureSettings,
+)
 
 
 def test_app_settings_data_reads_and_saves_numeric_candidate_schema() -> None:
@@ -37,6 +42,7 @@ def test_app_settings_data_reads_and_saves_numeric_candidate_schema() -> None:
             "fps": 20.0,
             "interval_ms": 50.0,
             "duration_sec": 10.0,
+            "tiff_compression_enabled": False,
         },
         "device": {
             "motor": {
@@ -57,6 +63,7 @@ def test_app_settings_data_reads_and_saves_numeric_candidate_schema() -> None:
     assert settings.angle_scan.selected_gain_values == [0]
     assert settings.recording_capture.rate_mode == "fps"
     assert settings.recording_capture.fps == 20.0
+    assert settings.recording_capture.tiff_compression_enabled is False
 
     saved = settings.to_dict()
     assert "exposure_chips" not in saved
@@ -64,6 +71,7 @@ def test_app_settings_data_reads_and_saves_numeric_candidate_schema() -> None:
     assert "selected_exposure_chip_ids" not in saved["sequence_capture"]
     assert saved["exposure_ms_values"] == [10.0, 20.0]
     assert saved["recording_capture"]["rate_mode"] == "fps"
+    assert saved["recording_capture"]["tiff_compression_enabled"] is False
 
 
 def test_missing_recording_capture_section_uses_section_default() -> None:
@@ -84,6 +92,48 @@ def test_missing_recording_capture_section_uses_section_default() -> None:
     assert settings.preview.gain == 569
     assert settings.recording_capture.rate_mode == "interval"
     assert settings.recording_capture.interval_ms == 100.0
+    assert settings.recording_capture.tiff_compression_enabled is True
+
+
+def test_existing_recording_capture_section_missing_compression_uses_true_default() -> None:
+    """既存Recording設定に新圧縮キーがなくても従来zlibを維持する。"""
+    settings = AppSettingsData.from_dict(
+        {
+            "recording_capture": {
+                "exposure_ms": 50.0,
+                "gain": 1,
+                "rate_mode": "interval",
+                "fps": 10.0,
+                "interval_ms": 100.0,
+                "duration_sec": 0.0,
+            }
+        }
+    )
+
+    assert settings.recording_capture.tiff_compression_enabled is True
+    assert settings.to_dict()["recording_capture"]["tiff_compression_enabled"] is True
+
+
+@pytest.mark.parametrize("invalid_value", [None, 0, 1, "false", {}, []])
+def test_recording_compression_setting_rejects_non_boolean_values(
+    invalid_value: object,
+) -> None:
+    """Recording圧縮設定はJSON boolean以外を受け入れない。"""
+    data = {
+        "exposure_ms": 50.0,
+        "gain": 1,
+        "rate_mode": "interval",
+        "fps": 10.0,
+        "interval_ms": 100.0,
+        "duration_sec": 0.0,
+        "tiff_compression_enabled": invalid_value,
+    }
+
+    with pytest.raises(ValueError, match="tiff_compression_enabled"):
+        RecordingCaptureSettings.from_dict(data)
+
+    with pytest.raises(ValueError, match="tiff_compression_enabled"):
+        RecordingCaptureSettings(tiff_compression_enabled=cast("bool", invalid_value))
 
 
 def test_present_but_invalid_recording_capture_section_raises() -> None:

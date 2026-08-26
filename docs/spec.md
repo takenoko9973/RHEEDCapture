@@ -23,7 +23,7 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 | **`CameraDevice`** | Model | ハードウェア制御 (pypylonラッパー)。パラメータ設定、MsbAligned適用、Min/Max取得。 |
 | **`ImageProcessor`** | Model | 純粋な画像変換。CLAHE処理アルゴリズム。状態を持たない静的メソッド。 |
 | **`ExperimentStorage`** | Model | 実験セッションのディレクトリ状態管理、連番管理、遅延作成ロジック。 |
-| **`TiffWriter`** | Model | I/O専任。Numpy配列とJSONメタデータの非圧縮TIFF書き込み。 |
+| **`TiffWriter`** | Model | I/O専任。Numpy配列とJSONメタデータを指定圧縮でTIFFへ書き込む。 |
 | **`AppSettings`** | Model | `settings.json` を用いたUI状態の保存・復元。 |
 | **`PreviewWorker`** | ViewModel | 非同期スレッドでの継続的プレビュー取得・画像処理・UIへのシグナル送信。 |
 | **`CaptureService`** | ViewModel | 非同期スレッドでの自動撮影制御。直積ループ生成、リトライロジックの管理。 |
@@ -114,6 +114,9 @@ Accumulation中は次のRaw frameが到着するまで前回の完成画像を�
 * Duration終了時にAccumulation groupが開始済みであれば、そのgroupが `N` 枚になるまでRawを取得して保存する。完成後に終了し、Duration終了後に新しいgroupは開始しない。
 * AccumulationがOFFの場合は従来のRecording保存形式を維持する。ONの場合はgroupディレクトリにRawを保存し、Previewへはgroup完成時のclip済み積算画像だけを通知する。
 * Session開始またはSoftwareの1フレーム取得が失敗した場合は異常Sessionを閉じ、新しいSessionで同じframe indexを最大3回まで再試行する。Hardware Recordingの最初のRaw待機timeoutはエラーとして終了し、開始後のtimeoutはDuration境界として扱う。
+* RecordingのTIFF圧縮はboolean設定で切り替え、ONでは`zlib`、OFFでは非圧縮とする。`recording.json` の `storage.tiff_compression` は実際の状態（`"zlib"` または `null`）を記録する。
+* Recordingの保存待機queueは最大1000 framesとし、容量内の要求は破棄しない。満杯時は空きができるまで撮影側を待機させ、終了・キャンセル・エラー時も投入済み要求をdrainしてから終了する。
+* Recordingの `frames.csv` には各frameのenqueue時待機queue depthを `save_queue_depth` としてframe対応で記録する。
 * `actual_elapsed_ms` はSoftwareではtrigger発行直前、HardwareではRaw到着時のmonotonic時刻を基準にする。Hardwareの `target_elapsed_ms` は記録しない。
 
 ### 5.4 データ・ディレクトリ管理機能
@@ -144,6 +147,7 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 * CLAHE処理のON/OFF状態
 * プレビューグリッド表示のON/OFF状態 (`show_preview_grid`)
 * プレビューグリッド分割数 (`preview_grid_rows`, `preview_grid_cols`)
+* Recording TIFF圧縮の有効/無効 (`tiff_compression_enabled`)
 
 ### 5.7 取得統計表示
 
@@ -152,6 +156,7 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 * Raw FPSは単調増加時計を使用し、直近1秒のRaw frame時刻について、フレーム間隔数を先頭から末尾までの経過時間で割って求める。
 * 取得可能な場合は、直近1秒のGrabResultのPayload byte数合計を対象時間で割り、10進単位のMB/sで表示する。変換後の `uint16` 配列の `nbytes` は使用しない。
 * Payloadは画像取得に伴うデータ量であり、NIC全体の通信量ではない。Ethernet、IP、UDP、GigE Visionのヘッダと再送分を含まない。
+* Recording中は保存処理中の要求を除く待機中save queueのcurrent depthと、Recording中に観測したpeak depthを診断表示する。
 * 表示はMainWindowのstatus bar右側に置き、500ms間隔で更新する。Preview停止中とRecording終了後は表示を消去する。
 * 通常のSequence撮影とAngle Scanでは取得統計を表示しない。
 
@@ -161,7 +166,7 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 
 ### 6.1 記録形式
 
-* **フォーマット**: 非圧縮 TIFF (`.tiff`)
+* **フォーマット**: TIFF (`.tiff`)。Sequence/Angle Scanは`zlib`固定、Recordingは圧縮booleanにより`zlib`または非圧縮。
 * **データ型**: `uint16` (MsbAligned処理済み)
 * **保存値スケール**: 12bitセンサ値を16bitコンテナの上位ビットへ配置した0〜65520
 * **画像加工**: 画像処理（CLAHE等）は一切適用せず、コンバータから得た配列をそのまま書き込む。

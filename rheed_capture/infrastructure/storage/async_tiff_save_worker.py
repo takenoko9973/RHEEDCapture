@@ -5,6 +5,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Protocol
 
+from rheed_capture.application.capture.save_worker import SaveQueueTelemetry
 from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
 
 if TYPE_CHECKING:
@@ -44,11 +45,35 @@ class AsyncTiffSaveWorker:
         self._tiff_writer = tiff_writer
         self._thread = threading.Thread(target=self._run, daemon=False)
         self._errors: list[Exception] = []
+        self._queue_condition = threading.Condition()
+        self._queue_depth = 0
+        self._peak_queue_depth = 0
 
     @property
     def errors(self) -> list[Exception]:
         """保存中に発生した例外のコピーを返す。"""
         return list(self._errors)
+
+    @property
+    def queue_depth(self) -> int:
+        """保存待機中の要求数をthread-safeに返す。"""
+        with self._queue_condition:
+            return self._queue_depth
+
+    @property
+    def peak_queue_depth(self) -> int:
+        """Recording開始後に観測した最大の保存待機要求数を返す。"""
+        with self._queue_condition:
+            return self._peak_queue_depth
+
+    @property
+    def queue_telemetry(self) -> SaveQueueTelemetry:
+        """保存queueのcurrent/peakを同一snapshotとして返す。"""
+        with self._queue_condition:
+            return SaveQueueTelemetry(
+                current_depth=self._queue_depth,
+                peak_depth=self._peak_queue_depth,
+            )
 
     def start(self) -> None:
         """保存スレッドを開始する。"""
@@ -56,7 +81,23 @@ class AsyncTiffSaveWorker:
 
     def enqueue(self, request: SaveRequest) -> None:
         """保存要求をキューへ追加し、満杯なら撮影側を待たせる。"""
-        self._queue.put(request)
+        with self._queue_condition:
+            while self._queue_depth >= self._queue.maxsize:
+                self._queue_condition.wait()
+
+            self._queue_depth += 1
+            queue_depth = self._queue_depth
+            enqueued = False
+            try:
+                if request.on_enqueued is not None:
+                    request.on_enqueued(queue_depth)
+                self._queue.put_nowait(request)
+                self._peak_queue_depth = max(self._peak_queue_depth, queue_depth)
+                enqueued = True
+            finally:
+                if not enqueued:
+                    self._queue_depth -= 1
+                    self._queue_condition.notify_all()
 
     def finish(self) -> None:
         """終了シグナルを送り、保存スレッドの完了を待つ。"""
@@ -71,6 +112,9 @@ class AsyncTiffSaveWorker:
                 if request is None:
                     return
 
+                with self._queue_condition:
+                    self._queue_depth -= 1
+                    self._queue_condition.notify_all()
                 self._save(request)
             finally:
                 self._queue.task_done()

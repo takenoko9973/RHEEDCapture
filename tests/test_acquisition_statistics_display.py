@@ -47,11 +47,13 @@ def test_recording_statistics_format_with_payload() -> None:
         average_fps=136.86,
         frame_count=100,
         payload_bytes_per_second=80_650_000.0,
+        save_queue_depth=12,
+        save_queue_peak_depth=34,
     )
 
     assert format_recording_statistics(statistics) == (
         "Recording | Raw count 100 | Raw FPS 138.4 | Accumulation 0/1"
-        " | Payload 80.7 MB/s"
+        " | Payload 80.7 MB/s | Save queue 12/34"
     )
 
 
@@ -62,11 +64,13 @@ def test_recording_statistics_format_without_samples_or_payload() -> None:
         average_fps=None,
         frame_count=0,
         payload_bytes_per_second=None,
+        save_queue_depth=0,
+        save_queue_peak_depth=0,
     )
 
     assert (
         format_recording_statistics(statistics)
-        == "Recording | Raw count 0 | Raw FPS -- | Accumulation 0/1"
+        == "Recording | Raw count 0 | Raw FPS -- | Accumulation 0/1 | Save queue 0/0"
     )
 
 

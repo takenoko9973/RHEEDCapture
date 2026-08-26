@@ -38,11 +38,12 @@ class RecordingSession:
         "camera_timestamp_source",
         "exposure_ms",
         "gain",
+        "save_queue_depth",
         "save_elapsed_ms",
         "filename",
     ]
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         session_dir: Path,
         *,
@@ -55,6 +56,7 @@ class RecordingSession:
         target_interval_ms: float,
         duration_ms: float | None,
         accumulation_frames: int = 1,
+        tiff_compression_enabled: bool = True,
     ) -> None:
         """Recordingのメタ情報を保持し、recording.jsonとframes.csvを初期化する。"""
         self.session_dir = session_dir
@@ -68,6 +70,7 @@ class RecordingSession:
         self.target_interval_ms = target_interval_ms
         self.duration_ms = duration_ms
         self.accumulation_frames = accumulation_frames
+        self.tiff_compression_enabled = tiff_compression_enabled
         self.created_at = datetime.now(JST).isoformat()
         self._saved_frames = 0
         self._lock = threading.Lock()
@@ -134,6 +137,7 @@ class RecordingSession:
                     row.camera_timestamp_source,
                     f"{row.exposure_ms:g}",
                     row.gain,
+                    row.save_queue_depth,
                     f"{save_elapsed_ms:.3f}",
                     row.filename,
                 ]
@@ -203,18 +207,21 @@ class RecordingSession:
 
         return document
 
-    def _build_storage_document(self) -> dict[str, str]:
-        """OFF互換または蓄積Raw用の保存形式を記録する。"""
+    def _build_storage_document(self) -> dict[str, str | None]:
+        """実際の圧縮状態とRecordingの保存形式を記録する。"""
+        tiff_compression = (
+            RECORDING_TIFF_COMPRESSION if self.tiff_compression_enabled else None
+        )
         if self.accumulation_frames == 1:
-            # OFFは既存recording.jsonのキー、値、書出し順を維持する。
+            # 非蓄積時も実際に選択した圧縮状態をrecording.jsonへ残す。
             return {
                 "folder_name": self.session_dir.name,
                 "filename_pattern": RECORDING_TIFF_FILENAME_PATTERN,
-                "tiff_compression": RECORDING_TIFF_COMPRESSION,
+                "tiff_compression": tiff_compression,
             }
         return {
             "folder_name": self.session_dir.name,
             "group_directory_format": RECORDING_ACCUMULATION_GROUP_DIR_PATTERN,
             "raw_filename_format": RECORDING_ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
-            "tiff_compression": RECORDING_TIFF_COMPRESSION,
+            "tiff_compression": tiff_compression,
         }

@@ -23,3 +23,4 @@ class RecordingFrameRow:
     camera_exposure_ms: float
     camera_gain: int
     filename: str
+    save_queue_depth: int = 0

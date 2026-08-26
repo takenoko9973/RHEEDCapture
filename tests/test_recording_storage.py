@@ -4,9 +4,23 @@ import csv
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
+import numpy as np
+import pytest
+
+from rheed_capture.data_formats.angle_scan_document import (
+    AngleScanDocument,
+    AngleScanDocumentSettings,
+    CaptureCondition,
+)
 from rheed_capture.data_formats.recording import RecordingFrameRow
+from rheed_capture.data_formats.storage_naming import (
+    ANGLE_SCAN_TIFF_COMPRESSION,
+    SEQUENCE_TIFF_COMPRESSION,
+)
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
 
 
 def test_recording_session_creates_record_dirs_json_csv_and_filenames() -> None:
@@ -74,6 +88,7 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
             camera_exposure_ms=49.5,
             camera_gain=1,
             filename=session.build_frame_path(1).name,
+            save_queue_depth=7,
         )
 
         saved_count = session.append_saved_frame(row, 3.25)
@@ -91,6 +106,7 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
         assert rows[0]["camera_timestamp_ticks"] == "123456"
         assert rows[0]["camera_timestamp_frequency_hz"] == "125000000"
         assert rows[0]["camera_timestamp_source"] == "camera"
+        assert rows[0]["save_queue_depth"] == "7"
         assert rows[0]["save_elapsed_ms"] == "3.250"
 
         with (Path(session.session_dir) / "recording.json").open(encoding="utf-8") as f:
@@ -143,6 +159,7 @@ def test_accumulation_recording_uses_group_raw_paths_and_relative_csv_filename()
                 camera_exposure_ms=49.5,
                 camera_gain=1,
                 filename="group_000001/raw_0002.tiff",
+                save_queue_depth=2,
             ),
             3.25,
         )
@@ -161,3 +178,80 @@ def test_accumulation_recording_uses_group_raw_paths_and_relative_csv_filename()
             "group_directory_format": "group_{group_index:06d}",
             "raw_filename_format": "raw_{raw_index:04d}.tiff",
         }
+
+
+@pytest.mark.parametrize(
+    ("compression_enabled", "expected_compression"),
+    [(True, "zlib"), (False, None)],
+)
+def test_recording_session_records_actual_tiff_compression(
+    compression_enabled: bool,
+    expected_compression: str | None,
+) -> None:
+    """Recording JSONの圧縮状態が実際の設定と一致する。"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = ExperimentStorage(temp_dir)
+        session = storage.start_recording_session(
+            sample_name="STO",
+            exposure_ms=50.0,
+            gain=0,
+            rate_mode="interval",
+            target_interval_ms=100.0,
+            duration_ms=None,
+            tiff_compression_enabled=compression_enabled,
+        )
+
+        with session.recording_json_path.open(encoding="utf-8") as f:
+            document = json.load(f)
+
+        assert document["storage"]["tiff_compression"] == expected_compression
+        session.mark_completed()
+
+
+def test_sequence_and_angle_scan_use_zlib_compression() -> None:
+    """SequenceとAngle ScanはRecording設定に関係なくzlibを渡す。"""
+    assert SEQUENCE_TIFF_COMPRESSION == "zlib"
+    assert ANGLE_SCAN_TIFF_COMPRESSION == "zlib"
+
+    with patch.object(TiffWriter, "save") as save:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage = ExperimentStorage(temp_dir)
+            sequence_session = storage.start_sequence_session()
+            sequence_session.save_raw_frame(
+                np.zeros((2, 2), dtype=np.uint16),
+                exposure_ms=10.0,
+                gain=0,
+                metadata={},
+            )
+            angle_session = storage.start_angle_scan_session(
+                AngleScanDocument(
+                    schema_version=1,
+                    scan_id="",
+                    created_at="",
+                    angle_scan=AngleScanDocumentSettings(
+                        coordinate="relative",
+                        reference="current_position_at_scan_start",
+                        range_deg=0.5,
+                        interval_deg=0.5,
+                        direction="positive",
+                        position_units_per_deg=31.25,
+                        capture_angles_deg=[0.0, 0.5],
+                        wait_after_move_ms=0,
+                        motor_speed_rpm=4.0,
+                        return_to_start=False,
+                    ),
+                    capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=0)],
+                )
+            )
+            angle_session.save_raw_frame(
+                np.zeros((2, 2), dtype=np.uint16),
+                target_angle_deg=0.5,
+                exposure_ms=10.0,
+                gain=0,
+                metadata={},
+            )
+
+        assert [call.kwargs["compression"] for call in save.call_args_list] == [
+            "zlib",
+            "zlib",
+        ]
