@@ -19,6 +19,7 @@ class CaptureCoordinatorHooks:
     set_sequence_enabled: Callable[[bool], None]
     set_angle_scan_enabled: Callable[[bool], None]
     set_recording_enabled: Callable[[bool], None]
+    set_recording_settings_enabled: Callable[[bool], None]
     set_motor_settings_enabled: Callable[[bool], None]
     set_acquisition_settings_enabled: Callable[[bool], None]
     set_preview_controls_enabled: Callable[[bool], None]
@@ -106,6 +107,7 @@ class CaptureCoordinator:
         hooks.set_acquisition_settings_enabled(False)
         hooks.set_preview_controls_enabled(False)
         hooks.stop_sequence_preview_timer()
+        hooks.set_recording_settings_enabled(False)
 
     def _apply_leave_state(self) -> None:
         """撮影終了時にUIとPreviewWorkerを通常状態へ戻す。"""
@@ -120,6 +122,7 @@ class CaptureCoordinator:
         hooks.set_motor_settings_enabled(True)
         hooks.set_acquisition_settings_enabled(True)
         hooks.set_preview_controls_enabled(True)
+        hooks.set_recording_settings_enabled(True)
         hooks.resume_preview()
         hooks.refresh_storage_display()
         hooks.start_sequence_preview_timer()

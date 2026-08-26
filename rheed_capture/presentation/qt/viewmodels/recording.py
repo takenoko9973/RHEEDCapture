@@ -120,6 +120,11 @@ class RecordingViewModel(QObject):
         self._duration_sec = value
         self._emit_expected_frames()
 
+    @Slot(bool)
+    def update_tiff_compression_enabled(self, enabled: bool) -> None:
+        """Recording保存時のTIFF圧縮設定を反映する。"""
+        self._tiff_compression_enabled = enabled
+
     @Slot()
     def start_recording(self) -> None:
         """現在のUI状態からRecordingServiceを作成して録画を開始する。"""

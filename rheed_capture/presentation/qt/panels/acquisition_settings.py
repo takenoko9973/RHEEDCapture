@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QSpinBox,
     QWidget,
 )
@@ -70,15 +71,16 @@ class AcquisitionSettingsPanel(QGroupBox):
         self.spin_trigger_wait_timeout_sec.setRange(0.0, 1_000_000_000.0)
         self.spin_trigger_wait_timeout_sec.setDecimals(3)
         self.spin_trigger_wait_timeout_sec.setSuffix(" s (0 = unlimited)")
+        self._configure_tooltips()
 
-        layout.addRow("Trigger Mode:", self.cmb_mode)
-        layout.addRow("Hardware Source:", self.cmb_source)
-        layout.addRow("Hardware Activation:", self.cmb_activation)
-        layout.addRow("Trigger Delay:", self.spin_delay_us)
-        layout.addRow("FPS Limit:", self._create_fps_row())
-        layout.addRow("Accumulation:", self.chk_accumulation)
-        layout.addRow("Accumulation Frames:", self.spin_accumulation_frames)
-        layout.addRow("Trigger Wait Timeout:", self.spin_trigger_wait_timeout_sec)
+        layout.addRow(self.lbl_mode, self.cmb_mode)
+        layout.addRow(self.lbl_source, self.cmb_source)
+        layout.addRow(self.lbl_activation, self.cmb_activation)
+        layout.addRow(self.lbl_delay, self.spin_delay_us)
+        layout.addRow(self.lbl_fps_limit, self._create_fps_row())
+        layout.addRow(self.lbl_accumulation, self.chk_accumulation)
+        layout.addRow(self.lbl_accumulation_frames, self.spin_accumulation_frames)
+        layout.addRow(self.lbl_trigger_wait_timeout, self.spin_trigger_wait_timeout_sec)
 
         self.cmb_mode.currentIndexChanged.connect(self._on_mode_changed)
         self.cmb_source.currentIndexChanged.connect(self._emit_settings_changed)
@@ -89,6 +91,44 @@ class AcquisitionSettingsPanel(QGroupBox):
         self.chk_accumulation.toggled.connect(self._emit_settings_changed)
         self.spin_accumulation_frames.valueChanged.connect(self._emit_settings_changed)
         self.spin_trigger_wait_timeout_sec.valueChanged.connect(self._emit_settings_changed)
+
+    def _configure_tooltips(self) -> None:
+        """Settings内の取得条件ラベルと入力WidgetへTooltipを設定する。"""
+        self.lbl_mode = QLabel("Trigger Mode:")
+        self.lbl_mode.setToolTip("カメラ取得に使うTrigger方式を選択します。")
+        self.cmb_mode.setToolTip(
+            "SoftwareはソフトウェアTrigger、Hardwareは外部Triggerを使用します。"
+        )
+        self.lbl_source = QLabel("Hardware Source:")
+        self.lbl_source.setToolTip("Hardware Triggerで使用する入力源を選択します。")
+        self.cmb_source.setToolTip("Hardware Triggerで使用する入力源を選択します。")
+        self.lbl_activation = QLabel("Hardware Activation:")
+        self.lbl_activation.setToolTip("Hardware Triggerのエッジを選択します。")
+        self.cmb_activation.setToolTip("Hardware Triggerのエッジを選択します。")
+        self.lbl_delay = QLabel("Trigger Delay:")
+        self.lbl_delay.setToolTip("Hardware Trigger受付後の遅延時間 (us) を設定します。")
+        self.spin_delay_us.setToolTip(
+            "Hardware Trigger受付後の遅延時間 (us) を設定します。"
+        )
+        self.lbl_fps_limit = QLabel("FPS Limit:")
+        self.lbl_fps_limit.setToolTip(
+            "取得レートの上限を設定します。Unlimitedで上限なしです。"
+        )
+        self.chk_fps_unlimited.setToolTip("FPS上限を設けない場合に有効にします。")
+        self.spin_fps_limit.setToolTip("取得レートの上限 (FPS) を設定します。")
+        self.lbl_accumulation = QLabel("Accumulation:")
+        self.lbl_accumulation.setToolTip("複数フレームを加算して1枚にするか選択します。")
+        self.chk_accumulation.setToolTip("複数フレームの加算取得を有効にします。")
+        self.lbl_accumulation_frames = QLabel("Accumulation Frames:")
+        self.lbl_accumulation_frames.setToolTip("加算するフレーム数を設定します。")
+        self.spin_accumulation_frames.setToolTip("加算するフレーム数を設定します。")
+        self.lbl_trigger_wait_timeout = QLabel("Trigger Wait Timeout:")
+        self.lbl_trigger_wait_timeout.setToolTip(
+            "Trigger待機のタイムアウト (s) を設定します。0は無制限です。"
+        )
+        self.spin_trigger_wait_timeout_sec.setToolTip(
+            "Trigger待機のタイムアウト (s) を設定します。0は無制限です。"
+        )
 
     def _create_fps_row(self) -> QWidget:
         """Unlimited切替と有限FPS入力を一行へ配置する。"""

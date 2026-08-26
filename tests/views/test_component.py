@@ -10,7 +10,9 @@ from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
 from rheed_capture.presentation.qt.panels.preview import PreviewPanel
 from rheed_capture.presentation.qt.panels.recording import RecordingPanel
+from rheed_capture.presentation.qt.panels.recording_settings import RecordingSettingsPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
+from rheed_capture.presentation.qt.widgets.collapsible_section import CollapsibleSection
 from rheed_capture.presentation.qt.widgets.histogram_viewer import HistogramPanel
 from rheed_capture.presentation.qt.widgets.image_viewer import ImageViewer
 from rheed_capture.presentation.qt.widgets.preview_background import (
@@ -151,6 +153,40 @@ def test_recording_panel_combines_hardware_and_capturing_state(qtbot: QtBot) -> 
     assert panel.btn_rate_fps.isEnabled() is True
 
 
+def test_recording_settings_panel_syncs_tiff_compression(qtbot: QtBot) -> None:
+    """Settings専用Recording panelがTIFF圧縮の変更と読込を同期する。"""
+    panel = RecordingSettingsPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.chk_tiff_compression.isChecked() is True
+    assert panel.lbl_tiff_compression.toolTip() == panel.chk_tiff_compression.toolTip()
+    assert "OFF" in panel.chk_tiff_compression.toolTip()
+    assert "高frame-rate Recording" in panel.chk_tiff_compression.toolTip()
+
+    with qtbot.waitSignal(panel.tiff_compression_changed, timeout=1000) as blocker:
+        panel.chk_tiff_compression.setChecked(False)
+
+    assert blocker.args == [False]
+    panel.set_tiff_compression_enabled(True)
+    assert panel.chk_tiff_compression.isChecked() is True
+
+
+def test_collapsible_section_hides_and_shows_content(qtbot: QtBot) -> None:
+    """折りたたみsectionが内容の表示状態を切り替える。"""
+    content = QFrame()
+    section = CollapsibleSection("Capture", content)
+    qtbot.addWidget(section)
+
+    assert section.is_expanded() is True
+    section.set_expanded(False)
+    assert section.is_expanded() is False
+    assert content.isHidden() is True
+
+    section.toggle_button.click()
+    assert section.is_expanded() is True
+    assert content.isHidden() is False
+
+
 def test_acquisition_settings_panel_disables_hardware_controls_in_software(
     qtbot: QtBot,
 ) -> None:
@@ -195,6 +231,51 @@ def test_acquisition_settings_panel_disables_hardware_controls_in_software(
     panel.set_controls_enabled(True)
     assert panel.cmb_mode.isEnabled() is True
     assert panel.cmb_source.isEnabled() is True
+
+
+def test_settings_controls_have_japanese_tooltips(qtbot: QtBot) -> None:
+    """Settingsのラベルと入力Widgetが日本語Tooltipを持つ。"""
+    capture_panel = CaptureChipsPanel()
+    acquisition_panel = AcquisitionSettingsPanel()
+    motor_panel = MotorSettingsPanel()
+    qtbot.addWidget(capture_panel)
+    qtbot.addWidget(acquisition_panel)
+    qtbot.addWidget(motor_panel)
+
+    widgets = [
+        capture_panel.lbl_exposure_values,
+        capture_panel.edit_exposure_values,
+        capture_panel.lbl_gain_values,
+        capture_panel.edit_gain_values,
+        acquisition_panel.lbl_mode,
+        acquisition_panel.cmb_mode,
+        acquisition_panel.lbl_source,
+        acquisition_panel.cmb_source,
+        acquisition_panel.lbl_activation,
+        acquisition_panel.cmb_activation,
+        acquisition_panel.lbl_delay,
+        acquisition_panel.spin_delay_us,
+        acquisition_panel.lbl_fps_limit,
+        acquisition_panel.chk_fps_unlimited,
+        acquisition_panel.spin_fps_limit,
+        acquisition_panel.lbl_accumulation,
+        acquisition_panel.chk_accumulation,
+        acquisition_panel.lbl_accumulation_frames,
+        acquisition_panel.spin_accumulation_frames,
+        acquisition_panel.lbl_trigger_wait_timeout,
+        acquisition_panel.spin_trigger_wait_timeout_sec,
+        motor_panel.lbl_motor_port,
+        motor_panel.edit_motor_port,
+        motor_panel.lbl_motor_slave,
+        motor_panel.spin_motor_slave,
+        motor_panel.lbl_position_units_per_deg,
+        motor_panel.spin_position_units_per_deg,
+    ]
+
+    for widget in widgets:
+        tooltip = widget.toolTip()
+        assert tooltip
+        assert any("\u3040" <= char <= "\u30ff" for char in tooltip)
 
 
 def test_capture_chips_panel_uses_comma_separated_inputs(qtbot: QtBot) -> None:
@@ -252,6 +333,8 @@ def test_motor_settings_panel_exposes_position_units_per_deg(qtbot: QtBot) -> No
     assert panel.spin_position_units_per_deg.minimum() > 0
     assert panel.spin_position_units_per_deg.decimals() == 4
     assert "MOCK" in panel.edit_motor_port.toolTip()
+    assert "COM" in panel.lbl_motor_port.toolTip()
+    assert any("\u3040" <= char <= "\u30ff" for char in panel.edit_motor_port.toolTip())
 
 
 def test_preview_panel_grid_control_state(qtbot: QtBot) -> None:

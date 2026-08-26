@@ -30,6 +30,9 @@ class _HookRecorder:
             set_recording_enabled=lambda value: self.events.append(
                 f"recording-enabled:{value}"
             ),
+            set_recording_settings_enabled=lambda value: self.events.append(
+                f"recording-settings-enabled:{value}"
+            ),
             set_motor_settings_enabled=lambda value: self.events.append(f"motor-enabled:{value}"),
             set_acquisition_settings_enabled=lambda value: self.events.append(
                 f"acquisition-enabled:{value}"
@@ -64,9 +67,10 @@ def test_begin_sequence_pauses_preview_after_entering_capture_state() -> None:
         "acquisition-enabled:False",
         "preview-controls:False",
         "timer-stop",
-        "arm-start",
+        "recording-settings-enabled:False",
     ]
-    assert recorder.events[11] == "preview-pause"
+    assert recorder.events[11] == "arm-start"
+    assert recorder.events[12] == "preview-pause"
 
 
 def test_begin_recording_pauses_preview_after_entering_capture_state() -> None:
@@ -88,9 +92,10 @@ def test_begin_recording_pauses_preview_after_entering_capture_state() -> None:
         "acquisition-enabled:False",
         "preview-controls:False",
         "timer-stop",
-        "arm-recording",
+        "recording-settings-enabled:False",
     ]
-    assert recorder.events[11] == "preview-pause"
+    assert recorder.events[11] == "arm-recording"
+    assert recorder.events[12] == "preview-pause"
 
 
 def test_leave_returns_preview_and_ui_to_idle_state() -> None:
@@ -113,6 +118,7 @@ def test_leave_returns_preview_and_ui_to_idle_state() -> None:
         "motor-enabled:True",
         "acquisition-enabled:True",
         "preview-controls:True",
+        "recording-settings-enabled:True",
         "preview-resume",
         "storage-refresh",
         "timer-start",

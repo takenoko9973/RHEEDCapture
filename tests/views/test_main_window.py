@@ -107,6 +107,7 @@ def mock_settings() -> types.GeneratorType:
                 fps=40.0,
                 interval_ms=25.0,
                 duration_sec=5.0,
+                tiff_compression_enabled=False,
             ),
             device=DeviceSettings(
                 motor=MotorDeviceSettings(
@@ -154,6 +155,11 @@ def test_main_window_initialization(
     assert window.recording_panel.rate_value_stack.currentWidget() is (
         window.recording_panel.spin_fps
     )
+    assert window.recording_settings_panel.chk_tiff_compression.isChecked() is False
+    assert window.recording_vm.get_settings_to_save().tiff_compression_enabled is False
+    assert window.capture_settings_section.toggle_button.text() == "Capture"
+    assert window.recording_settings_section.toggle_button.text() == "Recording"
+    assert window.motor_settings_section.toggle_button.text() == "Motor"
     window.close()
 
 
@@ -193,6 +199,12 @@ def test_settings_save_on_close(
     window.preview_panel.chk_show_grid.setChecked(False)
     window.preview_panel.cmb_grid_shape.setCurrentText("2x2")
     window.recording_panel.btn_rate_interval.click()
+    window.recording_settings_panel.chk_tiff_compression.setChecked(True)
+    assert window.recording_vm.get_settings_to_save().tiff_compression_enabled is True
+    window.recording_settings_panel.chk_tiff_compression.setChecked(False)
+    assert (
+        window.recording_vm._build_recording_settings().tiff_compression_enabled is False  # noqa: SLF001
+    )
 
     window.close()
 
@@ -215,6 +227,7 @@ def test_settings_save_on_close(
     assert saved_data.angle_scan.motor_speed_rpm == 4.0
     assert saved_data.recording_capture.rate_mode == "interval"
     assert saved_data.recording_capture.interval_ms == 25.0
+    assert saved_data.recording_capture.tiff_compression_enabled is False
     assert saved_data.device.motor.port == "COM8"
     assert saved_data.device.motor.slave == 3
     assert saved_data.device.motor.position_units_per_deg == 31.25
@@ -333,6 +346,29 @@ def test_acquisition_controls_lock_during_capture_and_recording_rate_uses_mode(
     assert window.recording_panel.btn_rate_interval.isEnabled() is False
     assert window.recording_panel.btn_rate_fps.isEnabled() is False
     window.close()
+
+
+def test_recording_settings_lock_during_any_capture(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """CaptureCoordinatorのenter/leaveでRecording保存設定をlock・復帰する。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+
+    try:
+        for capture_mode in ("sequence", "angle_scan", "recording"):
+            window.capture_coordinator.enter(capture_mode)
+            try:
+                assert window.recording_settings_panel.isEnabled() is False
+                assert window.recording_settings_panel.chk_tiff_compression.isEnabled() is False
+            finally:
+                window.capture_coordinator.leave()
+            assert window.recording_settings_panel.isEnabled() is True
+            assert window.recording_settings_panel.chk_tiff_compression.isEnabled() is True
+    finally:
+        window.close()
 
 
 def test_display_refresh_tracks_active_screen_and_rate_changes(

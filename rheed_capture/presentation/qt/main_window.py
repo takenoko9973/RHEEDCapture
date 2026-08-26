@@ -37,12 +37,14 @@ from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
 from rheed_capture.presentation.qt.panels.preview import PreviewPanel
 from rheed_capture.presentation.qt.panels.recording import RecordingPanel
+from rheed_capture.presentation.qt.panels.recording_settings import RecordingSettingsPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
 from rheed_capture.presentation.qt.panels.storage import StoragePanel
 from rheed_capture.presentation.qt.viewmodels.angle_scan import AngleScanViewModel
 from rheed_capture.presentation.qt.viewmodels.preview import PreviewViewModel
 from rheed_capture.presentation.qt.viewmodels.recording import RecordingViewModel
 from rheed_capture.presentation.qt.viewmodels.sequence import CaptureViewModel
+from rheed_capture.presentation.qt.widgets.collapsible_section import CollapsibleSection
 from rheed_capture.presentation.qt.widgets.grid_spec import DEFAULT_GRID_SHAPE
 from rheed_capture.presentation.qt.widgets.histogram_viewer import HistogramPanel
 from rheed_capture.presentation.qt.widgets.image_viewer import ImageViewer
@@ -137,6 +139,7 @@ class MainWindow(QMainWindow):
                 set_sequence_enabled=self.sequence_panel.setEnabled,
                 set_angle_scan_enabled=self.angle_scan_panel.setEnabled,
                 set_recording_enabled=self.recording_panel.setEnabled,
+                set_recording_settings_enabled=self.recording_settings_panel.setEnabled,
                 set_motor_settings_enabled=self.motor_settings_panel.setEnabled,
                 set_acquisition_settings_enabled=(
                     self.acquisition_settings_panel.set_controls_enabled
@@ -175,6 +178,7 @@ class MainWindow(QMainWindow):
         self.capture_chips_panel = CaptureChipsPanel()
         self.motor_settings_panel = MotorSettingsPanel()
         self.acquisition_settings_panel = AcquisitionSettingsPanel()
+        self.recording_settings_panel = RecordingSettingsPanel()
         self.capture_tabs = QTabWidget()
         self.capture_tabs.addTab(self.sequence_panel, "Sequence")
         self.capture_tabs.addTab(self.angle_scan_panel, "Angle Scan")
@@ -202,9 +206,44 @@ class MainWindow(QMainWindow):
         settings_layout = QVBoxLayout(settings_tab)
         settings_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         settings_layout.setContentsMargins(0, 0, 0, 0)
-        settings_layout.addWidget(self.capture_chips_panel)
-        settings_layout.addWidget(self.acquisition_settings_panel)
-        settings_layout.addWidget(self.motor_settings_panel)
+        settings_layout.setSpacing(4)
+
+        capture_settings_content = QWidget()
+        capture_settings_layout = QVBoxLayout(capture_settings_content)
+        capture_settings_layout.setContentsMargins(0, 0, 0, 0)
+        capture_settings_layout.setSpacing(4)
+        capture_settings_layout.addWidget(self.capture_chips_panel)
+        capture_settings_layout.addWidget(self.acquisition_settings_panel)
+        self.capture_settings_section = CollapsibleSection(
+            "Capture",
+            capture_settings_content,
+            expanded=True,
+        )
+
+        recording_settings_content = QWidget()
+        recording_settings_layout = QVBoxLayout(recording_settings_content)
+        recording_settings_layout.setContentsMargins(0, 0, 0, 0)
+        recording_settings_layout.addWidget(self.recording_settings_panel)
+        self.recording_settings_section = CollapsibleSection(
+            "Recording",
+            recording_settings_content,
+            expanded=False,
+        )
+
+        motor_settings_content = QWidget()
+        motor_settings_layout = QVBoxLayout(motor_settings_content)
+        motor_settings_layout.setContentsMargins(0, 0, 0, 0)
+        motor_settings_layout.addWidget(self.motor_settings_panel)
+        self.motor_settings_section = CollapsibleSection(
+            "Motor",
+            motor_settings_content,
+            expanded=False,
+        )
+
+        settings_layout.addWidget(self.capture_settings_section)
+        settings_layout.addWidget(self.recording_settings_section)
+        settings_layout.addWidget(self.motor_settings_section)
+        settings_layout.addStretch(1)
 
         self.control_tabs.addTab(capture_tab, "Capture")
         self.control_tabs.addTab(settings_tab, "Settings")
@@ -343,6 +382,9 @@ class MainWindow(QMainWindow):
         self.recording_panel.fps_changed.connect(self.recording_vm.update_fps)
         self.recording_panel.interval_changed.connect(self.recording_vm.update_interval_ms)
         self.recording_panel.duration_changed.connect(self.recording_vm.update_duration_sec)
+        self.recording_settings_panel.tiff_compression_changed.connect(
+            self.recording_vm.update_tiff_compression_enabled
+        )
 
         self.recording_panel.start_requested.connect(self._on_start_recording_requested)
         self.recording_panel.stop_requested.connect(self.recording_vm.stop_recording)
@@ -668,6 +710,7 @@ class MainWindow(QMainWindow):
         self.recording_vm.load_acquisition_settings(settings.acquisition)
         self.recording_panel.set_hardware_mode(settings.acquisition.mode)
         self.recording_panel.apply_settings(settings.recording_capture)
+        self.recording_settings_panel.apply_settings(settings.recording_capture)
         self.recording_vm.load_settings(settings.recording_capture)
         self._apply_grid_settings(settings.preview)
 

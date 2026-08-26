@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal, Slot
-from PySide6.QtWidgets import QFormLayout, QGroupBox, QLineEdit
+from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QLineEdit
 
 from rheed_capture.utils import parse_numbers
 
@@ -24,8 +24,18 @@ class CaptureChipsPanel(QGroupBox):
         self.edit_exposure_values = QLineEdit()
         self.edit_gain_values = QLineEdit()
         # 単位は項目名側だけに出し、チップ表示には含めない。
-        layout.addRow("Exposure (ms):", self.edit_exposure_values)
-        layout.addRow("Gain:", self.edit_gain_values)
+        self.lbl_exposure_values = QLabel("Exposure (ms):")
+        self.lbl_exposure_values.setToolTip(
+            "撮影条件チップに表示する露光時間候補 (ms) です。"
+        )
+        self.edit_exposure_values.setToolTip(
+            "カンマ区切りで露光時間候補 (ms) を入力します。"
+        )
+        self.lbl_gain_values = QLabel("Gain:")
+        self.lbl_gain_values.setToolTip("撮影条件チップに表示するゲイン候補です。")
+        self.edit_gain_values.setToolTip("カンマ区切りでゲイン候補を入力します。")
+        layout.addRow(self.lbl_exposure_values, self.edit_exposure_values)
+        layout.addRow(self.lbl_gain_values, self.edit_gain_values)
 
         self.edit_exposure_values.editingFinished.connect(self._on_exposure_edited)
         self.edit_gain_values.editingFinished.connect(self._on_gain_edited)

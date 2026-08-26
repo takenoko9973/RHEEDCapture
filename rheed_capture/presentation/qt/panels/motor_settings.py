@@ -1,5 +1,12 @@
 from PySide6.QtCore import Signal, Slot
-from PySide6.QtWidgets import QDoubleSpinBox, QFormLayout, QGroupBox, QLineEdit, QSpinBox
+from PySide6.QtWidgets import (
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QSpinBox,
+)
 
 from rheed_capture.infrastructure.motor.defaults import (
     DEFAULT_MOTOR_PORT,
@@ -21,21 +28,37 @@ class MotorSettingsPanel(QGroupBox):
         layout = QFormLayout(self)
 
         self.edit_motor_port = QLineEdit(DEFAULT_MOTOR_PORT)
-        self.edit_motor_port.setToolTip("Use COM port such as COM7, or MOCK for simulation.")
+        motor_port_tooltip = (
+            "COM7のようなMotorのCOMポートを指定します。"
+            "シミュレーションではMOCKを指定します。"
+        )
+        self.lbl_motor_port = QLabel("Motor Port:")
+        self.lbl_motor_port.setToolTip(motor_port_tooltip)
+        self.edit_motor_port.setToolTip(motor_port_tooltip)
 
         self.spin_motor_slave = QSpinBox()
         self.spin_motor_slave.setRange(1, 247)
         self.spin_motor_slave.setValue(DEFAULT_MOTOR_SLAVE)
+        self.lbl_motor_slave = QLabel("Motor Slave:")
+        self.lbl_motor_slave.setToolTip("MotorのModbusスレーブアドレスを指定します。")
+        self.spin_motor_slave.setToolTip("MotorのModbusスレーブアドレスを指定します。")
 
         self.spin_position_units_per_deg = QDoubleSpinBox()
         self.spin_position_units_per_deg.setRange(0.0001, 1_000_000.0)
         self.spin_position_units_per_deg.setDecimals(4)
         self.spin_position_units_per_deg.setSingleStep(0.25)
         self.spin_position_units_per_deg.setValue(DEFAULT_POSITION_UNITS_PER_DEG)
+        self.lbl_position_units_per_deg = QLabel("Position Units / deg:")
+        self.lbl_position_units_per_deg.setToolTip(
+            "Motorを1度動かすための移動単位を指定します。"
+        )
+        self.spin_position_units_per_deg.setToolTip(
+            "Motorを1度動かすための移動単位を指定します。"
+        )
 
-        layout.addRow("Motor Port:", self.edit_motor_port)
-        layout.addRow("Motor Slave:", self.spin_motor_slave)
-        layout.addRow("Position Units / deg:", self.spin_position_units_per_deg)
+        layout.addRow(self.lbl_motor_port, self.edit_motor_port)
+        layout.addRow(self.lbl_motor_slave, self.spin_motor_slave)
+        layout.addRow(self.lbl_position_units_per_deg, self.spin_position_units_per_deg)
 
         self.edit_motor_port.editingFinished.connect(
             lambda: self.motor_port_edited.emit(self.edit_motor_port.text())
