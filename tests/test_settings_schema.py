@@ -96,7 +96,7 @@ def test_missing_recording_capture_section_uses_section_default() -> None:
 
 
 def test_existing_recording_capture_section_missing_compression_uses_true_default() -> None:
-    """既存Recording設定に新圧縮キーがなくても従来zlibを維持する。"""
+    """Recording設定でtiff_compression_enabledキーが欠落した場合はzlibを使用する。"""
     settings = AppSettingsData.from_dict(
         {
             "recording_capture": {

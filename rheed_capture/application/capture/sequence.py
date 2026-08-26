@@ -61,7 +61,7 @@ class SequenceCapture:
                 on_progress(shot_count, self.total_shots, condition)
 
             if self.accumulation_frames == 1:
-                # OFF/N=1は従来の保存先、ファイル名、メタデータ経路を変更しない。
+                # OFF/N=1では、単一フレーム用の保存先・ファイル名・メタデータ経路で保存する。
                 # Trigger modeの判定はFrameCapturerへ集約し、Hardware時だけ共通待機
                 # timeout・no retry規則を適用する。
                 for captured_frame in self.frame_capturer.capture_group(

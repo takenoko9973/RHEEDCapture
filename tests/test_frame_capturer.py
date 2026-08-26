@@ -296,7 +296,7 @@ def test_hardware_single_frame_group_uses_wait_timeout_without_retry() -> None:
 
 
 def test_software_single_frame_group_keeps_existing_retry_behavior() -> None:
-    """N=1のSoftware取得は従来どおりdeadline付きで再試行する。"""
+    """N=1のSoftware取得はdeadline付きで再試行する。"""
     image = np.ones((2, 2), dtype=np.uint16)
     camera = _FakeCamera([CameraError("temporary"), _camera_frame(image)])
     capturer = FrameCapturer(camera, retry_interval_sec=0)

@@ -568,7 +568,7 @@ class MainWindow(QMainWindow):
         elif active_mode is None:
             text = self.preview_vm.get_acquisition_statistics_text()
         else:
-            # SequenceとAngle Scanでは従来どおり取得統計を表示しない。
+            # SequenceとAngle Scanでは取得統計を表示しない。
             text = ""
         realtime_text = self.preview_vm.get_realtime_diagnostics_text()
         text = " | ".join(part for part in (text, realtime_text) if part)

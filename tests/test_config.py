@@ -35,7 +35,7 @@ def test_app_settings_load_not_found(tmp_path: Path) -> None:
 
 
 def test_app_settings_load_invalid_json_uses_defaults(tmp_path: Path) -> None:
-    """JSON decode失敗時は既存どおり既定設定へ戻す。"""
+    """JSON decode失敗時は既定設定へ戻す。"""
     settings_path = tmp_path / "invalid.json"
     settings_path.write_text("{invalid", encoding="utf-8")
     original_path = AppSettings.FILE_PATH

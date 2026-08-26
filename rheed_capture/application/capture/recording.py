@@ -143,7 +143,7 @@ class RecordingCapture:
         cancellation_token: CancellationToken,
         hooks: RecordingHooks,
     ) -> tuple[bool, bool]:
-        """従来の予定時刻基準Software schedulingでRawを取得する。"""
+        """予定時刻を基準にSoftware schedulingでRawを取得する。"""
         start_monotonic = time.perf_counter()
         timeout_ms = int(self.settings.exposure_ms + DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS)
         frame_index = 1
