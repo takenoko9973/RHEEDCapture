@@ -9,6 +9,7 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import (
     AngleScanCaptureSettings,
@@ -21,10 +22,12 @@ from rheed_capture.infrastructure.config.schema import (
 )
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.main_window import (
+    ACQUISITION_STATISTICS_MIN_WIDTH_PX,
     ACQUISITION_STATISTICS_TOOLTIP,
     ACQUISITION_STATISTICS_UI_INTERVAL_MS,
     MainWindow,
 )
+from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
 from rheed_capture.presentation.qt.workers.recording_service import RecordingService
 
 
@@ -251,7 +254,7 @@ def test_acquisition_statistics_status_uses_only_preview_and_recording(
     mock_camera: MagicMock,
     mock_storage: MagicMock,
 ) -> None:
-    """共通status labelを500 ms更新し、有限撮影では空表示にする。"""
+    """短いsummaryを500 ms更新し、有限撮影では空表示にする。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
 
@@ -260,58 +263,91 @@ def test_acquisition_statistics_status_uses_only_preview_and_recording(
         == ACQUISITION_STATISTICS_UI_INTERVAL_MS
     )
     assert window.acquisition_statistics_label.toolTip() == ACQUISITION_STATISTICS_TOOLTIP
+    assert (
+        window.acquisition_statistics_label.minimumWidth()
+        == ACQUISITION_STATISTICS_MIN_WIDTH_PX
+    )
     assert not window.acquisition_statistics_label.font().bold()
     assert window.acquisition_statistics_label.styleSheet() == ""
+
+    preview_statistics = AcquisitionStatistics(
+        current_fps=10.0,
+        average_fps=None,
+        frame_count=12,
+        payload_bytes_per_second=20_000_000.0,
+    )
+    recording_statistics = AcquisitionStatistics(
+        current_fps=9.0,
+        average_fps=8.0,
+        frame_count=100,
+        payload_bytes_per_second=12_000_000.0,
+        save_queue_depth=0,
+        save_queue_peak_depth=4,
+    )
+    diagnostics = PreviewDiagnostics(
+        preview_processing_fps=30.0,
+        graph_processing_fps=30.0,
+        preview_display_fps=60.0,
+        graph_display_fps=60.0,
+        active_display_hz=60.0,
+        preview_processed_frames=12,
+        graph_processed_frames=12,
+        preview_display_frames=12,
+        graph_display_frames=12,
+        preview_input_drop_count=0,
+        graph_input_drop_count=0,
+        preview_result_drop_count=0,
+        graph_result_drop_count=0,
+    )
 
     with (
         patch.object(
             window.preview_vm,
-            "get_acquisition_statistics_text",
-            return_value="Preview 10.0 fps",
+            "acquisition_statistics_snapshot",
+            return_value=preview_statistics,
+        ),
+        patch.object(
+            window.recording_vm,
+            "acquisition_statistics_snapshot",
+            return_value=recording_statistics,
         ),
         patch.object(
             window.preview_vm,
-            "get_realtime_diagnostics_text",
-            return_value="Realtime diagnostics",
+            "diagnostics_snapshot",
+            return_value=diagnostics,
         ),
     ):
         window.capture_coordinator.active_mode = None
         window._update_acquisition_statistics_display()  # noqa: SLF001
-    assert (
-        window.acquisition_statistics_label.text()
-        == "Preview 10.0 fps | Realtime diagnostics"
+    assert window.acquisition_statistics_label.text() == (
+        "Preview | Camera 10.0 fps | 20.0 MB/s"
     )
 
-    with patch.object(
-        window.preview_vm,
-        "get_realtime_diagnostics_text",
-        return_value="Realtime diagnostics",
-    ):
+    with patch.object(window.preview_vm, "diagnostics_snapshot", return_value=diagnostics):
         window.capture_coordinator.active_mode = "sequence"
         window._update_acquisition_statistics_display()  # noqa: SLF001
-        assert window.acquisition_statistics_label.text() == "Realtime diagnostics"
+        assert window.acquisition_statistics_label.text() == ""
 
         window.capture_coordinator.active_mode = "angle_scan"
         window._update_acquisition_statistics_display()  # noqa: SLF001
-        assert window.acquisition_statistics_label.text() == "Realtime diagnostics"
+        assert window.acquisition_statistics_label.text() == ""
 
     with (
         patch.object(
             window.recording_vm,
-            "get_acquisition_statistics_text",
-            return_value="Recording 9.0 fps | Avg 8.0 fps",
+            "acquisition_statistics_snapshot",
+            return_value=recording_statistics,
         ),
         patch.object(
             window.preview_vm,
-            "get_realtime_diagnostics_text",
-            return_value="Realtime diagnostics",
+            "diagnostics_snapshot",
+            return_value=diagnostics,
         ),
     ):
         window.capture_coordinator.active_mode = "recording"
         window._update_acquisition_statistics_display()  # noqa: SLF001
-    assert (
-        window.acquisition_statistics_label.text()
-        == "Recording 9.0 fps | Avg 8.0 fps | Realtime diagnostics"
+    assert window.acquisition_statistics_label.text() == (
+        "Recording | Camera 9.0 fps | 12.0 MB/s | Save Q 0"
     )
 
     window.capture_coordinator.active_mode = None
@@ -439,23 +475,101 @@ def test_recording_preview_submission_does_not_wait_for_gui_thread(
     window.close()
 
 
-def test_realtime_diagnostics_are_visible_in_existing_status_label(
+def test_diagnostics_button_opens_one_modeless_reusable_dialog(
     qtbot: QtBot,
     mock_camera: MagicMock,
     mock_storage: MagicMock,
 ) -> None:
-    """Preview/Graphの処理・表示FPSとactive Hzを既存status labelへ表示する。"""
+    """Diagnostics操作UIが同じmodeless Dialogを開閉する。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
-    window.preview_vm.set_display_refresh_rate(60.0)
-    window.capture_coordinator.active_mode = None
+    dialog = window.diagnostics_dialog
 
-    window._update_acquisition_statistics_display()  # noqa: SLF001
+    assert window.diagnostics_button.text() == "Diagnostics"
+    assert dialog.isModal() is False
+    assert dialog.isVisible() is False
 
-    status_text = window.acquisition_statistics_label.text()
-    assert "Realtime" in status_text
-    assert "Preview proc/display" in status_text
-    assert "Graph proc/display" in status_text
-    assert "Active display 60.0 Hz" in status_text
-    assert "Drops P/G" in status_text
+    window.diagnostics_button.click()
+    assert dialog.isVisible() is True
+    assert window.diagnostics_dialog is dialog
+
+    dialog.close()
+    assert dialog.isVisible() is False
+
+    window.diagnostics_button.click()
+    assert dialog.isVisible() is True
+    assert window.diagnostics_dialog is dialog
+
+    window.diagnostics_button.click()
+    assert dialog.isVisible() is False
+    window.close()
+
+
+def test_main_window_close_hides_visible_diagnostics_dialog(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """MainWindow終了を受理したときvisibleなDiagnosticsも閉じる。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    window.diagnostics_button.click()
+    assert window.diagnostics_dialog.isVisible() is True
+
+    window.close()
+
+    assert window.diagnostics_dialog.isVisible() is False
+
+
+def test_diagnostics_refreshes_only_while_dialog_is_visible(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """既存500 ms更新はDiagnosticsがvisibleの時だけ値を反映する。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+    statistics = AcquisitionStatistics(
+        current_fps=10.0,
+        average_fps=None,
+        frame_count=12,
+        payload_bytes_per_second=20_000_000.0,
+    )
+    diagnostics = PreviewDiagnostics(
+        preview_processing_fps=30.0,
+        graph_processing_fps=20.0,
+        preview_display_fps=60.0,
+        graph_display_fps=50.0,
+        active_display_hz=60.0,
+        preview_processed_frames=12,
+        graph_processed_frames=12,
+        preview_display_frames=12,
+        graph_display_frames=12,
+        preview_input_drop_count=1,
+        graph_input_drop_count=0,
+        preview_result_drop_count=2,
+        graph_result_drop_count=3,
+    )
+
+    with (
+        patch.object(
+            window.preview_vm,
+            "acquisition_statistics_snapshot",
+            return_value=statistics,
+        ),
+        patch.object(window.preview_vm, "diagnostics_snapshot", return_value=diagnostics),
+        patch.object(window.diagnostics_dialog, "update_values") as update_values,
+    ):
+        window.capture_coordinator.active_mode = None
+        window._update_acquisition_statistics_display()  # noqa: SLF001
+        update_values.assert_not_called()
+
+        window.diagnostics_button.click()
+        window._update_acquisition_statistics_display()  # noqa: SLF001
+
+    update_values.assert_called_once_with(None, statistics, diagnostics)
+    assert "Realtime" not in window.acquisition_statistics_label.text()
+    assert "Drops" in window.acquisition_statistics_label.text()
+
+    window.diagnostics_dialog.hide()
     window.close()

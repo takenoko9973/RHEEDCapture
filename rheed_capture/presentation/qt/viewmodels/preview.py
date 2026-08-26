@@ -1,6 +1,7 @@
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 
+from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings, PreviewSettings
 from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
@@ -80,11 +81,15 @@ class PreviewViewModel(QObject):
         self._worker.pipeline.stop()
 
     def get_acquisition_statistics_text(self) -> str:
-        """現在のPreview取得統計をstatus bar表示用に返す。"""
-        statistics = self._worker.statistics_snapshot()
+        """現在のPreview取得統計を短いstatus summaryへ変換して返す。"""
+        statistics = self.acquisition_statistics_snapshot()
         if statistics is None:
             return ""
         return format_preview_statistics(statistics)
+
+    def acquisition_statistics_snapshot(self) -> AcquisitionStatistics | None:
+        """現在のPreview取得統計snapshotを返す。"""
+        return self._worker.statistics_snapshot()
 
     def get_realtime_diagnostics_text(self) -> str:
         """PreviewとGraphの処理・表示診断値をstatus bar表示用に返す。"""

@@ -33,6 +33,6 @@ RecordingではON時の `frames.csv` にgroupからの相対POSIXパスを記録
 Timestamp Chunkが利用可能な場合はcamera timestampを使い、欠落または不可読の場合だけhost timestampへfallbackする。
 Softwareの `timestamp` はSoftware Trigger発行直前、Hardwareの `timestamp` はRaw到着時点のPC時刻を表す。
 
-PreviewとRecordingのstatus bar表示はRaw frame単位で、Raw count、Raw FPS、Accumulation progress `x/N` を示す。
-HardwareのRaw待機中は `Waiting for trigger` を表示する。
+PreviewとRecordingのstatus bar summaryはCamera current FPSと取得可能な転送量を示し、Accumulation targetが2以上のときだけ `Acc x/N` を追加する。Recordingでは `Save Q current` を常時表示し、Preview/Graph drop合計のいずれかが非zeroのときだけ `Drops P/G` を表示する。
+HardwareのRaw待機中は `Waiting for trigger` をsummaryへ表示する。Raw count、Raw FPS、転送量の詳細、Realtime、Preview/Graph drop（各input/resultの合計）、Recordingのsave queue current/peakはmodelessなDiagnosticsで表示する。
 SequenceとAngle Scanでは取得統計を表示しない。

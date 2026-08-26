@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -31,6 +32,7 @@ from rheed_capture.presentation.qt.capture_coordinator import (
     CaptureCoordinator,
     CaptureCoordinatorHooks,
 )
+from rheed_capture.presentation.qt.diagnostics_dialog import DiagnosticsDialog
 from rheed_capture.presentation.qt.panels.acquisition_settings import AcquisitionSettingsPanel
 from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
 from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
@@ -40,6 +42,10 @@ from rheed_capture.presentation.qt.panels.recording import RecordingPanel
 from rheed_capture.presentation.qt.panels.recording_settings import RecordingSettingsPanel
 from rheed_capture.presentation.qt.panels.sequence import SequencePanel
 from rheed_capture.presentation.qt.panels.storage import StoragePanel
+from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
+    format_preview_statistics,
+    format_recording_statistics,
+)
 from rheed_capture.presentation.qt.viewmodels.angle_scan import AngleScanViewModel
 from rheed_capture.presentation.qt.viewmodels.preview import PreviewViewModel
 from rheed_capture.presentation.qt.viewmodels.recording import RecordingViewModel
@@ -54,7 +60,7 @@ logger = logging.getLogger(__name__)
 BRANCH_STATUS_MESSAGE_MS = 5000
 CAPTURE_COMPLETE_STATUS_MESSAGE_MS = 10000
 ACQUISITION_STATISTICS_UI_INTERVAL_MS = 500
-ACQUISITION_STATISTICS_MIN_WIDTH_PX = 360
+ACQUISITION_STATISTICS_MIN_WIDTH_PX = 220
 ACQUISITION_STATISTICS_TOOLTIP = (
     "画像ペイロードの推定または取得値です。\n"
     "Ethernet、IP、UDP、GigE Visionのヘッダや再送分は含みません。"
@@ -74,6 +80,7 @@ class MainWindow(QMainWindow):
     capture_vm: CaptureViewModel
     angle_scan_vm: AngleScanViewModel
     recording_vm: RecordingViewModel
+    diagnostics_dialog: DiagnosticsDialog
 
     def __init__(
         self,
@@ -106,9 +113,14 @@ class MainWindow(QMainWindow):
         )
         self.acquisition_statistics_label.setToolTip(ACQUISITION_STATISTICS_TOOLTIP)
         self.status_bar.addPermanentWidget(self.acquisition_statistics_label)
+        self.diagnostics_button = QPushButton("Diagnostics")
+        self.diagnostics_button.setObjectName("diagnosticsButton")
+        self.status_bar.addPermanentWidget(self.diagnostics_button)
 
         self._setup_ui()
         self._setup_viewmodels()
+        self.diagnostics_dialog = DiagnosticsDialog(self)
+        self.diagnostics_button.clicked.connect(self._toggle_diagnostics)
         self._setup_bindings()
         self._setup_sequence_preview_timer()
         self._setup_capture_coordinator()
@@ -477,7 +489,7 @@ class MainWindow(QMainWindow):
         self._sequence_preview_timer.start()
 
     def _setup_acquisition_statistics_timer(self) -> None:
-        """取得統計のstatus bar表示を500 ms間隔で更新する。"""
+        """summaryとvisibleなDiagnosticsを500 ms間隔で更新する。"""
         self._acquisition_statistics_timer = QTimer(self)
         self._acquisition_statistics_timer.setInterval(
             ACQUISITION_STATISTICS_UI_INTERVAL_MS
@@ -561,18 +573,39 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _update_acquisition_statistics_display(self) -> None:
-        """取得統計とPreview/GraphのRealtime診断値をstatus barへ表示する。"""
+        """既存snapshotからsummaryを更新し、visibleなDiagnosticsへ値を渡す。"""
         active_mode = self.capture_coordinator.active_mode
+        diagnostics = self.preview_vm.diagnostics_snapshot()
+        statistics = None
         if active_mode == "recording":
-            text = self.recording_vm.get_acquisition_statistics_text()
+            statistics = self.recording_vm.acquisition_statistics_snapshot()
+            text = (
+                format_recording_statistics(statistics, diagnostics)
+                if statistics is not None
+                else ""
+            )
         elif active_mode is None:
-            text = self.preview_vm.get_acquisition_statistics_text()
+            statistics = self.preview_vm.acquisition_statistics_snapshot()
+            text = (
+                format_preview_statistics(statistics, diagnostics)
+                if statistics is not None
+                else ""
+            )
         else:
             # SequenceとAngle Scanでは取得統計を表示しない。
             text = ""
-        realtime_text = self.preview_vm.get_realtime_diagnostics_text()
-        text = " | ".join(part for part in (text, realtime_text) if part)
         self.acquisition_statistics_label.setText(text)
+        if self.diagnostics_dialog.isVisible():
+            self.diagnostics_dialog.update_values(active_mode, statistics, diagnostics)
+
+    def _toggle_diagnostics(self) -> None:
+        """Diagnostics Dialogを追加生成せずmodelessに表示・非表示する。"""
+        if self.diagnostics_dialog.isVisible():
+            self.diagnostics_dialog.hide()
+            return
+        self.diagnostics_dialog.show()
+        self.diagnostics_dialog.raise_()
+        self.diagnostics_dialog.activateWindow()
 
     def _update_storage_display(self, *, refresh_counters: bool = True) -> None:
         """Storage状態を各Panelの保存先プレビューへ反映する。"""
@@ -746,6 +779,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Cannot close while capturing.")
             event.ignore()
             return
+
+        # top-level QDialogはMainWindowのcloseだけでは非表示にならないため、受理時に明示的に閉じる。
+        self.diagnostics_dialog.close()
 
         preview_settings = self.preview_vm.get_settings_to_save().with_grid(
             self.preview_panel.get_grid_settings_to_save()

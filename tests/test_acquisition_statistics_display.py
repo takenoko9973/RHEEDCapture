@@ -1,6 +1,7 @@
 """取得統計のstatus bar表示文字列を検証する。"""
 
 from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
+from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
 from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
     format_preview_statistics,
     format_recording_statistics,
@@ -8,7 +9,7 @@ from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
 
 
 def test_preview_statistics_format_with_payload() -> None:
-    """PreviewはCurrent FPSと10進MB/sのPayloadを表示する。"""
+    """Preview summaryはCurrent FPSと10進MB/sの転送量を表示する。"""
     statistics = AcquisitionStatistics(
         current_fps=138.44,
         average_fps=None,
@@ -18,15 +19,12 @@ def test_preview_statistics_format_with_payload() -> None:
 
     assert (
         format_preview_statistics(statistics)
-        == (
-            "Preview | Raw count 10 | Raw FPS 138.4 | Accumulation 0/1"
-            " | Payload 80.7 MB/s"
-        )
+        == "Preview | Camera 138.4 fps | 80.7 MB/s"
     )
 
 
 def test_preview_statistics_format_without_samples_or_payload() -> None:
-    """Previewの未定義FPSは`--`とし、未知Payloadは省略する。"""
+    """Preview summaryは未定義FPSを`--`とし、未知転送量を省略する。"""
     statistics = AcquisitionStatistics(
         current_fps=None,
         average_fps=None,
@@ -36,12 +34,12 @@ def test_preview_statistics_format_without_samples_or_payload() -> None:
 
     assert (
         format_preview_statistics(statistics)
-        == "Preview | Raw count 0 | Raw FPS -- | Accumulation 0/1"
+        == "Preview | Camera -- fps"
     )
 
 
 def test_recording_statistics_format_with_payload() -> None:
-    """RecordingはCurrent、Average FPSとPayloadを表示する。"""
+    """Recording summaryはCurrent FPS、転送量、current save queueを表示する。"""
     statistics = AcquisitionStatistics(
         current_fps=138.44,
         average_fps=136.86,
@@ -51,14 +49,15 @@ def test_recording_statistics_format_with_payload() -> None:
         save_queue_peak_depth=34,
     )
 
-    assert format_recording_statistics(statistics) == (
-        "Recording | Raw count 100 | Raw FPS 138.4 | Accumulation 0/1"
-        " | Payload 80.7 MB/s | Save queue 12/34"
-    )
+    formatted = format_recording_statistics(statistics)
+
+    assert formatted == "Recording | Camera 138.4 fps | 80.7 MB/s | Save Q 12"
+    assert "136.9" not in formatted
+    assert "34" not in formatted
 
 
 def test_recording_statistics_format_without_samples_or_payload() -> None:
-    """Recordingの未定義値は`--`とし、未知Payloadは省略する。"""
+    """Recording summaryは未定義FPSを`--`とし、未知転送量を省略する。"""
     statistics = AcquisitionStatistics(
         current_fps=None,
         average_fps=None,
@@ -70,12 +69,12 @@ def test_recording_statistics_format_without_samples_or_payload() -> None:
 
     assert (
         format_recording_statistics(statistics)
-        == "Recording | Raw count 0 | Raw FPS -- | Accumulation 0/1 | Save queue 0/0"
+        == "Recording | Camera -- fps | Save Q 0"
     )
 
 
 def test_preview_statistics_format_shows_accumulation_and_waiting_state() -> None:
-    """積算進捗とHardware trigger待機状態を明示する。"""
+    """積算進捗とHardware trigger待機状態をsummaryへ追加する。"""
     statistics = AcquisitionStatistics(
         current_fps=10.0,
         average_fps=10.0,
@@ -87,6 +86,35 @@ def test_preview_statistics_format_shows_accumulation_and_waiting_state() -> Non
     )
 
     assert format_preview_statistics(statistics) == (
-        "Preview | Raw count 3 | Raw FPS 10.0 | Accumulation 1/4"
+        "Preview | Camera 10.0 fps | Acc 1/4"
         " | Waiting for trigger"
+    )
+
+
+def test_statistics_format_shows_drop_totals_only_when_nonzero() -> None:
+    """Preview/Graph dropがある場合だけsummaryへ合計を表示する。"""
+    statistics = AcquisitionStatistics(
+        current_fps=10.0,
+        average_fps=None,
+        frame_count=3,
+        payload_bytes_per_second=None,
+    )
+    diagnostics = PreviewDiagnostics(
+        preview_processing_fps=10.0,
+        graph_processing_fps=10.0,
+        preview_display_fps=10.0,
+        graph_display_fps=10.0,
+        active_display_hz=60.0,
+        preview_processed_frames=3,
+        graph_processed_frames=3,
+        preview_display_frames=3,
+        graph_display_frames=3,
+        preview_input_drop_count=2,
+        graph_input_drop_count=0,
+        preview_result_drop_count=1,
+        graph_result_drop_count=4,
+    )
+
+    assert format_preview_statistics(statistics, diagnostics) == (
+        "Preview | Camera 10.0 fps | Drops P/G 3/4"
     )

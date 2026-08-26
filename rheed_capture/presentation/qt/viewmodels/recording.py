@@ -23,6 +23,7 @@ from rheed_capture.presentation.qt.workers.recording_service import (
 )
 
 if TYPE_CHECKING:
+    from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
     from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 
@@ -163,13 +164,17 @@ class RecordingViewModel(QObject):
         return self._recording_service is not None and self._recording_service.isRunning()
 
     def get_acquisition_statistics_text(self) -> str:
-        """現在のRecording取得統計をstatus bar表示用に返す。"""
-        if self._recording_service is None:
-            return ""
-        statistics = self._recording_service.statistics_snapshot()
+        """現在のRecording取得統計を短いstatus summaryへ変換して返す。"""
+        statistics = self.acquisition_statistics_snapshot()
         if statistics is None:
             return ""
         return format_recording_statistics(statistics)
+
+    def acquisition_statistics_snapshot(self) -> AcquisitionStatistics | None:
+        """現在のRecording取得統計snapshotを返す。"""
+        if self._recording_service is None:
+            return None
+        return self._recording_service.statistics_snapshot()
 
     def _build_recording_settings(self) -> RecordingSettings:
         """UI入力値をUse Caseが要求するRecordingSettingsへ変換する。"""

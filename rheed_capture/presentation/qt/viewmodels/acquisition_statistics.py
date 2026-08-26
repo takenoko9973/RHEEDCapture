@@ -6,24 +6,34 @@ from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
 DECIMAL_BYTES_PER_MEGABYTE = 1_000_000
 
 
-def format_preview_statistics(statistics: AcquisitionStatistics) -> str:
-    """PreviewのRaw count、Raw FPS、積算進捗、待機状態を整形する。"""
-    text = _format_acquisition_status("Preview", statistics)
-    return _append_payload(text, statistics.payload_bytes_per_second)
+def format_preview_statistics(
+    statistics: AcquisitionStatistics,
+    diagnostics: PreviewDiagnostics | None = None,
+) -> str:
+    """Previewの短いstatus summaryを整形する。"""
+    return _format_summary(
+        "Preview",
+        statistics,
+        diagnostics=diagnostics,
+        include_save_queue=False,
+    )
 
 
-def format_recording_statistics(statistics: AcquisitionStatistics) -> str:
-    """RecordingのRaw count、Raw FPS、積算進捗、待機状態を整形する。"""
-    text = _format_acquisition_status("Recording", statistics)
-    text = _append_payload(text, statistics.payload_bytes_per_second)
-    return (
-        f"{text} | Save queue "
-        f"{statistics.save_queue_depth}/{statistics.save_queue_peak_depth}"
+def format_recording_statistics(
+    statistics: AcquisitionStatistics,
+    diagnostics: PreviewDiagnostics | None = None,
+) -> str:
+    """Recordingの短いstatus summaryを整形する。"""
+    return _format_summary(
+        "Recording",
+        statistics,
+        diagnostics=diagnostics,
+        include_save_queue=True,
     )
 
 
 def format_preview_realtime_diagnostics(diagnostics: PreviewDiagnostics) -> str:
-    """PreviewとGraphの処理・表示FPS、表示Hz、drop数をstatus bar用に整形する。"""
+    """PreviewとGraphの処理・表示FPS、表示Hz、drop数を整形する。"""
     preview_drops = (
         diagnostics.preview_input_drop_count + diagnostics.preview_result_drop_count
     )
@@ -47,20 +57,33 @@ def format_preview_realtime_diagnostics(diagnostics: PreviewDiagnostics) -> str:
     )
 
 
-def _format_acquisition_status(
+def _format_summary(
     label: str,
     statistics: AcquisitionStatistics,
+    *,
+    diagnostics: PreviewDiagnostics | None,
+    include_save_queue: bool,
 ) -> str:
-    """取得種別共通のRaw単位ステータスを整形する。"""
-    current_fps = _format_fps(statistics.current_fps)
-    text = (
-        f"{label} | Raw count {statistics.frame_count}"
-        f" | Raw FPS {current_fps}"
-        f" | Accumulation {statistics.accumulation_progress}"
-        f"/{statistics.accumulation_target}"
-    )
+    """取得種別共通の短いsummary項目を整形する。"""
+    parts = [label, f"Camera {_format_fps(statistics.current_fps)} fps"]
+    text = " | ".join(parts)
+    text = _append_payload(text, statistics.payload_bytes_per_second)
+    if statistics.accumulation_target > 1:
+        text += (
+            f" | Acc {statistics.accumulation_progress}"
+            f"/{statistics.accumulation_target}"
+        )
     if statistics.waiting_for_trigger:
         text += " | Waiting for trigger"
+    if include_save_queue:
+        text += f" | Save Q {statistics.save_queue_depth}"
+    if diagnostics is not None:
+        preview_drops = (
+            diagnostics.preview_input_drop_count + diagnostics.preview_result_drop_count
+        )
+        graph_drops = diagnostics.graph_input_drop_count + diagnostics.graph_result_drop_count
+        if preview_drops > 0 or graph_drops > 0:
+            text += f" | Drops P/G {preview_drops}/{graph_drops}"
     return text
 
 
@@ -70,11 +93,11 @@ def _format_fps(value: float | None) -> str:
 
 
 def _append_payload(text: str, payload_bytes_per_second: float | None) -> str:
-    """取得可能な場合だけ10進MB/sのPayload表示を追加する。"""
+    """取得可能な場合だけ10進MB/sの転送量表示を追加する。"""
     if payload_bytes_per_second is None:
         return text
 
     payload_megabytes_per_second = (
         payload_bytes_per_second / DECIMAL_BYTES_PER_MEGABYTE
     )
-    return f"{text} | Payload {payload_megabytes_per_second:.1f} MB/s"
+    return f"{text} | {payload_megabytes_per_second:.1f} MB/s"

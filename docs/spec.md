@@ -151,13 +151,14 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 
 ### 5.7 取得統計表示
 
-* PreviewとRecordingでは、正常取得したRaw frameを単位として、session内Raw frame count、Raw FPS、Accumulation progress `x/N` を表示する。HardwareのRaw frame待機中は `Waiting for trigger` を表示する。
+* PreviewとRecordingのstatus barは通常運用向けsummaryとして、Camera current FPSと取得可能な転送量を表示する。Accumulation targetが2以上のときだけ `Acc x/N` を表示し、HardwareのRaw frame待機中は `Waiting for trigger` を表示する。Recordingでは `Save Q current` を常時表示し、Preview/Graph drop合計のいずれかが非zeroのときだけ `Drops P/G` を表示する。
+* Diagnosticsはstatus bar右側の操作UIから開くmodeless表示であり、正常取得したRaw frameを単位とするRaw frame count、Raw FPS、Accumulation progress `x/N`、転送量、Preview/Graph drop（各input/resultの合計）を表示する。Recording中はsave queueのcurrent/peakも表示する。
 * Raw frame countはgroup数、積算画像数、UI描画回数、TIFF保存完了数ではなく、正常に取得したRaw frame数を表す。
 * Raw FPSは単調増加時計を使用し、直近1秒のRaw frame時刻について、フレーム間隔数を先頭から末尾までの経過時間で割って求める。
-* 取得可能な場合は、直近1秒のGrabResultのPayload byte数合計を対象時間で割り、10進単位のMB/sで表示する。変換後の `uint16` 配列の `nbytes` は使用しない。
+* Diagnosticsで取得可能な場合は、直近1秒のGrabResultのPayload byte数合計を対象時間で割り、10進単位のMB/sで表示する。変換後の `uint16` 配列の `nbytes` は使用しない。
 * Payloadは画像取得に伴うデータ量であり、NIC全体の通信量ではない。Ethernet、IP、UDP、GigE Visionのヘッダと再送分を含まない。
-* Recording中は保存処理中の要求を除く待機中save queueのcurrent depthと、Recording中に観測したpeak depthを診断表示する。
-* 表示はMainWindowのstatus bar右側に置き、500ms間隔で更新する。Preview停止中とRecording終了後は表示を消去する。
+* Recording中のsave queueは、保存処理中の要求を除く待機中queueのcurrent depthと、Recording中に観測したpeak depthをDiagnosticsへ表示する。
+* summaryとDiagnosticsは500ms間隔で更新し、Diagnosticsのwidget値はDialogがvisibleな間だけ更新する。Preview停止中とRecording終了後はsummaryの表示を消去する。
 * 通常のSequence撮影とAngle Scanでは取得統計を表示しない。
 
 実機依存項目の確認状況と記録欄は、[Mono12Packed実機確認チェックリスト](mono12packed_hardware_validation.md)にまとめる。
