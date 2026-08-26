@@ -2,6 +2,35 @@
 
 この文書は、現在の実装に基づいて通常シーケンス撮影、回転撮影、Recordingの処理順を整理したものである。回転撮影はUI上では `Angle Scan` として実装されている。
 
+## 0. 共通Acquisition設定とTrigger Session
+
+Preview、Sequence、Angle Scan、Recordingは、共通Acquisition設定から作った同じTrigger Session経路を使用する。
+取得モードは `Software` と `Hardware` であり、Free Runは使用しない。
+
+既定値は次のとおりである。
+
+| 項目 | 既定値と意味 |
+| --- | --- |
+| Trigger Mode | `Software` |
+| Hardware Source | `Line1` |
+| Hardware Activation | `RisingEdge` |
+| Trigger Delay | `0 us`。Hardware専用 |
+| FPS Limit | `Unlimited` |
+| Accumulation | `Off`、`N=1` |
+| Trigger Wait Timeout | `0 s`。無期限 |
+
+Softwareでは、Sessionをarmした後に `TriggerReady` を待ち、Software Triggerを発行してから1枚を取得する。
+HardwareではSoftware Triggerを発行せず、外部FrameStartに対応するRaw frameを取得する。
+Trigger Source、Activation、DelayなどのHardware設定が利用不能または設定拒否になった場合、別の値へ変更せずエラーにする。
+
+Recording、Sequence、Angle Scanの実行中は共通Acquisition設定をロックする。
+Preview中に設定を変更した場合は現在のSessionを閉じ、現在値で再armしてPreviewを自動再開する。
+Hardware RecordingではRecordingパネルのFPSとInterval入力も無効化する。
+
+Timestamp Chunkは任意である。
+利用可能な場合はcamera timestampを保存し、欠落または読戻し不能の場合だけhost timestampへfallbackする。
+ExposureとGainの必須Chunk読戻しは緩和しない。
+
 ## 1. 通常シーケンス撮影
 
 ### 1.1 開始前のUI制御
@@ -10,6 +39,7 @@
 2. `MainWindow` は通常シーケンス撮影中の状態へ切り替える。
    - `Sequence` パネルを撮影中表示にする。
    - `Angle Scan` パネル、モーター設定、プレビュー設定の操作を無効化する。
+   - 共通Acquisition設定を無効化する。
    - 次回保存先表示を更新するタイマーを停止する。
 3. `PreviewWorker` へプレビュー停止を要求する。
 4. プレビュー停止完了通知を受けてから、`CaptureViewModel.start_sequence()` が呼ばれる。
@@ -41,31 +71,36 @@
 2. 進捗を `現在枚数 / 総枚数` としてUIへ通知する。
 3. カメラの露光時間を設定する。
 4. カメラのゲインを設定する。
-5. `expected_frames=1` のソフトトリガーSessionを開始する。
-6. `TriggerReady` を待ち、PCのJST時刻とmonotonic時刻を記録してからtriggerを1回発行する。
-7. `GrabStrategy_OneByOne` で1枚取得し、Timestamp ChunkとMono16 / `MsbAligned` 画像を得る。
-   - 1試行の共通deadlineは `露光時間 + 500ms` とし、ready待機と取得には残り時間だけを渡す。
-8. Sessionを閉じ、`TriggerMode = Off` へ戻す。
-9. 要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
-10. 現在の `image_nnn` フォルダへTIFF保存する。
-   - 現在の実装上のファイル名は `{実験フォルダ名}-{シーケンス番号}_expo{露光時間:g}_gain{ゲイン:g}.tiff`。
+5. AccumulationがOFFなら `expected_frames=1` のTrigger Sessionを開始する。ONなら同じ条件で `N` 枚を取得するgroupとして扱う。
+6. 共通Acquisition設定に従ってRawを取得する。Softwareでは `TriggerReady` を待ち、PCのJST時刻とmonotonic時刻を記録してからSoftware Triggerを1回発行する。Hardwareではアプリからtriggerを発行せず、外部FrameStartに対応するフレームを待つ。
+7. `GrabStrategy_OneByOne` でRaw frameを取得し、必須のExposure/Gain ChunkとMono16 / `MsbAligned` 画像を得る。Timestamp Chunkが利用可能ならcamera timestampを使い、欠落・不可読時はhostの `time.time_ns()` を1GHzのtickとして使う。
+   - Softwareの1試行は `露光時間 + 500ms` の共通deadlineを持つ。
+   - HardwareでONの場合は、group内の各Raw frameに共通Trigger Wait Timeoutを適用する。
+8. Accumulation ONでは各Rawを取得直後にgroupへ保存する。積算は `uint64` で画素ごとに行い、group完成時に `65535` へclipした画像だけをPreviewへ通知する。積算画像は保存しない。
+9. Sessionを閉じ、Trigger設定を解除してカメラを通常状態へ戻す。
+10. 要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、Softwareではtrigger直前・HardwareではRaw取得時点のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
+11. 現在の `image_nnn` フォルダへTIFFを保存する。
+   - Accumulation OFFは `{実験フォルダ名}-{シーケンス番号}_expo{露光時間:g}_gain{ゲイン:g}.tiff`。
+   - Accumulation ONは `group_{group_index:04d}_expo{露光時間:g}_gain{ゲイン:g}/raw_{raw_index:04d}.tiff`。group indexは条件順で、Raw indexはgroup内の取得順である。
 
 ### 1.5 リトライと中断
 
-1. Session開始（必須node設定、Chunk準備、`StartGrabbing`）、ready待機、trigger発行、フレーム取得、Timestamp Chunk、画像変換、カメラ通信の失敗は撮影エラーとして扱う。
+1. Session開始（Trigger設定、必須node設定、必須Chunk準備、`StartGrabbing`）、Softwareのready待機・trigger発行、フレーム取得、画像変換、カメラ通信の失敗は撮影エラーとして扱う。Timestamp Chunkだけは任意であり、欠落・不可読時はhost timestampへfallbackする。Exposure/Gain Chunkの欠落・不可読は引き続き撮影エラーとする。
 2. 1つの条件につき最大3回まで撮影を再試行する。
 3. 異常Sessionを停止・解除し、0.5秒待機後に新しいSessionで再triggerする。
-4. 3回とも失敗した場合は通常シーケンス全体を中断する。
-5. キャンセル要求がある場合は、次の条件へ進む前の確認タイミングで中断する。
+4. HardwareでRaw待機が共通Trigger Wait Timeoutを超えた場合は、その条件をskipせず通常シーケンス全体を中断する。`0` は無期限である。
+5. 3回とも失敗した場合は通常シーケンス全体を中断する。
+6. キャンセル要求がある場合は、次の条件へ進む前の確認タイミングで中断する。group途中で停止またはエラーになった場合、既に保存済みのRawは削除しない。
 
 ### 1.6 終了処理
 
 1. `CaptureService` は成功または失敗と保存先名をUIへ通知する。
 2. `MainWindow` は通常シーケンス撮影中の状態を解除する。
 3. 無効化していた `Angle Scan` パネル、モーター設定、プレビュー設定を再び有効化する。
-4. プレビューを再開する。
-5. 保存先表示を更新し、次回保存先表示タイマーを再開する。
-6. 成功時はステータスバーに保存先フォルダ名を表示する。
+4. 共通Acquisition設定を再び有効化する。
+5. プレビューを再開する。
+6. 保存先表示を更新し、次回保存先表示タイマーを再開する。
+7. 成功時はステータスバーに保存先フォルダ名を表示する。
 
 ## 2. 回転撮影
 
@@ -75,6 +110,7 @@
 2. `MainWindow` は回転撮影中の状態へ切り替える。
    - `Angle Scan` パネルを撮影中表示にする。
    - `Sequence` パネル、モーター設定、プレビュー設定の操作を無効化する。
+   - 共通Acquisition設定を無効化する。
    - 次回保存先表示を更新するタイマーを停止する。
 3. `PreviewWorker` へプレビュー停止を要求する。
 4. プレビュー停止完了通知を受けてから、`AngleScanViewModel.start_angle_scan()` が呼ばれる。
@@ -130,6 +166,7 @@
    - モーター速度
    - 開始位置へ戻る設定
    - 露光時間・ゲインの撮影条件
+   - Accumulation ON時のRaw枚数、`capture.accumulation_frames`、group directoryとRaw filenameの保存形式
    - リトライ上限
    - 保存名規則
 
@@ -152,11 +189,15 @@
 11. 各撮影前にキャンセル要求を確認する。
 12. 進捗を `現在枚数 / 総枚数 / 現在角度` としてUIへ通知する。
 13. カメラの露光時間とゲインを設定する。
-14. Sequenceと同じ1フレーム用ソフトトリガーSessionで撮影する。
-15. `scan_id`、目標角度、要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、trigger直前のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
-17. 角度別サブフォルダへTIFF保存する。
+14. AccumulationがOFFならSequenceと同じ1フレーム用Trigger Sessionで撮影する。ONなら同じ角度・条件で `N` 枚のRaw frameを取得するgroupとして扱う。
+15. 共通Acquisition設定に従ってRawを取得する。Softwareではready待機後にSoftware Triggerを発行し、Hardwareでは外部triggerに対応するフレームを待つ。
+16. HardwareでRaw待機が共通Trigger Wait Timeoutを超えた場合は、その条件をskipせずAngle Scan全体をエラー終了する。`0` は無期限である。
+17. Accumulation ONでは各Rawを取得直後に保存し、groupが完成するまで次の条件または角度へ進まない。積算は `uint64` で行い、完成時に `65535` へclipした画像だけをPreviewへ通知する。
+18. `scan_id`、目標角度、要求した露光時間・ゲイン、カメラから読戻した露光時間・Gain、Softwareではtrigger直前・HardwareではRaw取得時点のPC時刻、camera timestamp tickと周波数、ビット深度、`MsbAligned` 情報をTIFFメタデータとして作る。
+19. 角度別サブフォルダへTIFF保存する。
     - 角度フォルダ名は `angle{角度:+06.1f}`。
-    - ファイル名は `{scan_id}_angle{角度:+06.1f}_exp{露光時間:g}_gain{ゲイン:g}.tiff`。
+    - Accumulation OFFのファイル名は `{scan_id}_angle{角度:+06.1f}_exp{露光時間:g}_gain{ゲイン:g}.tiff`。
+    - Accumulation ONは `group_{condition_index:04d}_exp{露光時間:g}_gain{ゲイン:g}/raw_{raw_index:04d}.tiff`。
 
 ### 2.6 開始位置への復帰
 
@@ -167,42 +208,60 @@
 
 ### 2.7 リトライと中断
 
-1. ソフトトリガーSession開始、ready待機、trigger発行、取得、必須Chunk読戻し、画像変換、カメラ通信の失敗を撮影エラーとして扱う。
+1. Trigger Session開始、Softwareのready待機・trigger発行、Hardwareの外部trigger待機、取得、必須Chunk読戻し、画像変換、カメラ通信の失敗を撮影エラーとして扱う。Timestamp Chunkだけは任意であり、欠落・不可読時はhost timestampへfallbackする。
 2. 1つの角度・露光時間・ゲイン条件につき最大3回まで撮影を再試行する。
 3. 再試行前には0.5秒待機する。
-4. 3回とも失敗した場合は回転撮影全体を中断する。
-5. キャンセル要求がある場合は、各移動前または各撮影条件の前の確認タイミングで中断する。
+4. HardwareでRaw待機が共通Trigger Wait Timeoutを超えた場合は、条件をskipせず回転撮影全体を中断する。`0` は無期限である。
+5. 3回とも失敗した場合は回転撮影全体を中断する。
+6. キャンセル要求がある場合は、各移動前または各撮影条件の前の確認タイミングで中断する。group途中で停止またはエラーになった場合、既に保存済みのRawは削除しない。
 
 ### 2.8 終了処理
 
 1. `AngleScanService` は成功または失敗と保存先名をUIへ通知する。
 2. `MainWindow` は回転撮影中の状態を解除する。
 3. 無効化していた `Sequence` パネル、モーター設定、プレビュー設定を再び有効化する。
-4. プレビューを再開する。
-5. 保存先表示を更新し、次回保存先表示タイマーを再開する。
-6. 成功時はステータスバーに保存先フォルダ名を表示する。
+4. 共通Acquisition設定を再び有効化する。
+5. プレビューを再開する。
+6. 保存先表示を更新し、次回保存先表示タイマーを再開する。
+7. 成功時はステータスバーに保存先フォルダ名を表示する。
 
 ## 3. Recording
 
 1. プレビュー停止完了後、固定した露光時間とゲインを設定する。
-2. `expected_frames=None` の取得Sessionを用意し、カメラ側のソフトトリガーSessionは最初の撮影時に開始して正常な間はRecording全体で再利用する。
-3. `frame_index` から求めた元の予定時刻まで、キャンセルを監視しながら待つ。
-4. 予定時刻を過ぎていてもindexを飛ばさず、`TriggerReady` 待機後にtriggerを1回発行する。
-5. trigger直前のmonotonic時刻から `actual_elapsed_ms` を計算する。
-6. TIFF保存キューへ画像とメタデータを投入し、保存完了時に `frames.csv` へ追記する。
-7. Session開始または取得失敗時は異常Sessionを閉じ、新しいSessionで同じ `frame_index` を再試行する。
-8. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、`TriggerMode = Off` へ戻す。
+2. `expected_frames=None` の共通Trigger Sessionを用意する。Sessionは正常な間、Recording全体で再利用し、取得失敗時だけ閉じて再armする。
+3. AccumulationがOFFなら1 Raw frameを1フレームとして扱う。ONなら `N` 枚を1 groupとして扱い、Raw indexを `1` から `N` まで割り当てる。
+4. **Software Recording**では、FPSまたはInterval入力から `frame_index` ごとの元の予定時刻を求め、キャンセルを監視しながらその時刻まで待つ。遅延してもindexを飛ばさず、`TriggerReady` 待機後にSoftware Triggerを1回発行する。
+   - 要求rateが共通FPS Limitを超える場合はSessionを作成する前にエラーにする。FPSを共通FPS Limitへ自動的に丸めない。
+5. **Hardware Recording**ではRecording側のFPSとInterval入力を使わず、外部triggerに対応するRaw frameを待つ。
+   - 最初のRaw frameだけに共通Trigger Wait Timeoutを適用する。timeoutならRecordingをエラー終了する。
+   - 最初の正常Raw到着時をDurationの `t=0` とし、開始前の待機時間はDurationに含めない。
+   - 最初のRaw到着後はtriggerが止まってもTrigger Wait Timeoutエラーにせず、Duration終了を優先する。
+6. Softwareではtrigger発行直前、HardwareではRaw frameのhost取得時点のmonotonic時刻から `actual_elapsed_ms` を計算する。Hardwareでは `target_elapsed_ms` を持たない。
+7. Duration終了時にgroup途中であれば、既存groupの `N` 枚目まで取得して保存する。group完成後に終了し、Duration終了後に新しいgroupは開始しない。
+8. TIFF保存キューへ元のRaw画像とメタデータを投入し、保存完了時に `frames.csv` へ追記する。
+   - Accumulation OFFは `record-N` 直下へTIFFを保存する。
+   - Accumulation ONは `record-N/group_{group_index:06d}/raw_{raw_index:04d}.tiff` へRawを保存する。group途中で停止またはエラーになっても、既に保存したRawは削除しない。
+9. Accumulation OFFでは取得したRawをPreviewへ通知する。ONではgroup完成時にだけ、Rawの総和を `uint16` 範囲へclipした積算画像をPreviewへ通知する。積算画像は保存しない。
+10. 正常終了、キャンセル、例外のいずれでもSessionを閉じ、Trigger設定を解除してカメラを通常状態へ戻す。
 
-TIFFと `frames.csv` には、要求条件の `exposure_ms`・`gain` と、フレーム単位の読戻し値 `camera_exposure_ms`・`camera_gain` を区別して保存する。さらにtrigger直前のPC時刻を表す `timestamp`、画像取得開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。pylonエミュレータではsourceを `simulation` とし、trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
+TIFFと `frames.csv` には、要求条件の `exposure_ms`・`gain` と、フレーム単位の読戻し値 `camera_exposure_ms`・`camera_gain` を区別して保存する。
+さらにSoftwareではtrigger直前、HardwareではRaw frameのhost取得時点を表す `timestamp`、画像取得開始に対応する `camera_timestamp_ticks`、`camera_timestamp_frequency_hz`、取得元を表す `camera_timestamp_source` を保存する。
+sourceが `camera` のtickはPTPを自動有効化しないため絶対日時として解釈しない。
+Timestamp Chunkが使えない場合はsourceを `host` とし、`time.time_ns()` を1GHzのtickとして保存する。
+pylonエミュレータではsourceを `simulation` とし、Software Trigger発行直後の `perf_counter_ns()` を周波数 `1000000000` の仮想timestampとして記録する。
+Accumulation ONでは `frames.csv` の `filename` に `group_000001/raw_0001.tiff` のようなsession相対POSIXパスを記録する。
 
-## 4. 通常シーケンス撮影と回転撮影の主な違い
+## 4. 撮影モードの主な違い
 
-| 項目 | 通常シーケンス撮影 | 回転撮影 |
-| --- | --- | --- |
-| UIタブ | `Sequence` | `Angle Scan` |
-| 保存先 | `image_nnn` | `angle_scan_nnn` |
-| 角度移動 | なし | あり |
-| 撮影条件 | 露光時間 x ゲイン | 角度 x 露光時間 x ゲイン |
-| プレビュー | 撮影前に停止し、終了後に再開 | 移動中は再開し、撮影直前に停止 |
-| 補助ファイル | なし | `scan.json` |
-| TIFFメタデータ | 露光時間、ゲイン、時刻、ビット深度など | 通常情報に加えて `scan_id` と目標角度など |
+| 項目 | 通常シーケンス撮影 | 回転撮影 | Recording |
+| --- | --- | --- | --- |
+| UIタブ | `Sequence` | `Angle Scan` | `Recording` |
+| 保存先 | `image_nnn` | `angle_scan_nnn` | `record-N` |
+| 角度移動 | なし | あり | なし |
+| 撮影条件 | 露光時間 x ゲイン | 角度 x 露光時間 x ゲイン | 固定露光時間 x ゲイン |
+| Trigger | 条件ごとに1 RawまたはN Raw | 角度・条件ごとに1 RawまたはN Raw | Softwareは予定時刻、Hardwareは外部trigger |
+| Hardware timeout | Rawごとに適用し、timeoutは全体エラー | Rawごとに適用し、timeoutは全体エラー | 最初のRawだけ適用。到着後はDurationを優先 |
+| Accumulation ON | 条件groupへRaw保存 | 角度・条件groupへRaw保存 | Recording groupへRaw保存 |
+| プレビュー | 撮影前に停止し、終了後に再開 | 移動中は再開し、撮影直前に停止 | 撮影中は停止し、終了後に再開 |
+| 補助ファイル | なし | `scan.json` | `recording.json`, `frames.csv` |
+| TIFFメタデータ | 露光時間、ゲイン、時刻、ビット深度など | 通常情報に加えて `scan_id` と目標角度など | Raw条件、時刻、読戻し値など |

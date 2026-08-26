@@ -20,7 +20,7 @@ class AppSettings:
         try:
             with cls.FILE_PATH.open("w", encoding="utf-8") as f:
                 json.dump(settings.to_dict(), f, ensure_ascii=False, indent=4)
-        except Exception:
+        except (OSError, TypeError, ValueError):
             logger.exception("設定の保存に失敗しました")
 
     @classmethod
@@ -31,7 +31,9 @@ class AppSettings:
 
         try:
             with cls.FILE_PATH.open(encoding="utf-8") as f:
-                return AppSettingsData.from_dict(json.load(f))
-        except Exception:
+                raw_settings = json.load(f)
+        except (OSError, UnicodeError, json.JSONDecodeError):
             logger.exception("設定の読み込みに失敗しました")
             return AppSettingsData()
+
+        return AppSettingsData.from_dict(raw_settings)

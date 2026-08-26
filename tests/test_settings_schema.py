@@ -102,3 +102,84 @@ def test_present_but_invalid_recording_capture_section_raises() -> None:
 
     with pytest.raises(ValueError, match="rate_mode"):
         AppSettingsData.from_dict(raw_settings)
+
+
+def test_acquisition_settings_roundtrip_and_trigger_conversion() -> None:
+    """共通Acquisition設定を読み込み、保存後も値とTrigger変換を保つ。"""
+    raw_settings = {
+        "acquisition": {
+            "mode": "hardware",
+            "hardware_source": "Line3",
+            "hardware_activation": "FallingEdge",
+            "hardware_delay_us": 12.5,
+            "fps_limit": 24.0,
+            "accumulation_enabled": True,
+            "accumulation_frames": 4,
+            "trigger_wait_timeout_sec": 2.5,
+        }
+    }
+
+    settings = AppSettingsData.from_dict(raw_settings)
+
+    assert settings.schema_version == 1
+    assert settings.acquisition.mode == "hardware"
+    assert settings.acquisition.hardware_source == "Line3"
+    assert settings.acquisition.hardware_activation == "FallingEdge"
+    assert settings.acquisition.hardware_delay_us == 12.5
+    assert settings.acquisition.fps_limit == 24.0
+    assert settings.acquisition.accumulation_enabled is True
+    assert settings.acquisition.accumulation_frames == 4
+    assert settings.acquisition.trigger_wait_timeout_sec == 2.5
+
+    saved = settings.to_dict()
+    restored = AppSettingsData.from_dict(saved)
+    assert restored.acquisition == settings.acquisition
+    trigger_settings = restored.acquisition.to_trigger_settings()
+    assert trigger_settings.mode == "hardware"
+    assert trigger_settings.hardware_source == "Line3"
+    assert trigger_settings.hardware_activation == "FallingEdge"
+    assert trigger_settings.hardware_delay_us == 12.5
+    assert trigger_settings.fps_limit == 24.0
+
+
+def test_missing_acquisition_section_uses_defaults() -> None:
+    """既存settingsにacquisition sectionがなくても既定値で読み込める。"""
+    settings = AppSettingsData.from_dict({"schema_version": 1})
+
+    assert settings.acquisition.mode == "software"
+    assert settings.acquisition.hardware_source == "Line1"
+    assert settings.acquisition.hardware_activation == "RisingEdge"
+    assert settings.acquisition.hardware_delay_us == 0.0
+    assert settings.acquisition.fps_limit is None
+    assert settings.acquisition.accumulation_enabled is False
+    assert settings.acquisition.accumulation_frames == 1
+    assert settings.acquisition.trigger_wait_timeout_sec == 0.0
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("mode", "burst", "mode"),
+        ("hardware_source", "Line2", "hardware_source"),
+        ("hardware_activation", "Both", "hardware_activation"),
+        ("hardware_delay_us", -1.0, "hardware_delay_us"),
+        ("fps_limit", 0.0, "fps_limit"),
+        ("accumulation_frames", 0, "accumulation_frames"),
+        ("accumulation_frames", 1.5, "accumulation_frames"),
+        ("trigger_wait_timeout_sec", -1.0, "trigger_wait_timeout_sec"),
+    ],
+)
+def test_present_but_invalid_acquisition_setting_raises(
+    field: str,
+    value: object,
+    match: str,
+) -> None:
+    """存在するacquisitionの不正値を既定値へ黙って置換しない。"""
+    with pytest.raises(ValueError, match=match):
+        AppSettingsData.from_dict({"acquisition": {field: value}})
+
+
+def test_present_but_non_object_acquisition_section_raises() -> None:
+    """acquisition sectionがobject以外の場合は明示的に失敗する。"""
+    with pytest.raises(ValueError, match="acquisition"):
+        AppSettingsData.from_dict({"acquisition": None})

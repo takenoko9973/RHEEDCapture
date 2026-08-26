@@ -9,10 +9,12 @@ from typing import TYPE_CHECKING, Never, Protocol, Self
 from zoneinfo import ZoneInfo
 
 from rheed_capture.application.ports.camera import (
+    DEFAULT_TRIGGER_SETTINGS,
     Camera,
     CameraError,
     FrameReadback,
-    SoftwareTriggerSession,
+    TriggerCaptureSession,
+    TriggerSettings,
 )
 from rheed_capture.domain.capture_defaults import (
     DEFAULT_CAPTURE_RETRY_INTERVAL_SEC,
@@ -21,10 +23,12 @@ from rheed_capture.domain.capture_defaults import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from types import TracebackType
 
     import numpy as np
 
+    from rheed_capture.application.capture.cancellation import CancellationToken
     from rheed_capture.domain.capture_condition import CaptureCondition
 
 logger = logging.getLogger(__name__)
@@ -66,6 +70,17 @@ class FrameCapture(Protocol):
         """指定条件で1フレームを取得する。"""
         ...
 
+    def capture_group(
+        self,
+        condition: CaptureCondition,
+        *,
+        frame_count: int,
+        hardware_wait_timeout_sec: float,
+        cancellation_token: CancellationToken,
+    ) -> Iterator[CapturedFrame]:
+        """同一条件のRawフレーム群を逐次取得する。"""
+        ...
+
 
 class CaptureConditionApplier:
     """露光時間とゲインをカメラへ適用する。"""
@@ -87,11 +102,13 @@ class FrameGrabber:
         self,
         camera: Camera,
         *,
+        trigger_settings: TriggerSettings = DEFAULT_TRIGGER_SETTINGS,
         max_retries: int = DEFAULT_CAPTURE_RETRY_LIMIT,
         retry_interval_sec: float = DEFAULT_CAPTURE_RETRY_INTERVAL_SEC,
     ) -> None:
         """カメラとリトライ条件を保持する。"""
         self.camera = camera
+        self.trigger_settings = trigger_settings
         self.max_retries = max_retries
         self.retry_interval_sec = retry_interval_sec
 
@@ -106,18 +123,24 @@ class FrameGrabber:
 
     def _execute_single_grab(
         self,
-        session: SoftwareTriggerSession,
+        session: TriggerCaptureSession,
         timeout_ms: int,
     ) -> GrabbedFrame:
         """1回のdeadline内でready待機、trigger発行、frame取得を実行する。"""
         deadline = time.perf_counter() + timeout_ms / 1000.0
 
-        session.wait_until_ready(self._remaining_timeout_ms(deadline))
-        # PC時刻はカメラへtrigger命令を渡す直前を撮影時刻として記録する。
-        trigger_issued_at = datetime.now(JST)
-        trigger_issued_monotonic_sec = time.perf_counter()
-        session.execute_trigger()
-        camera_frame = session.retrieve_frame(self._remaining_timeout_ms(deadline))
+        if self.trigger_settings.mode == "software":
+            session.wait_until_ready(self._remaining_timeout_ms(deadline))
+            # PC時刻はカメラへtrigger命令を渡す直前を撮影時刻として記録する。
+            trigger_issued_at = datetime.now(JST)
+            trigger_issued_monotonic_sec = time.perf_counter()
+            session.execute_software_trigger()
+            camera_frame = session.retrieve_frame(self._remaining_timeout_ms(deadline))
+        else:
+            camera_frame = session.retrieve_frame(self._remaining_timeout_ms(deadline))
+            # Hardware trigger時はRaw到着時をhost側の取得時刻として記録する。
+            trigger_issued_at = datetime.now(JST)
+            trigger_issued_monotonic_sec = time.perf_counter()
 
         return GrabbedFrame(
             image=camera_frame.image,
@@ -154,7 +177,7 @@ class FrameGrabberSession:
         """FrameGrabberとカメラ側の予定フレーム数を保持する。"""
         self.frame_grabber = frame_grabber
         self.expected_frames = expected_frames
-        self._camera_session: SoftwareTriggerSession | None = None
+        self._camera_session: TriggerCaptureSession | None = None
 
     def __enter__(self) -> Self:
         """取得時にカメラSessionを開始するApplication Sessionを返す。"""
@@ -207,6 +230,59 @@ class FrameGrabberSession:
         msg = "unreachable"
         raise AssertionError(msg)
 
+    def grab_hardware(
+        self,
+        *,
+        wait_timeout_sec: float,
+        cancellation_token: CancellationToken,
+    ) -> GrabbedFrame:
+        """Hardware triggerの1 Rawを再試行せず、キャンセル可能な短い待機で取得する。"""
+        if self._camera_session is None:
+            self._open_camera_session()
+        session = self._require_camera_session()
+
+        deadline = (
+            None
+            if wait_timeout_sec == 0
+            else time.perf_counter() + wait_timeout_sec
+        )
+
+        while True:
+            cancellation_token.raise_if_cancelled()
+            timeout_ms = self._hardware_poll_timeout_ms(deadline)
+            try:
+                camera_frame = session.retrieve_frame(timeout_ms)
+            except TimeoutError as e:
+                cancellation_token.raise_if_cancelled()
+                if deadline is not None and time.perf_counter() >= deadline:
+                    msg = "Hardware trigger待機が設定時間を超過しました。"
+                    raise TimeoutError(msg) from e
+                continue
+
+            # Hardware triggerではRaw到着時をhost側の取得時刻として記録する。
+            return GrabbedFrame(
+                image=camera_frame.image,
+                readback=camera_frame.readback,
+                timing=CaptureTiming(
+                    trigger_issued_at=datetime.now(JST),
+                    trigger_issued_monotonic_sec=time.perf_counter(),
+                ),
+            )
+
+    @staticmethod
+    def _hardware_poll_timeout_ms(deadline: float | None) -> int:
+        """Stop要求を待機中にも確認できるよう、SDK待機時間を短く制限する。"""
+        poll_timeout_ms = 100
+        if deadline is None:
+            return poll_timeout_ms
+
+        remaining_sec = deadline - time.perf_counter()
+        if remaining_sec <= 0:
+            msg = "Hardware trigger待機が設定時間を超過しました。"
+            raise TimeoutError(msg)
+
+        return min(poll_timeout_ms, math.ceil(remaining_sec * 1000.0))
+
     def close(self) -> None:
         """現在のカメラセッションがあれば閉じる。"""
         session = self._camera_session
@@ -215,15 +291,16 @@ class FrameGrabberSession:
             session.close()
 
     def _open_camera_session(self) -> None:
-        """Camera Portから新しいソフトトリガーSessionを開始する。"""
-        self._camera_session = self.frame_grabber.camera.start_software_trigger_session(
+        """Camera Portから現在設定のTrigger Sessionを開始する。"""
+        self._camera_session = self.frame_grabber.camera.start_trigger_session(
+            settings=self.frame_grabber.trigger_settings,
             expected_frames=self.expected_frames,
         )
 
-    def _require_camera_session(self) -> SoftwareTriggerSession:
+    def _require_camera_session(self) -> TriggerCaptureSession:
         """開始済みのカメラセッションを返す。"""
         if self._camera_session is None:
-            msg = "ソフトトリガーセッションが開始されていません。"
+            msg = "Trigger Sessionが開始されていません。"
             raise CameraError(msg)
 
         return self._camera_session
@@ -236,6 +313,7 @@ class FrameCapturer:
         self,
         camera: Camera,
         *,
+        trigger_settings: TriggerSettings = DEFAULT_TRIGGER_SETTINGS,
         max_retries: int = DEFAULT_CAPTURE_RETRY_LIMIT,
         retry_interval_sec: float = DEFAULT_CAPTURE_RETRY_INTERVAL_SEC,
     ) -> None:
@@ -243,6 +321,7 @@ class FrameCapturer:
         self.condition_applier = CaptureConditionApplier(camera)
         self.frame_grabber = FrameGrabber(
             camera,
+            trigger_settings=trigger_settings,
             max_retries=max_retries,
             retry_interval_sec=retry_interval_sec,
         )
@@ -259,3 +338,37 @@ class FrameCapturer:
             readback=grabbed.readback,
             timing=grabbed.timing,
         )
+
+    def capture_group(
+        self,
+        condition: CaptureCondition,
+        *,
+        frame_count: int,
+        hardware_wait_timeout_sec: float,
+        cancellation_token: CancellationToken,
+    ) -> Iterator[CapturedFrame]:
+        """条件を1回だけ適用し、同じTrigger SessionからRawを逐次取得する。"""
+        if frame_count <= 0:
+            msg = "Raw取得数は1以上にしてください。"
+            raise ValueError(msg)
+
+        self.condition_applier.apply(condition)
+        timeout_ms = int(condition.exposure_ms + DEFAULT_CAPTURE_TIMEOUT_MARGIN_MS)
+        with self.frame_grabber.start_session(expected_frames=frame_count) as session:
+            for _ in range(frame_count):
+                cancellation_token.raise_if_cancelled()
+                if self.frame_grabber.trigger_settings.mode == "hardware":
+                    grabbed = session.grab_hardware(
+                        wait_timeout_sec=hardware_wait_timeout_sec,
+                        cancellation_token=cancellation_token,
+                    )
+                else:
+                    # Software triggerのdeadlineと再試行規則は単一撮影時と同じにする。
+                    grabbed = session.grab(timeout_ms)
+
+                yield CapturedFrame(
+                    image=grabbed.image,
+                    condition=condition,
+                    readback=grabbed.readback,
+                    timing=grabbed.timing,
+                )

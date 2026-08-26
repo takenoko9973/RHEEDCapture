@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.application.ports.camera import CameraFrame, FrameReadback
+from rheed_capture.application.ports.camera import CameraFrame, FrameReadback, TriggerSettings
 from rheed_capture.domain.angle_scan.plan import (
     angle_to_position_units,
     build_angle_list,
@@ -14,6 +14,7 @@ from rheed_capture.domain.angle_scan.plan import (
 )
 from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
+from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.infrastructure.motor.defaults import DEFAULT_POSITION_UNITS_PER_DEG
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.workers.angle_scan_service import (
@@ -24,11 +25,16 @@ from rheed_capture.presentation.qt.workers.angle_scan_service import (
 
 @pytest.fixture
 def mock_camera() -> MagicMock:
-    """1フレーム用ソフトトリガーSessionを作るCamera mockを返す。"""
+    """1フレーム用Trigger Sessionを作るCamera mockを返す。"""
     camera = MagicMock(spec=CameraDevice)
 
-    def start_session(*, expected_frames: int | None) -> MagicMock:
+    def start_session(
+        *,
+        settings: TriggerSettings,
+        expected_frames: int | None,
+    ) -> MagicMock:
         """保存可能なCameraFrameを返すSessionを作る。"""
+        assert settings.mode == "software"
         assert expected_frames == 1
         session = MagicMock()
         session.retrieve_frame.return_value = CameraFrame(
@@ -43,7 +49,7 @@ def mock_camera() -> MagicMock:
         )
         return session
 
-    camera.start_software_trigger_session.side_effect = start_session
+    camera.start_trigger_session.side_effect = start_session
     return camera
 
 
@@ -93,7 +99,9 @@ def test_angle_scan_service_moves_by_delta_and_saves(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
+    service = AngleScanService(
+        mock_camera, storage, motor, capture_conditions(), settings, AcquisitionSettings()
+    )
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -112,7 +120,7 @@ def test_angle_scan_service_moves_by_delta_and_saves(
         4.0,
         4.0,
     ]
-    assert mock_camera.start_software_trigger_session.call_count == 3
+    assert mock_camera.start_trigger_session.call_count == 3
     assert (
         storage.get_current_experiment_dir()
         / "angle_scan_001"
@@ -135,7 +143,9 @@ def test_angle_scan_service_saves_positive_interval_for_negative_scan(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
+    service = AngleScanService(
+        mock_camera, storage, motor, capture_conditions(), settings, AcquisitionSettings()
+    )
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -183,7 +193,9 @@ def test_angle_scan_service_scans_opposite_direction_after_returning_to_zero(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
+    service = AngleScanService(
+        mock_camera, storage, motor, capture_conditions(), settings, AcquisitionSettings()
+    )
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -206,7 +218,7 @@ def test_angle_scan_service_scans_opposite_direction_after_returning_to_zero(
         device_angle_to_position_units(-0.5),
         device_angle_to_position_units(-1.0) - device_angle_to_position_units(-0.5),
     ]
-    assert mock_camera.start_software_trigger_session.call_count == 5
+    assert mock_camera.start_trigger_session.call_count == 5
 
 
 def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
@@ -223,7 +235,9 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
         position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         motor_speed_rpm=4.0,
     )
-    service = AngleScanService(mock_camera, storage, motor, capture_conditions(), settings)
+    service = AngleScanService(
+        mock_camera, storage, motor, capture_conditions(), settings, AcquisitionSettings()
+    )
     acknowledge_preview_pause(service)
 
     with qtbot.waitSignal(service.scan_finished, timeout=5000) as blocker:
@@ -235,7 +249,7 @@ def test_angle_scan_service_does_not_move_at_zero_degree_capture_point(
         device_angle_to_position_units(0.5),
         -device_angle_to_position_units(0.5),
     ]
-    assert mock_camera.start_software_trigger_session.call_count == 2
+    assert mock_camera.start_trigger_session.call_count == 2
 
 
 @pytest.mark.parametrize(
@@ -263,6 +277,7 @@ def test_angle_scan_service_rejects_invalid_interval(
                 return_to_start_after_scan=False,
                 position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             ),
+            AcquisitionSettings(),
         )
 
 
@@ -283,6 +298,7 @@ def test_angle_scan_service_rejects_out_of_range_range(
                 return_to_start_after_scan=False,
                 position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             ),
+            AcquisitionSettings(),
         )
 
 
@@ -303,6 +319,7 @@ def test_angle_scan_service_rejects_interval_larger_than_range(
                 return_to_start_after_scan=False,
                 position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             ),
+            AcquisitionSettings(),
         )
 
 
@@ -349,4 +366,5 @@ def test_angle_scan_service_rejects_invalid_position_units_per_deg(
                 return_to_start_after_scan=False,
                 position_units_per_deg=0.0,
             ),
+            AcquisitionSettings(),
         )

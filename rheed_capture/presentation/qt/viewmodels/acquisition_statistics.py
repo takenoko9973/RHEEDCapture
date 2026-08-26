@@ -6,18 +6,32 @@ DECIMAL_BYTES_PER_MEGABYTE = 1_000_000
 
 
 def format_preview_statistics(statistics: AcquisitionStatistics) -> str:
-    """PreviewのCurrent FPSと任意のPayloadを整形する。"""
-    current_fps = _format_fps(statistics.current_fps)
-    text = f"Preview {current_fps} fps"
+    """PreviewのRaw count、Raw FPS、積算進捗、待機状態を整形する。"""
+    text = _format_acquisition_status("Preview", statistics)
     return _append_payload(text, statistics.payload_bytes_per_second)
 
 
 def format_recording_statistics(statistics: AcquisitionStatistics) -> str:
-    """RecordingのCurrent、Average FPSと任意のPayloadを整形する。"""
-    current_fps = _format_fps(statistics.current_fps)
-    average_fps = _format_fps(statistics.average_fps)
-    text = f"Recording {current_fps} fps | Avg {average_fps} fps"
+    """RecordingのRaw count、Raw FPS、積算進捗、待機状態を整形する。"""
+    text = _format_acquisition_status("Recording", statistics)
     return _append_payload(text, statistics.payload_bytes_per_second)
+
+
+def _format_acquisition_status(
+    label: str,
+    statistics: AcquisitionStatistics,
+) -> str:
+    """取得種別共通のRaw単位ステータスを整形する。"""
+    current_fps = _format_fps(statistics.current_fps)
+    text = (
+        f"{label} | Raw count {statistics.frame_count}"
+        f" | Raw FPS {current_fps}"
+        f" | Accumulation {statistics.accumulation_progress}"
+        f"/{statistics.accumulation_target}"
+    )
+    if statistics.waiting_for_trigger:
+        text += " | Waiting for trigger"
+    return text
 
 
 def _format_fps(value: float | None) -> str:

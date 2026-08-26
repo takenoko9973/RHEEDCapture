@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from zoneinfo import ZoneInfo
 
 from rheed_capture.data_formats.storage_naming import (
+    RECORDING_ACCUMULATION_GROUP_DIR_PATTERN,
+    RECORDING_ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
     RECORDING_TIFF_COMPRESSION,
     RECORDING_TIFF_FILENAME_PATTERN,
 )
@@ -52,6 +54,7 @@ class RecordingSession:
         rate_mode: str,
         target_interval_ms: float,
         duration_ms: float | None,
+        accumulation_frames: int = 1,
     ) -> None:
         """Recordingのメタ情報を保持し、recording.jsonとframes.csvを初期化する。"""
         self.session_dir = session_dir
@@ -64,6 +67,7 @@ class RecordingSession:
         self.rate_mode = rate_mode
         self.target_interval_ms = target_interval_ms
         self.duration_ms = duration_ms
+        self.accumulation_frames = accumulation_frames
         self.created_at = datetime.now(JST).isoformat()
         self._saved_frames = 0
         self._lock = threading.Lock()
@@ -98,6 +102,17 @@ class RecordingSession:
         )
         return self.session_dir / filename
 
+    def build_accumulation_frame_path(self, group_index: int, raw_index: int) -> Path:
+        """蓄積Recordingのgroup内Raw保存先を作成する。"""
+        group_dir = self.session_dir / RECORDING_ACCUMULATION_GROUP_DIR_PATTERN.format(
+            group_index=group_index
+        )
+        group_dir.mkdir(parents=True, exist_ok=True)
+        filename = RECORDING_ACCUMULATION_RAW_TIFF_FILENAME_PATTERN.format(
+            raw_index=raw_index
+        )
+        return group_dir / filename
+
     def append_saved_frame(self, row: RecordingFrameRow, save_elapsed_ms: float) -> int:
         """保存完了フレームをframes.csvへ追記し、保存枚数を返す。"""
         with self._lock:
@@ -105,7 +120,11 @@ class RecordingSession:
             self._csv_writer.writerow(
                 [
                     row.frame_index,
-                    f"{row.target_elapsed_ms:.3f}",
+                    (
+                        ""
+                        if row.target_elapsed_ms is None
+                        else f"{row.target_elapsed_ms:.3f}"
+                    ),
                     f"{row.actual_elapsed_ms:.3f}",
                     row.timestamp,
                     f"{row.camera_exposure_ms:g}",
@@ -173,11 +192,7 @@ class RecordingSession:
                 "target_interval_ms": self.target_interval_ms,
                 "duration_ms": self.duration_ms,
             },
-            "storage": {
-                "folder_name": self.session_dir.name,
-                "filename_pattern": RECORDING_TIFF_FILENAME_PATTERN,
-                "tiff_compression": RECORDING_TIFF_COMPRESSION,
-            },
+            "storage": self._build_storage_document(),
             "result": None,
         }
         if status != "running":
@@ -187,3 +202,19 @@ class RecordingSession:
             document["error_message"] = error_message
 
         return document
+
+    def _build_storage_document(self) -> dict[str, str]:
+        """OFF互換または蓄積Raw用の保存形式を記録する。"""
+        if self.accumulation_frames == 1:
+            # OFFは既存recording.jsonのキー、値、書出し順を維持する。
+            return {
+                "folder_name": self.session_dir.name,
+                "filename_pattern": RECORDING_TIFF_FILENAME_PATTERN,
+                "tiff_compression": RECORDING_TIFF_COMPRESSION,
+            }
+        return {
+            "folder_name": self.session_dir.name,
+            "group_directory_format": RECORDING_ACCUMULATION_GROUP_DIR_PATTERN,
+            "raw_filename_format": RECORDING_ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
+            "tiff_compression": RECORDING_TIFF_COMPRESSION,
+        }

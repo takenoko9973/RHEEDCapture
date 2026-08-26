@@ -225,6 +225,7 @@ class ExperimentStorage:
         rate_mode: str,
         target_interval_ms: float,
         duration_ms: float | None,
+        accumulation_frames: int = 1,
     ) -> RecordingSession:
         """次の `record-N` を確定し、RecordingSessionを生成する。"""
         # RecordingはSequence/Angle Scanと独立した番号系列で保存する。
@@ -245,6 +246,7 @@ class ExperimentStorage:
             rate_mode=rate_mode,
             target_interval_ms=target_interval_ms,
             duration_ms=duration_ms,
+            accumulation_frames=accumulation_frames,
         )
         logger.info("新規録画作成: %s", recording_dir)
         return self._current_recording_session

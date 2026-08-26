@@ -31,6 +31,9 @@ class _HookRecorder:
                 f"recording-enabled:{value}"
             ),
             set_motor_settings_enabled=lambda value: self.events.append(f"motor-enabled:{value}"),
+            set_acquisition_settings_enabled=lambda value: self.events.append(
+                f"acquisition-enabled:{value}"
+            ),
             set_preview_controls_enabled=lambda value: self.events.append(
                 f"preview-controls:{value}"
             ),
@@ -50,7 +53,7 @@ def test_begin_sequence_pauses_preview_after_entering_capture_state() -> None:
     coordinator.begin_sequence(lambda: recorder.events.append("arm-start"))
 
     assert coordinator.active_mode == "sequence"
-    assert recorder.events[:10] == [
+    assert recorder.events[:11] == [
         "seq-capturing:True",
         "angle-capturing:False",
         "recording-capturing:False",
@@ -58,11 +61,12 @@ def test_begin_sequence_pauses_preview_after_entering_capture_state() -> None:
         "angle-enabled:False",
         "recording-enabled:False",
         "motor-enabled:False",
+        "acquisition-enabled:False",
         "preview-controls:False",
         "timer-stop",
         "arm-start",
     ]
-    assert recorder.events[10] == "preview-pause"
+    assert recorder.events[11] == "preview-pause"
 
 
 def test_begin_recording_pauses_preview_after_entering_capture_state() -> None:
@@ -73,7 +77,7 @@ def test_begin_recording_pauses_preview_after_entering_capture_state() -> None:
     coordinator.begin_recording(lambda: recorder.events.append("arm-recording"))
 
     assert coordinator.active_mode == "recording"
-    assert recorder.events[:10] == [
+    assert recorder.events[:11] == [
         "seq-capturing:False",
         "angle-capturing:False",
         "recording-capturing:True",
@@ -81,11 +85,12 @@ def test_begin_recording_pauses_preview_after_entering_capture_state() -> None:
         "angle-enabled:False",
         "recording-enabled:True",
         "motor-enabled:False",
+        "acquisition-enabled:False",
         "preview-controls:False",
         "timer-stop",
         "arm-recording",
     ]
-    assert recorder.events[10] == "preview-pause"
+    assert recorder.events[11] == "preview-pause"
 
 
 def test_leave_returns_preview_and_ui_to_idle_state() -> None:
@@ -106,6 +111,7 @@ def test_leave_returns_preview_and_ui_to_idle_state() -> None:
         "angle-enabled:True",
         "recording-enabled:True",
         "motor-enabled:True",
+        "acquisition-enabled:True",
         "preview-controls:True",
         "preview-resume",
         "storage-refresh",

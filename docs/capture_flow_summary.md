@@ -1,9 +1,38 @@
 # Sequence・Angle Scan・Recordingの概要
 
-本アプリの通常シーケンス撮影は、プレビューを止めた状態で露光時間とゲインの全組み合わせを順番に撮影し、条件ごとに1フレーム用ソフトトリガーSessionで撮影して、各画像をその日の実験フォルダ内の `image_nnn` フォルダへTIFFとして保存する流れである。
+Preview、Sequence、Angle Scan、Recordingは、共通Acquisition設定から作ったTrigger Sessionを使用する。
+取得モードは `Software` と `Hardware` であり、Free Runは使用しない。
 
-回転撮影は、現在のモーター位置を相対0degとして扱い、指定した角度範囲・間隔・方向に従ってモーターを移動しながら、各角度で通常シーケンスと同じ露光時間・ゲインの全組み合わせを撮影する流れである。モーター移動中はプレビューを再開して動きを確認できるようにし、実際に撮影する直前にはプレビューを停止してカメラを撮影処理へ渡す。
+既定値は `Software`、Hardware Source `Line1`、Activation `RisingEdge`、Trigger Delay `0 us`、FPS Limit `Unlimited`、Accumulation `Off`（`N=1`）、Trigger Wait Timeout `0 s`（無期限）である。
+Recording、Sequence、Angle Scanの実行中は共通Acquisition設定を変更できない。
+Preview中の設定変更は、現在のSessionを閉じて現在値で再armすることで反映する。
 
-Recordingは固定した露光時間とゲインで1つのソフトトリガーSessionを正常時は全フレームに再利用し、PCの元の予定時刻ごとに1枚ずつ撮影する。予定より遅れた場合もframe indexを飛ばさず、次の元の予定時刻へ進む。取得失敗時だけSessionを作り直して同じフレームを再試行する。
+Softwareでは、`TriggerReady` を待ってSoftware Triggerを発行し、1枚のRaw frameを取得する。
+HardwareではSoftware Triggerを発行せず、外部FrameStartに対応するRaw frameを待つ。
+Hardware待機中の無信号はPreviewのエラーにせず、最後に完成した画像を表示したままにする。
+HardwareのTrigger Source、Activation、Delayが利用不能または設定拒否になった場合は、別の値へ変更せずエラーにする。
 
-すべての保存撮影は、`TriggerReady` 待機後にソフトトリガーを1回発行し、`GrabStrategy_OneByOne` で1枚を受け取る。保存画像はプレビュー表示用のCLAHEやグリッドを反映しないRaw相当の16bit TIFFである。保存時はアプリが要求した露光時間・ゲインと、フレームから読戻した露光時間・Gainを区別する。TIFFの `timestamp` はtrigger発行直前のPC時刻を表し、画像取得開始時のcamera timestamp tickと周波数も保存する。実機は必須Chunk、エミュレータは設定nodeと仮想timestampから読戻し値を作る。撮影エラー時は異常Sessionを閉じて最大3回まで再試行し、上限に達した場合は撮影全体を中断して画面にエラーを通知する。
+Sequenceは、露光時間とゲインの全組み合わせを順番に処理する。
+Angle Scanは、モーターを角度計画に従って移動し、移動後の待機を終えてから、各角度で同じ条件処理を行う。
+Recordingは固定した露光時間とゲインで連続取得する。
+Software RecordingはFPSまたはIntervalの予定時刻に従い、要求rateが共通FPS Limitを超える場合は開始前にエラーにする。
+Hardware RecordingはFPSとIntervalを使わず、最初のRaw frameを共通Trigger Wait Timeoutで待つ。
+最初の正常Raw到着時をDurationの `t=0` とし、その後はtrigger停止時のtimeoutよりDuration終了を優先する。
+
+AccumulationがOFFの場合、既存の単一TIFF保存形式を維持する。
+ONの場合は、同一条件のRaw `N` 枚を1 groupとして扱い、各Rawを取得直後に保存する。
+積算は十分広い整数型で画素ごとに行い、完成時に `65535` へclipした画像だけをPreviewへ通知する。
+積算画像は保存せず、group途中で停止またはエラーになっても既に保存したRawを削除しない。
+
+SequenceのON保存先は `group_{group_index:04d}_expo{exposure_ms:g}_gain{gain:g}/raw_{raw_index:04d}.tiff` である。
+Angle ScanのON保存先は角度ディレクトリ配下の `group_{condition_index:04d}_exp{exposure_ms:g}_gain{gain:g}/raw_{raw_index:04d}.tiff` である。
+RecordingのON保存先は `record-N/group_{group_index:06d}/raw_{raw_index:04d}.tiff` である。
+RecordingではON時の `frames.csv` にgroupからの相対POSIXパスを記録し、`recording.json` の `storage` にgroupとRawの形式を記録する。
+
+すべての保存Rawはプレビュー用CLAHEやグリッドを反映しない、コンバータ由来の16bit Raw相当TIFFである。
+Timestamp Chunkが利用可能な場合はcamera timestampを使い、欠落または不可読の場合だけhost timestampへfallbackする。
+Softwareの `timestamp` はSoftware Trigger発行直前、Hardwareの `timestamp` はRaw到着時点のPC時刻を表す。
+
+PreviewとRecordingのstatus bar表示はRaw frame単位で、Raw count、Raw FPS、Accumulation progress `x/N` を示す。
+HardwareのRaw待機中は `Waiting for trigger` を表示する。
+SequenceとAngle Scanでは取得統計を表示しない。

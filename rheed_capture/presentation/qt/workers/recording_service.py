@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
@@ -16,6 +17,7 @@ from rheed_capture.application.capture.frame_capturer import (
 from rheed_capture.application.capture.recording import (
     RecordingCapture,
     RecordingHooks,
+    validate_recording_settings,
 )
 from rheed_capture.application.capture.recording import (
     RecordingSettings as ApplicationRecordingSettings,
@@ -25,6 +27,7 @@ from rheed_capture.domain.acquisition_statistics import (
     AcquisitionStatistics,
     AcquisitionStatisticsMeter,
 )
+from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.infrastructure.storage.async_tiff_save_worker import AsyncTiffSaveWorker
 from rheed_capture.presentation.qt.workers.capture_worker import CaptureWorker
 
@@ -49,6 +52,7 @@ class RecordingService(CaptureWorker):
         camera_device: CameraDevice,
         storage: ExperimentStorage,
         settings: RecordingSettings,
+        acquisition_settings: AcquisitionSettings | None = None,
         parent: QObject | None = None,
     ) -> None:
         """カメラ、Storage、撮影条件を保持してworkerを初期化する。"""
@@ -56,41 +60,75 @@ class RecordingService(CaptureWorker):
         self.storage = storage
         self.settings = settings
         self.max_retries = DEFAULT_CAPTURE_RETRY_LIMIT
+        # UIの後続変更が進行中Recordingのtrigger設定を変えないsnapshotにする。
+        self._acquisition_settings = acquisition_settings or AcquisitionSettings()
+        self._trigger_settings = self._acquisition_settings.to_trigger_settings()
+        self._accumulation_frames = (
+            self._acquisition_settings.accumulation_frames
+            if self._acquisition_settings.accumulation_enabled
+            else 1
+        )
+        self._trigger_wait_timeout_sec = (
+            self._acquisition_settings.trigger_wait_timeout_sec
+        )
         self._statistics_lock = threading.Lock()
         self._statistics_meter = AcquisitionStatisticsMeter()
         self._statistics_active = False
+        self._accumulation_progress = 0
+        self._waiting_for_trigger = False
         super().__init__(self._run_recording_capture, parent=parent)
         self.finished.connect(self.recording_finished)
 
     def _run_recording_capture(self, cancellation_token: CancellationToken) -> str:
         """RecordingSessionを作成して録画Use Caseを実行する。"""
         logger.info("録画を開始します...")
+        self._validate_start_conditions()
         self._reset_statistics(active=True, started_at=time.perf_counter())
 
         try:
             # Recordingのsample名は、ユーザーが選択した保存rootディレクトリ名を使う。
-            session = self.storage.start_recording_session(
-                sample_name=self.storage.root_dir.name,
-                exposure_ms=self.settings.exposure_ms,
-                gain=self.settings.gain,
-                rate_mode=self.settings.rate_mode,
-                target_interval_ms=self.settings.target_interval_ms,
-                duration_ms=self.settings.duration_ms,
-            )
+            if self._accumulation_frames > 1:
+                session = self.storage.start_recording_session(
+                    sample_name=self.storage.root_dir.name,
+                    exposure_ms=self.settings.exposure_ms,
+                    gain=self.settings.gain,
+                    rate_mode=self.settings.rate_mode,
+                    target_interval_ms=self.settings.target_interval_ms,
+                    duration_ms=self.settings.duration_ms,
+                    accumulation_frames=self._accumulation_frames,
+                )
+            else:
+                session = self.storage.start_recording_session(
+                    sample_name=self.storage.root_dir.name,
+                    exposure_ms=self.settings.exposure_ms,
+                    gain=self.settings.gain,
+                    rate_mode=self.settings.rate_mode,
+                    target_interval_ms=self.settings.target_interval_ms,
+                    duration_ms=self.settings.duration_ms,
+                )
             capture = RecordingCapture(
                 CaptureConditionApplier(self.camera),
-                FrameGrabber(self.camera, max_retries=self.max_retries),
+                FrameGrabber(
+                    self.camera,
+                    trigger_settings=self._trigger_settings,
+                    max_retries=self.max_retries,
+                ),
                 session,
                 self.settings,
                 save_worker=AsyncTiffSaveWorker(
                     max_queue_size=RECORDING_SAVE_QUEUE_MAX_SIZE
                 ),
+                accumulation_frames=self._accumulation_frames,
+                trigger_wait_timeout_sec=self._trigger_wait_timeout_sec,
             )
             capture.run(
                 cancellation_token,
                 hooks=RecordingHooks(
                     on_saved_frames_changed=self.saved_frames_updated.emit,
                     on_frame_captured=self._on_frame_captured,
+                    on_preview_frame_completed=self.frame_captured.emit,
+                    on_accumulation_progress=self._on_accumulation_progress,
+                    on_waiting_for_trigger_changed=self._on_waiting_for_trigger_changed,
                 ),
             )
         finally:
@@ -104,12 +142,18 @@ class RecordingService(CaptureWorker):
         with self._statistics_lock:
             if not self._statistics_active:
                 return None
-            return self._statistics_meter.snapshot(
+            statistics = self._statistics_meter.snapshot(
                 time.perf_counter(),
                 include_average=True,
             )
+            return replace(
+                statistics,
+                accumulation_progress=self._accumulation_progress,
+                accumulation_target=self._accumulation_frames,
+                waiting_for_trigger=self._waiting_for_trigger,
+            )
 
-    def _on_frame_captured(self, frame: GrabbedFrame) -> None:
+    def _on_frame_captured(self, _frame: GrabbedFrame) -> None:
         """正常取得フレームを統計へ記録してPreview表示へ通知する。"""
         sample = self.camera.take_acquisition_sample()
         if sample is None:
@@ -123,8 +167,31 @@ class RecordingService(CaptureWorker):
         with self._statistics_lock:
             self._statistics_meter.record_frame(timestamp, payload_bytes)
 
-        # Previewは表示専用なので、保存用データとは別に画像だけを通知する。
-        self.frame_captured.emit(frame.image)
+    def _on_accumulation_progress(self, progress: int, target: int) -> None:
+        """Raw受信済みのgroup内進捗を統計表示へ反映する。"""
+        with self._statistics_lock:
+            self._accumulation_progress = progress
+            self._accumulation_frames = target
+
+    def _on_waiting_for_trigger_changed(self, waiting: bool) -> None:
+        """Hardware trigger待機中だけstatus表示を切り替える。"""
+        with self._statistics_lock:
+            self._waiting_for_trigger = waiting
+
+    def _validate_start_conditions(self) -> None:
+        """Session作成前にSoftware recording固有の条件を拒否する。"""
+        if self._trigger_settings.mode != "software":
+            return
+        validate_recording_settings(self.settings, enforce_software_schedule=True)
+        fps_limit = self._trigger_settings.fps_limit
+        requested_fps = 1000.0 / self.settings.target_interval_ms
+        if fps_limit is not None and requested_fps > fps_limit:
+            msg = (
+                "要求FPSがCamera FPS Limitを超えるため、録画を開始できません。\n\n"
+                f"要求FPS: {requested_fps:g}\n"
+                f"FPS Limit: {fps_limit:g}"
+            )
+            raise ValueError(msg)
 
     def _reset_statistics(
         self,
@@ -136,3 +203,5 @@ class RecordingService(CaptureWorker):
         with self._statistics_lock:
             self._statistics_meter.reset(started_at=started_at)
             self._statistics_active = active
+            self._accumulation_progress = 0
+            self._waiting_for_trigger = False

@@ -52,6 +52,8 @@ class RecordingPanel(QGroupBox):
         self._exposure_bounds = exposure_bounds
         self._gain_bounds = gain_bounds
         self._rate_mode = "interval"
+        self._hardware_mode = False
+        self._is_capturing = False
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -244,6 +246,7 @@ class RecordingPanel(QGroupBox):
 
         self._rate_mode = settings.rate_mode
         self._show_rate_input(settings.rate_mode)
+        self._update_rate_controls()
 
     @staticmethod
     def _rate_mode_to_id(mode: str) -> int:
@@ -272,14 +275,32 @@ class RecordingPanel(QGroupBox):
 
     def set_capturing_state(self, is_capturing: bool) -> None:
         """録画中は条件入力をロックし、Start/Stopだけを切り替える。"""
+        self._is_capturing = is_capturing
         self.btn_start.setEnabled(not is_capturing)
         self.btn_stop.setEnabled(is_capturing)
         self.spin_exposure_ms.setEnabled(not is_capturing)
         self.spin_gain.setEnabled(not is_capturing)
-        self.btn_rate_interval.setEnabled(not is_capturing)
-        self.btn_rate_fps.setEnabled(not is_capturing)
-        self.spin_fps.setEnabled(not is_capturing)
-        self.spin_interval_ms.setEnabled(not is_capturing)
         self.spin_duration_sec.setEnabled(not is_capturing)
+        self._update_rate_controls()
         if is_capturing:
             self.update_saved_frames(0)
+
+    def set_hardware_mode(self, mode: str | bool) -> None:
+        """Hardware Trigger時だけRecordingのrate入力を無効化する。"""
+        if isinstance(mode, bool):
+            self._hardware_mode = mode
+        elif mode in ("software", "hardware"):
+            self._hardware_mode = mode == "hardware"
+        else:
+            msg = f"Unknown acquisition mode: {mode}"
+            raise ValueError(msg)
+
+        self._update_rate_controls()
+
+    def _update_rate_controls(self) -> None:
+        """Hardware modeと録画中状態を合成してrate入力の状態を反映する。"""
+        enabled = not self._is_capturing and not self._hardware_mode
+        self.btn_rate_interval.setEnabled(enabled)
+        self.btn_rate_fps.setEnabled(enabled)
+        self.spin_fps.setEnabled(enabled)
+        self.spin_interval_ms.setEnabled(enabled)

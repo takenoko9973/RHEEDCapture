@@ -7,7 +7,9 @@ from zoneinfo import ZoneInfo
 
 from rheed_capture.data_formats.frame_metadata import AngleScanFrameMetadata
 from rheed_capture.data_formats.storage_naming import (
+    ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
     ANGLE_DIR_PATTERN,
+    ANGLE_SCAN_ACCUMULATION_GROUP_DIR_PATTERN,
     ANGLE_SCAN_TIFF_COMPRESSION,
     ANGLE_SCAN_TIFF_FILENAME_PATTERN,
 )
@@ -115,6 +117,51 @@ class AngleScanSession:
             file_path,
             image_data,
             metadata,
+            compression=ANGLE_SCAN_TIFF_COMPRESSION,
+        )
+        return file_path
+
+    def save_accumulation_frame(
+        self,
+        captured_frame: CapturedFrame,
+        target_angle_deg: float,
+        *,
+        condition_index: int,
+        raw_index: int,
+    ) -> Path:
+        """蓄積撮影Rawを角度・条件グループ配下へ既存TIFFメタデータで保存する。"""
+        if not self.session_dir.exists():
+            msg = "角度走査が開始されていません。"
+            raise RuntimeError(msg)
+
+        metadata = AngleScanFrameMetadata(
+            scan_id=self.scan_id,
+            target_angle_deg=target_angle_deg,
+            exposure_ms=captured_frame.condition.exposure_ms,
+            gain=captured_frame.condition.gain,
+            camera_exposure_ms=captured_frame.readback.exposure_ms,
+            camera_gain=captured_frame.readback.gain,
+            timestamp=captured_frame.timing.trigger_issued_at.isoformat(),
+            camera_timestamp_ticks=captured_frame.readback.camera_timestamp_ticks,
+            camera_timestamp_frequency_hz=(
+                captured_frame.readback.camera_timestamp_frequency_hz
+            ),
+            camera_timestamp_source=captured_frame.readback.source,
+        )
+        angle_dir = self.session_dir / self.format_angle_dir_name(target_angle_deg)
+        group_dir = angle_dir / ANGLE_SCAN_ACCUMULATION_GROUP_DIR_PATTERN.format(
+            condition_index=condition_index,
+            exposure_ms=captured_frame.condition.exposure_ms,
+            gain=captured_frame.condition.gain,
+        )
+        group_dir.mkdir(parents=True, exist_ok=True)
+        file_path = group_dir / ACCUMULATION_RAW_TIFF_FILENAME_PATTERN.format(
+            raw_index=raw_index
+        )
+        self.tiff_writer.save(
+            file_path,
+            captured_frame.image,
+            metadata.to_dict(),
             compression=ANGLE_SCAN_TIFF_COMPRESSION,
         )
         return file_path

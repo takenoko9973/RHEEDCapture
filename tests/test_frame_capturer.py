@@ -8,12 +8,18 @@ import numpy as np
 import pytest
 
 from rheed_capture.application.capture import frame_capturer as frame_capturer_module
+from rheed_capture.application.capture.cancellation import CancellationToken
 from rheed_capture.application.capture.frame_capturer import FrameCapturer
-from rheed_capture.application.ports.camera import CameraError, CameraFrame, FrameReadback
+from rheed_capture.application.ports.camera import (
+    CameraError,
+    CameraFrame,
+    FrameReadback,
+    TriggerSettings,
+)
 from rheed_capture.domain.capture_condition import CaptureCondition
 
 
-class _FakeSoftwareTriggerSession:
+class _FakeTriggerCaptureSession:
     """FrameCapturer用のソフトトリガーSession test double。"""
 
     def __init__(self, result: CameraFrame | Exception) -> None:
@@ -34,7 +40,7 @@ class _FakeSoftwareTriggerSession:
         """TriggerReady待機の順序とtimeoutを記録する。"""
         self.calls.append(("wait", timeout_ms))
 
-    def execute_trigger(self) -> None:
+    def execute_software_trigger(self) -> None:
         """trigger発行順序を記録する。"""
         self.calls.append(("trigger", None))
 
@@ -59,7 +65,8 @@ class _FakeCamera:
         self.exposures: list[float] = []
         self.gains: list[int] = []
         self.expected_frames: list[int | None] = []
-        self.sessions: list[_FakeSoftwareTriggerSession] = []
+        self.trigger_settings: list[TriggerSettings] = []
+        self.sessions: list[_FakeTriggerCaptureSession] = []
 
     def set_exposure(self, exposure_ms: float) -> None:
         """設定された露光時間を記録する。"""
@@ -69,14 +76,16 @@ class _FakeCamera:
         """設定されたGainを記録する。"""
         self.gains.append(gain)
 
-    def start_software_trigger_session(
+    def start_trigger_session(
         self,
         *,
+        settings: TriggerSettings,
         expected_frames: int | None,
-    ) -> _FakeSoftwareTriggerSession:
+    ) -> _FakeTriggerCaptureSession:
         """次の結果を持つ新しいSessionを作成する。"""
+        self.trigger_settings.append(settings)
         self.expected_frames.append(expected_frames)
-        session = _FakeSoftwareTriggerSession(self.results.pop(0))
+        session = _FakeTriggerCaptureSession(self.results.pop(0))
         self.sessions.append(session)
         return session
 
@@ -159,10 +168,14 @@ def test_frame_capturer_retries_when_session_start_fails(monkeypatch) -> None:  
     """初回のCamera Session開始失敗後に新しいSessionで再試行する。"""
     image = np.ones((2, 2), dtype=np.uint16)
     camera = _FakeCamera([_camera_frame(image)])
-    original_start = camera.start_software_trigger_session
+    original_start = camera.start_trigger_session
     start_attempts = 0
 
-    def start_session(*, expected_frames: int | None) -> _FakeSoftwareTriggerSession:
+    def start_session(
+        *,
+        settings: TriggerSettings,
+        expected_frames: int | None,
+    ) -> _FakeTriggerCaptureSession:
         """初回だけ開始エラーを発生させ、以後は通常Sessionを返す。"""
         nonlocal start_attempts
         start_attempts += 1
@@ -170,9 +183,9 @@ def test_frame_capturer_retries_when_session_start_fails(monkeypatch) -> None:  
             msg = "temporary start failure"
             raise CameraError(msg)
 
-        return original_start(expected_frames=expected_frames)
+        return original_start(settings=settings, expected_frames=expected_frames)
 
-    monkeypatch.setattr(camera, "start_software_trigger_session", start_session)
+    monkeypatch.setattr(camera, "start_trigger_session", start_session)
     capturer = FrameCapturer(camera, retry_interval_sec=0)
 
     captured = capturer.capture(CaptureCondition(exposure_ms=20.0, gain=1))
@@ -218,3 +231,90 @@ def test_frame_capturer_raises_after_three_failures() -> None:
 
     assert camera.expected_frames == [1, 1, 1]
     assert all(session.closed for session in camera.sessions)
+
+
+def test_hardware_group_timeout_does_not_retry_or_discard_saved_raw() -> None:
+    """Hardware trigger timeoutは同一Rawを3回再試行せず、先行Rawを保持して失敗する。"""
+    image = np.ones((2, 2), dtype=np.uint16)
+    camera = _FakeCamera([_camera_frame(image)])
+    settings = TriggerSettings(
+        mode="hardware",
+        hardware_source="Line1",
+        hardware_activation="RisingEdge",
+        hardware_delay_us=0,
+        fps_limit=None,
+    )
+    capturer = FrameCapturer(camera, trigger_settings=settings, retry_interval_sec=0)
+    token = CancellationToken()
+
+    frames = capturer.capture_group(
+        CaptureCondition(exposure_ms=10.0, gain=0),
+        frame_count=2,
+        hardware_wait_timeout_sec=0.001,
+        cancellation_token=token,
+    )
+
+    first = next(frames)
+    camera.sessions[0].result = TimeoutError("trigger missing")
+    with pytest.raises(TimeoutError, match="設定時間"):
+        next(frames)
+
+    assert np.array_equal(first.image, image)
+    assert camera.exposures == [10.0]
+    assert camera.gains == [0]
+    assert camera.expected_frames == [2]
+    assert len(camera.sessions) == 1
+    assert camera.sessions[0].closed
+
+
+def test_hardware_single_frame_group_uses_wait_timeout_without_retry() -> None:
+    """N=1でもHardware trigger待機timeoutは再アームせず即時に失敗する。"""
+    camera = _FakeCamera([TimeoutError("trigger missing")])
+    settings = TriggerSettings(
+        mode="hardware",
+        hardware_source="Line1",
+        hardware_activation="RisingEdge",
+        hardware_delay_us=0,
+        fps_limit=None,
+    )
+    capturer = FrameCapturer(camera, trigger_settings=settings, retry_interval_sec=0)
+
+    frames = capturer.capture_group(
+        CaptureCondition(exposure_ms=10.0, gain=0),
+        frame_count=1,
+        hardware_wait_timeout_sec=0.001,
+        cancellation_token=CancellationToken(),
+    )
+
+    with pytest.raises(TimeoutError, match="設定時間"):
+        next(frames)
+
+    assert camera.expected_frames == [1]
+    assert len(camera.sessions) == 1
+    assert all(name == "retrieve" for name, _timeout_ms in camera.sessions[0].calls)
+    assert camera.sessions[0].closed
+
+
+def test_software_single_frame_group_keeps_existing_retry_behavior() -> None:
+    """N=1のSoftware取得は従来どおりdeadline付きで再試行する。"""
+    image = np.ones((2, 2), dtype=np.uint16)
+    camera = _FakeCamera([CameraError("temporary"), _camera_frame(image)])
+    capturer = FrameCapturer(camera, retry_interval_sec=0)
+
+    frames = list(
+        capturer.capture_group(
+            CaptureCondition(exposure_ms=10.0, gain=0),
+            frame_count=1,
+            hardware_wait_timeout_sec=1,
+            cancellation_token=CancellationToken(),
+        )
+    )
+
+    assert len(frames) == 1
+    assert np.array_equal(frames[0].image, image)
+    assert camera.expected_frames == [1, 1]
+    assert [name for name, _timeout_ms in camera.sessions[0].calls] == [
+        "wait",
+        "trigger",
+        "retrieve",
+    ]

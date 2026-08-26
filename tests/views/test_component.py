@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QFrame
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
+from rheed_capture.presentation.qt.panels.acquisition_settings import AcquisitionSettingsPanel
 from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
 from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
 from rheed_capture.presentation.qt.panels.motor_settings import MotorSettingsPanel
@@ -127,6 +128,73 @@ def test_recording_panel_switches_rate_inputs_with_conversion(qtbot: QtBot) -> N
     assert blocker.args == ["interval"]
     assert panel.rate_value_stack.currentWidget() is panel.spin_interval_ms
     assert panel.spin_interval_ms.value() == 50.0
+
+
+def test_recording_panel_combines_hardware_and_capturing_state(qtbot: QtBot) -> None:
+    """Recording rate入力はHardware modeと撮影中状態の両方を反映する。"""
+    panel = RecordingPanel(exposure_bounds=(1.0, 10000.0), gain_bounds=(0, 48))
+    qtbot.addWidget(panel)
+
+    panel.set_hardware_mode("hardware")
+    assert panel.btn_rate_interval.isEnabled() is False
+    assert panel.btn_rate_fps.isEnabled() is False
+    assert panel.spin_interval_ms.isEnabled() is False
+    assert panel.spin_fps.isEnabled() is False
+
+    panel.set_capturing_state(True)
+    panel.set_hardware_mode("software")
+    assert panel.btn_rate_interval.isEnabled() is False
+    assert panel.btn_rate_fps.isEnabled() is False
+
+    panel.set_capturing_state(False)
+    assert panel.btn_rate_interval.isEnabled() is True
+    assert panel.btn_rate_fps.isEnabled() is True
+
+
+def test_acquisition_settings_panel_disables_hardware_controls_in_software(
+    qtbot: QtBot,
+) -> None:
+    """Software modeではHardware専用入力だけをdisableし、設定変更を通知する。"""
+    panel = AcquisitionSettingsPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.get_settings_to_save().mode == "software"
+    assert panel.cmb_source.isEnabled() is False
+    assert panel.cmb_activation.isEnabled() is False
+    assert panel.spin_delay_us.isEnabled() is False
+
+    with qtbot.waitSignal(panel.settings_changed, timeout=1000) as blocker:
+        panel.cmb_mode.setCurrentText("Hardware")
+
+    assert blocker.args[0].mode == "hardware"
+    assert panel.cmb_source.isEnabled() is True
+    assert panel.cmb_activation.isEnabled() is True
+    assert panel.spin_delay_us.isEnabled() is True
+
+    panel.cmb_source.setCurrentText("Line3")
+    panel.cmb_activation.setCurrentText("FallingEdge")
+    panel.spin_delay_us.setValue(12.5)
+    panel.chk_fps_unlimited.setChecked(False)
+    panel.spin_fps_limit.setValue(24.0)
+    panel.chk_accumulation.setChecked(True)
+    panel.spin_accumulation_frames.setValue(4)
+    panel.spin_trigger_wait_timeout_sec.setValue(2.5)
+    settings = panel.get_settings_to_save()
+    assert settings.hardware_source == "Line3"
+    assert settings.hardware_activation == "FallingEdge"
+    assert settings.hardware_delay_us == 12.5
+    assert settings.fps_limit == 24.0
+    assert settings.accumulation_enabled is True
+    assert settings.accumulation_frames == 4
+    assert settings.trigger_wait_timeout_sec == 2.5
+
+    panel.set_controls_enabled(False)
+    assert panel.cmb_mode.isEnabled() is False
+    assert panel.cmb_source.isEnabled() is False
+    assert panel.chk_accumulation.isEnabled() is False
+    panel.set_controls_enabled(True)
+    assert panel.cmb_mode.isEnabled() is True
+    assert panel.cmb_source.isEnabled() is True
 
 
 def test_capture_chips_panel_uses_comma_separated_inputs(qtbot: QtBot) -> None:

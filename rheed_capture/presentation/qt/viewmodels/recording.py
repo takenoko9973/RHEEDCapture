@@ -10,7 +10,10 @@ from rheed_capture.application.capture.recording import (
     interval_from_fps,
     normalize_duration_ms,
 )
-from rheed_capture.infrastructure.config.schema import RecordingCaptureSettings
+from rheed_capture.infrastructure.config.schema import (
+    AcquisitionSettings,
+    RecordingCaptureSettings,
+)
 from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
     format_recording_statistics,
 )
@@ -39,6 +42,7 @@ class RecordingViewModel(QObject):
         self._camera = camera
         self._storage = storage
         self._recording_service: RecordingService | None = None
+        self._acquisition_settings = AcquisitionSettings()
 
         self._exposure_ms = 50.0
         self._gain = 0
@@ -67,6 +71,14 @@ class RecordingViewModel(QObject):
             interval_ms=self._interval_ms,
             duration_sec=self._duration_sec,
         )
+
+    def load_acquisition_settings(self, settings: AcquisitionSettings) -> None:
+        """保存済みの共通取得設定snapshotをRecordingへ読み込む。"""
+        self._acquisition_settings = settings
+
+    def set_acquisition_settings(self, settings: AcquisitionSettings) -> None:
+        """開始前の共通取得設定変更を次回Recordingへ反映する。"""
+        self._acquisition_settings = settings
 
     @Slot(float)
     def update_exposure_ms(self, value: float) -> None:
@@ -115,7 +127,12 @@ class RecordingViewModel(QObject):
             self.recording_finished.emit(False, "")
             return
 
-        self._recording_service = RecordingService(self._camera, self._storage, settings)
+        self._recording_service = RecordingService(
+            self._camera,
+            self._storage,
+            settings,
+            self._acquisition_settings,
+        )
         # ServiceのSignalをViewModelのSignalとして中継し、PanelとMainWindowを疎結合に保つ。
         self._recording_service.saved_frames_updated.connect(self.saved_frames_updated)
         self._recording_service.frame_captured.connect(self.frame_captured)

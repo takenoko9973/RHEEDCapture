@@ -28,6 +28,9 @@ class AcquisitionStatistics:
     average_fps: float | None
     frame_count: int
     payload_bytes_per_second: float | None
+    accumulation_progress: int = 0
+    accumulation_target: int = 1
+    waiting_for_trigger: bool = False
 
 
 @dataclass(frozen=True)
