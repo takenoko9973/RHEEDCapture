@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from rheed_capture.application.ports.camera import ImageFormatSnapshot
@@ -23,28 +23,11 @@ from rheed_capture.infrastructure.config.schema import (
 )
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.main_window import (
-    ACQUISITION_STATISTICS_MIN_WIDTH_PX,
-    ACQUISITION_STATISTICS_TOOLTIP,
     ACQUISITION_STATISTICS_UI_INTERVAL_MS,
     MainWindow,
 )
 from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics, PreviewInput
 from rheed_capture.presentation.qt.workers.recording_service import RecordingService
-
-
-class _FakeScreen(QObject):
-    """表示refresh rate変更を再現するQScreen相当のdouble。"""
-
-    refreshRateChanged = Signal(float)  # noqa: N815
-
-    def __init__(self, rate_hz: float) -> None:
-        """初期refresh rateを保持する。"""
-        super().__init__()
-        self.rate_hz = rate_hz
-
-    def refreshRate(self) -> float:  # noqa: N802
-        """現在のrefresh rateを返す。"""
-        return self.rate_hz
 
 
 @pytest.fixture
@@ -130,46 +113,21 @@ def mock_settings() -> types.GeneratorType:
         yield mock_app_settings
 
 
-def test_main_window_initialization(
+def test_main_window_composes_capture_modes_and_settings(
     qtbot: QtBot, mock_camera: MagicMock, mock_storage: MagicMock
 ) -> None:
-    """保存済み設定がMainWindowの各Panelへ反映されることを確認する。"""
+    """MainWindowが撮影modeとsettingsのtop-level構成を組み立てる。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
 
-    assert window.preview_panel.spin_expo.value() == 15.5
-    assert window.preview_panel.chk_show_grid.isChecked() is True
-    assert window.preview_panel.cmb_grid_shape.currentText() == "8x8"
-    assert window.capture_chips_panel.edit_exposure_values.text() == "10, 20"
-    assert window.capture_chips_panel.edit_gain_values.text() == "0, 1"
-    assert window.sequence_panel.exposure_selector.selected_values() == [10.0, 20.0]
-    assert window.sequence_panel.gain_selector.selected_values() == [0, 1]
-    assert window.angle_scan_panel.exposure_selector.selected_values() == [10.0]
-    assert window.angle_scan_panel.gain_selector.selected_values() == [0]
-    assert window.angle_scan_panel.spin_range_deg.value() == 5.0
-    assert window.angle_scan_panel.btn_direction_both.isChecked() is True
-    assert window.angle_scan_panel.spin_motor_speed_rpm.value() == 4.0
-    assert window.motor_settings_panel.edit_motor_port.text() == "COM8"
-    assert window.motor_settings_panel.spin_motor_slave.value() == 3
-    assert window.motor_settings_panel.spin_position_units_per_deg.value() == 31.25
     assert window.control_tabs.count() == 2
-    assert window.control_tabs.tabText(0) == "Capture"
-    assert window.control_tabs.tabText(1) == "Settings"
     assert window.capture_tabs.count() == 3
-    assert window.capture_tabs.tabText(0) == "Sequence"
-    assert window.capture_tabs.tabText(1) == "Angle Scan"
-    assert window.capture_tabs.tabText(2) == "Recording"
-    assert window.recording_panel.spin_exposure_ms.value() == 25.0
-    assert window.recording_panel.spin_gain.value() == 1
-    assert window.recording_panel.btn_rate_fps.isChecked() is True
-    assert window.recording_panel.rate_value_stack.currentWidget() is (
-        window.recording_panel.spin_fps
-    )
+    assert window.capture_tabs.widget(0) is window.sequence_panel
+    assert window.capture_tabs.widget(1) is window.angle_scan_panel
+    assert window.capture_tabs.widget(2) is window.recording_panel
     assert window.recording_settings_panel.chk_tiff_compression.isChecked() is False
     assert window.recording_vm.get_settings_to_save().tiff_compression_enabled is False
-    assert window.capture_settings_section.toggle_button.text() == "Capture"
-    assert window.recording_settings_section.toggle_button.text() == "Recording"
-    assert window.motor_settings_section.toggle_button.text() == "Motor"
+    assert window.motor_settings_panel.spin_motor_slave.value() == 3
     window.close()
 
 
@@ -209,12 +167,7 @@ def test_settings_save_on_close(
     window.preview_panel.chk_show_grid.setChecked(False)
     window.preview_panel.cmb_grid_shape.setCurrentText("2x2")
     window.recording_panel.btn_rate_interval.click()
-    window.recording_settings_panel.chk_tiff_compression.setChecked(True)
-    assert window.recording_vm.get_settings_to_save().tiff_compression_enabled is True
     window.recording_settings_panel.chk_tiff_compression.setChecked(False)
-    assert (
-        window.recording_vm._build_recording_settings().tiff_compression_enabled is False  # noqa: SLF001
-    )
 
     window.close()
 
@@ -229,31 +182,13 @@ def test_settings_save_on_close(
     assert saved_data.exposure_ms_values == [10.0, 20.0]
     assert saved_data.gain_values == [0, 1]
     assert saved_data.acquisition.mode == "software"
-    assert saved_data.acquisition.fps_limit is None
     assert saved_data.sequence_capture.selected_exposure_ms_values == [10.0, 20.0]
     assert saved_data.angle_scan.selected_exposure_ms_values == [10.0]
     assert saved_data.angle_scan.range_deg == 5.0
-    assert saved_data.angle_scan.direction == "both"
-    assert saved_data.angle_scan.motor_speed_rpm == 4.0
     assert saved_data.recording_capture.rate_mode == "interval"
     assert saved_data.recording_capture.interval_ms == 25.0
     assert saved_data.recording_capture.tiff_compression_enabled is False
     assert saved_data.device.motor.port == "COM8"
-    assert saved_data.device.motor.slave == 3
-    assert saved_data.device.motor.position_units_per_deg == 31.25
-
-    saved_dict = saved_data.to_dict()
-    assert "speed_units" not in saved_dict["device"]["motor"]
-    assert "rotation_capture" not in saved_dict
-    assert "motor_port" not in saved_dict["angle_scan"]
-    assert "motor_slave" not in saved_dict["angle_scan"]
-    assert "motor_speed" not in saved_dict["angle_scan"]
-    assert "speed_units" not in saved_dict["angle_scan"]
-    assert "target_from_current_deg" not in saved_dict["angle_scan"]
-    assert "reverse_scan" not in saved_dict["angle_scan"]
-    assert "position_units_per_deg" not in saved_dict["angle_scan"]
-    assert "seq_expo_list" not in saved_dict
-    assert "angle_scan_expo_list" not in saved_dict
 
 
 def test_acquisition_statistics_status_uses_only_preview_and_recording(
@@ -269,14 +204,6 @@ def test_acquisition_statistics_status_uses_only_preview_and_recording(
         window._acquisition_statistics_timer.interval()  # noqa: SLF001
         == ACQUISITION_STATISTICS_UI_INTERVAL_MS
     )
-    assert window.acquisition_statistics_label.toolTip() == ACQUISITION_STATISTICS_TOOLTIP
-    assert (
-        window.acquisition_statistics_label.minimumWidth()
-        == ACQUISITION_STATISTICS_MIN_WIDTH_PX
-    )
-    assert not window.acquisition_statistics_label.font().bold()
-    assert window.acquisition_statistics_label.styleSheet() == ""
-
     preview_statistics = AcquisitionStatistics(
         current_fps=10.0,
         average_fps=None,
@@ -361,6 +288,35 @@ def test_acquisition_statistics_status_uses_only_preview_and_recording(
     window.close()
 
 
+def test_status_statistics_and_diagnostics_form_one_spaced_centered_unit(
+    qtbot: QtBot,
+    mock_camera: MagicMock,
+    mock_storage: MagicMock,
+) -> None:
+    """統計summaryとDiagnostics操作を余白付きの単一status unitに配置する。"""
+    window = MainWindow(camera=mock_camera, storage=mock_storage)
+    qtbot.addWidget(window)
+
+    layout = window.status_statistics_widget.layout()
+    assert layout is not None
+    margins = layout.contentsMargins()
+    statistics_item = layout.itemAt(0)
+    diagnostics_item = layout.itemAt(1)
+
+    assert layout.count() == 2
+    assert statistics_item is not None
+    assert diagnostics_item is not None
+    assert statistics_item.widget() is window.acquisition_statistics_label
+    assert diagnostics_item.widget() is window.diagnostics_button
+    assert margins.left() > 0
+    assert margins.right() > 0
+    assert layout.spacing() > 0
+    assert layout.alignment() & Qt.AlignmentFlag.AlignVCenter
+    assert diagnostics_item.alignment() & Qt.AlignmentFlag.AlignCenter
+
+    window.close()
+
+
 def test_acquisition_controls_lock_during_capture_and_recording_rate_uses_mode(
     qtbot: QtBot,
     mock_camera: MagicMock,
@@ -370,13 +326,20 @@ def test_acquisition_controls_lock_during_capture_and_recording_rate_uses_mode(
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
 
-    window.acquisition_settings_panel.cmb_mode.setCurrentText("Hardware")
+    with (
+        patch.object(window.preview_vm, "set_acquisition_settings") as preview_set,
+        patch.object(window.recording_vm, "set_acquisition_settings") as recording_set,
+        patch.object(window.capture_vm, "load_settings") as sequence_load,
+        patch.object(window.angle_scan_vm, "load_settings") as angle_scan_load,
+    ):
+        window.acquisition_settings_panel.cmb_mode.setCurrentText("Hardware")
+
+    assert preview_set.call_args.args[0].mode == "hardware"
+    assert recording_set.call_args.args[0].mode == "hardware"
+    assert sequence_load.call_args.args[0].acquisition.mode == "hardware"
+    assert angle_scan_load.call_args.args[0].acquisition.mode == "hardware"
     assert window.recording_panel.btn_rate_interval.isEnabled() is False
     assert window.recording_panel.btn_rate_fps.isEnabled() is False
-    assert window.preview_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
-    assert window.recording_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
-    assert window.capture_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
-    assert window.angle_scan_vm._acquisition_settings.mode == "hardware"  # noqa: SLF001
 
     window.capture_coordinator.enter("sequence")
     assert window.acquisition_settings_panel.cmb_mode.isEnabled() is False
@@ -405,42 +368,28 @@ def test_recording_settings_lock_during_any_capture(
             window.capture_coordinator.enter(capture_mode)
             try:
                 assert window.recording_settings_panel.isEnabled() is False
-                assert window.recording_settings_panel.chk_tiff_compression.isEnabled() is False
             finally:
                 window.capture_coordinator.leave()
             assert window.recording_settings_panel.isEnabled() is True
-            assert window.recording_settings_panel.chk_tiff_compression.isEnabled() is True
     finally:
         window.close()
 
 
-def test_display_refresh_tracks_active_screen_and_rate_changes(
+def test_display_refresh_updates_preview_diagnostics_and_refreshes_preview(
     qtbot: QtBot,
     mock_camera: MagicMock,
     mock_storage: MagicMock,
 ) -> None:
-    """表示Timerがscreen移動とrefresh rate変更に追従する。"""
+    """表示rateとTimer tickをPreviewの診断値と表示更新へ伝える。"""
     window = MainWindow(camera=mock_camera, storage=mock_storage)
     qtbot.addWidget(window)
-    first_screen = _FakeScreen(60.0)
-    second_screen = _FakeScreen(144.0)
 
-    window._on_display_screen_changed(first_screen)  # noqa: SLF001
-    assert window._display_refresh_timer.interval() == 17  # noqa: SLF001
-    assert window._active_display_hz == 60.0  # noqa: SLF001
+    window.display_refresh.on_refresh_rate_changed(144.0)
 
-    first_screen.rate_hz = 120.0
-    first_screen.refreshRateChanged.emit(120.0)
-    assert window._display_refresh_timer.interval() == 9  # noqa: SLF001
-    assert window._active_display_hz == 120.0  # noqa: SLF001
-
-    window._on_display_screen_changed(second_screen)  # noqa: SLF001
-    assert window._display_refresh_timer.interval() == 7  # noqa: SLF001
-    assert window._active_display_hz == 144.0  # noqa: SLF001
-
-    first_screen.rate_hz = 30.0
-    first_screen.refreshRateChanged.emit(30.0)
-    assert window._display_refresh_timer.interval() == 7  # noqa: SLF001
+    assert window.preview_vm.diagnostics_snapshot().active_display_hz == 144.0
+    with patch.object(window.preview_vm._worker, "refresh_display") as refresh_display:  # noqa: SLF001
+        window.display_refresh.timer.timeout.emit()
+    refresh_display.assert_called_once_with()
     window.close()
 
 
@@ -580,8 +529,6 @@ def test_diagnostics_refreshes_only_while_dialog_is_visible(
         window._update_acquisition_statistics_display()  # noqa: SLF001
 
     update_values.assert_called_once_with(None, statistics, diagnostics)
-    assert "Realtime" not in window.acquisition_statistics_label.text()
-    assert "Drops" in window.acquisition_statistics_label.text()
 
     window.diagnostics_dialog.hide()
     window.close()

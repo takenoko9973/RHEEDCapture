@@ -1,7 +1,5 @@
 import logging
-import math
 from collections.abc import Callable
-from typing import Any, cast
 
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QCloseEvent, QShowEvent
@@ -33,6 +31,7 @@ from rheed_capture.presentation.qt.capture_coordinator import (
     CaptureCoordinatorHooks,
 )
 from rheed_capture.presentation.qt.diagnostics_dialog import DiagnosticsDialog
+from rheed_capture.presentation.qt.display_refresh import DisplayRefreshController
 from rheed_capture.presentation.qt.panels.acquisition_settings import AcquisitionSettingsPanel
 from rheed_capture.presentation.qt.panels.angle_scan import AngleScanPanel
 from rheed_capture.presentation.qt.panels.capture_chips import CaptureChipsPanel
@@ -67,14 +66,6 @@ ACQUISITION_STATISTICS_TOOLTIP = (
 )
 
 
-def _display_interval_ms(refresh_rate_hz: float) -> int:
-    """表示refresh rateを超えないQTimer間隔へ変換する。"""
-    if refresh_rate_hz <= 0:
-        msg = "Display refresh rate must be greater than zero."
-        raise ValueError(msg)
-    return max(1, math.ceil(1000.0 / refresh_rate_hz))
-
-
 class MainWindow(QMainWindow):
     preview_vm: PreviewViewModel
     capture_vm: CaptureViewModel
@@ -99,23 +90,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("RHEED Capture System")
         self.resize(1200, 700)
 
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
-        self.acquisition_statistics_label = QLabel()
-        self.acquisition_statistics_label.setObjectName("acquisitionStatisticsLabel")
-        self.acquisition_statistics_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        # 桁数が変わっても主要status messageの配置が動かない幅を確保する。
-        self.acquisition_statistics_label.setMinimumWidth(
-            ACQUISITION_STATISTICS_MIN_WIDTH_PX
-        )
-        self.acquisition_statistics_label.setToolTip(ACQUISITION_STATISTICS_TOOLTIP)
-        self.status_bar.addPermanentWidget(self.acquisition_statistics_label)
-        self.diagnostics_button = QPushButton("Diagnostics")
-        self.diagnostics_button.setObjectName("diagnosticsButton")
-        self.status_bar.addPermanentWidget(self.diagnostics_button)
+        self._setup_status_bar()
 
         self._setup_ui()
         self._setup_viewmodels()
@@ -129,6 +104,38 @@ class MainWindow(QMainWindow):
         self._load_settings()
 
         self.preview_vm.start_preview()
+
+    def _setup_status_bar(self) -> None:
+        """Status messageと統計・Diagnostics操作の配置を構築する。"""
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
+
+        self.acquisition_statistics_label = QLabel()
+        self.acquisition_statistics_label.setObjectName("acquisitionStatisticsLabel")
+        self.acquisition_statistics_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        # 桁数が変わっても主要status messageの配置が動かない幅を確保する。
+        self.acquisition_statistics_label.setMinimumWidth(
+            ACQUISITION_STATISTICS_MIN_WIDTH_PX
+        )
+        self.acquisition_statistics_label.setToolTip(ACQUISITION_STATISTICS_TOOLTIP)
+
+        self.diagnostics_button = QPushButton("Diagnostics")
+        self.diagnostics_button.setObjectName("diagnosticsButton")
+
+        self.status_statistics_widget = QWidget()
+        status_statistics_layout = QHBoxLayout(self.status_statistics_widget)
+        status_statistics_layout.setContentsMargins(8, 0, 8, 0)
+        status_statistics_layout.setSpacing(8)
+        status_statistics_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        status_statistics_layout.addWidget(self.acquisition_statistics_label)
+        status_statistics_layout.addWidget(
+            self.diagnostics_button,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+        self.status_bar.addPermanentWidget(self.status_statistics_widget)
 
     def _setup_viewmodels(self) -> None:
         """ViewModelのインスタンス化"""
@@ -438,11 +445,14 @@ class MainWindow(QMainWindow):
         acquisition: AcquisitionSettings | None = None,
     ) -> AppSettingsData:
         """現在のUIとViewModel状態から撮影設定snapshotを作る。"""
+        preview_settings = self.preview_vm.get_settings_to_save().with_grid(
+            self.preview_panel.get_grid_settings_to_save()
+        )
         return AppSettingsData(
             root_dir=self.storage_panel.get_settings_to_save().root_dir,
             exposure_ms_values=self.capture_chips_panel.exposure_ms_values(),
             gain_values=self.capture_chips_panel.gain_values(),
-            preview=self.preview_vm.get_settings_to_save(),
+            preview=preview_settings,
             acquisition=(
                 acquisition
                 if acquisition is not None
@@ -504,75 +514,17 @@ class MainWindow(QMainWindow):
 
     def _setup_display_refresh_timer(self) -> None:
         """active QScreenのrefresh rateで表示結果をpullするTimerを設定する。"""
-        self._display_refresh_timer = QTimer(self)
-        self._display_refresh_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._display_refresh_timer.timeout.connect(self.preview_vm.refresh_display)
-        self._active_display_hz = 0.0
-        self._display_screen: object | None = None
-        self._display_refresh_signal: object | None = None
-        self._display_window_handle: object | None = None
-        self._bind_display_screen()
-
-    def _bind_display_screen(self) -> None:
-        """MainWindowのscreenChangedを接続し、現在screenを同期する。"""
-        window_handle = self.windowHandle()
-        if window_handle is not None and window_handle is not self._display_window_handle:
-            window_handle.screenChanged.connect(self._on_display_screen_changed)
-            self._display_window_handle = window_handle
-
-        active_screen = self.screen()
-        if active_screen is not self._display_screen:
-            self._on_display_screen_changed(active_screen)
-        elif active_screen is not None:
-            self._on_display_refresh_rate_changed()
-
-    def _on_display_screen_changed(self, screen: object | None) -> None:
-        """screen移動時にrefresh rate signalと表示Timerを切り替える。"""
-        if self._display_refresh_signal is not None:
-            cast("Any", self._display_refresh_signal).disconnect(
-                self._on_display_refresh_rate_changed
-            )
-            self._display_refresh_signal = None
-
-        self._display_screen = screen
-        if screen is None:
-            self._display_refresh_timer.stop()
-            self._active_display_hz = 0.0
-            self.preview_vm.set_display_refresh_rate(0.0)
-            return
-
-        refresh_signal = getattr(screen, "refreshRateChanged", None)
-        if refresh_signal is not None:
-            refresh_signal.connect(self._on_display_refresh_rate_changed)
-            self._display_refresh_signal = refresh_signal
-        self._on_display_refresh_rate_changed()
-
-    def _on_display_refresh_rate_changed(self, refresh_rate_hz: float | None = None) -> None:
-        """refresh rate変更をTimer間隔とPreview診断値へ反映する。"""
-        if refresh_rate_hz is None:
-            screen = self._display_screen
-            if screen is None:
-                return
-            refresh_rate_hz = float(cast("Any", screen).refreshRate())
-
-        if refresh_rate_hz <= 0:
-            self._display_refresh_timer.stop()
-            self._active_display_hz = 0.0
-            self.preview_vm.set_display_refresh_rate(0.0)
-            return
-
-        self._active_display_hz = float(refresh_rate_hz)
-        self._display_refresh_timer.setInterval(
-            _display_interval_ms(self._active_display_hz)
+        self.display_refresh = DisplayRefreshController(
+            self,
+            self.preview_vm.refresh_display,
+            self.preview_vm.set_display_refresh_rate,
         )
-        self.preview_vm.set_display_refresh_rate(self._active_display_hz)
-        if not self._display_refresh_timer.isActive():
-            self._display_refresh_timer.start()
+        self.display_refresh.bind_window_screen()
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         """表示後に確定したnative windowのactive screenを再同期する。"""
         super().showEvent(event)
-        self._bind_display_screen()
+        self.display_refresh.bind_window_screen()
 
     @Slot()
     def _update_acquisition_statistics_display(self) -> None:
@@ -786,26 +738,11 @@ class MainWindow(QMainWindow):
         # top-level QDialogはMainWindowのcloseだけでは非表示にならないため、受理時に明示的に閉じる。
         self.diagnostics_dialog.close()
 
-        preview_settings = self.preview_vm.get_settings_to_save().with_grid(
-            self.preview_panel.get_grid_settings_to_save()
-        )
-        settings_to_save = AppSettingsData(
-            root_dir=self.storage_panel.get_settings_to_save().root_dir,
-            # 候補値と撮影モード別の選択状態をまとめて保存する。
-            exposure_ms_values=self.capture_chips_panel.exposure_ms_values(),
-            gain_values=self.capture_chips_panel.gain_values(),
-            preview=preview_settings,
-            acquisition=self.acquisition_settings_panel.get_settings_to_save(),
-            sequence_capture=self.capture_vm.get_settings_to_save(),
-            angle_scan=self.angle_scan_vm.get_angle_scan_settings(),
-            recording_capture=self.recording_vm.get_settings_to_save(),
-            device=self.angle_scan_vm.get_device_settings(),
-        )
-        AppSettings.save(settings_to_save)
+        AppSettings.save(self._build_current_settings())
 
         self._sequence_preview_timer.stop()
         self._acquisition_statistics_timer.stop()
-        self._display_refresh_timer.stop()
+        self.display_refresh.stop()
 
         # バックグラウンドスレッドの停止とカメラの切断
         self.preview_vm.stop_preview()
