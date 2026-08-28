@@ -11,14 +11,14 @@ from rheed_capture.domain.angle_scan.model import (
     validate_interval_within_range,
     validate_range,
 )
-from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.config.schema import (
     AngleScanCaptureSettings,
     AppSettingsData,
     DeviceSettings,
     MotorDeviceSettings,
-    filter_existing_float_values,
-    filter_existing_int_values,
+)
+from rheed_capture.presentation.qt.viewmodels.capture_condition_selection import (
+    CaptureConditionSelection,
 )
 from rheed_capture.presentation.qt.workers.angle_scan_service import (
     AngleScanService,
@@ -71,10 +71,12 @@ class AngleScanViewModel(QObject):
         defaults = AppSettingsData()
         scan_defaults = defaults.angle_scan
         # 候補値はSettingsタブと共有、選択値はAngle Scan専用として保持する。
-        self._exposure_ms_values = defaults.exposure_ms_values
-        self._gain_values = defaults.gain_values
-        self._selected_exposure_ms_values = scan_defaults.selected_exposure_ms_values
-        self._selected_gain_values = scan_defaults.selected_gain_values
+        self._condition_selection = CaptureConditionSelection(
+            exposure_ms_values=defaults.exposure_ms_values,
+            gain_values=defaults.gain_values,
+            selected_exposure_ms_values=scan_defaults.selected_exposure_ms_values,
+            selected_gain_values=scan_defaults.selected_gain_values,
+        )
 
         motor_defaults = MotorDeviceSettings()
         self._motor_port = motor_defaults.port
@@ -111,8 +113,10 @@ class AngleScanViewModel(QObject):
 
     def get_angle_scan_settings(self) -> AngleScanCaptureSettings:
         return AngleScanCaptureSettings(
-            selected_exposure_ms_values=self._selected_exposure_ms_values,
-            selected_gain_values=self._selected_gain_values,
+            selected_exposure_ms_values=(
+                self._condition_selection.selected_exposure_ms_values
+            ),
+            selected_gain_values=self._condition_selection.selected_gain_values,
             range_deg=self._range_deg,
             interval_deg=self._interval_deg,
             direction=self._scan_direction,
@@ -137,39 +141,29 @@ class AngleScanViewModel(QObject):
         gain_values: list[int],
     ) -> None:
         """候補値の変更をAngle Scan側の選択状態へ反映する。"""
-        self._exposure_ms_values = list(exposure_ms_values)
-        self._gain_values = list(gain_values)
-        # 候補から消えた値は選択状態から除外する。別候補の自動選択はしない。
-        self._selected_exposure_ms_values = filter_existing_float_values(
-            self._selected_exposure_ms_values,
-            set(self._exposure_ms_values),
-        )
-        self._selected_gain_values = filter_existing_int_values(
-            self._selected_gain_values,
-            set(self._gain_values),
+        self._condition_selection.update_candidate_values(
+            exposure_ms_values,
+            gain_values,
         )
         self._emit_value_state()
 
     @Slot(list)
     def update_selected_exposure_ms_values(self, selected_values: list[float]) -> None:
         """露光時間チップのクリック結果を保存可能な選択値へ正規化する。"""
-        self._selected_exposure_ms_values = filter_existing_float_values(
-            [float(value) for value in selected_values],
-            set(self._exposure_ms_values),
-        )
+        self._condition_selection.update_selected_exposure_ms_values(selected_values)
         self.exposure_values_updated.emit(
-            self._exposure_ms_values,
-            self._selected_exposure_ms_values,
+            self._condition_selection.exposure_ms_values,
+            self._condition_selection.selected_exposure_ms_values,
         )
 
     @Slot(list)
     def update_selected_gain_values(self, selected_values: list[int]) -> None:
         """ゲインチップのクリック結果を保存可能な選択値へ正規化する。"""
-        self._selected_gain_values = filter_existing_int_values(
-            [int(value) for value in selected_values],
-            set(self._gain_values),
+        self._condition_selection.update_selected_gain_values(selected_values)
+        self.gain_values_updated.emit(
+            self._condition_selection.gain_values,
+            self._condition_selection.selected_gain_values,
         )
-        self.gain_values_updated.emit(self._gain_values, self._selected_gain_values)
 
     @Slot(str)
     def update_motor_port(self, value: str) -> None:
@@ -253,7 +247,7 @@ class AngleScanViewModel(QObject):
     def start_angle_scan(self) -> None:
         try:
             # UIの選択値をService層へ渡す前に、最終的なCaptureConditionへ解決する。
-            conditions = self._build_capture_conditions()
+            conditions = self._condition_selection.build_capture_conditions()
             motor = self._require_motor_factory()(
                 self._motor_port,
                 self._motor_slave,
@@ -323,25 +317,13 @@ class AngleScanViewModel(QObject):
     def is_running(self) -> bool:
         return self._angle_scan_service is not None and self._angle_scan_service.isRunning()
 
-    def _build_capture_conditions(self) -> list[CaptureCondition]:
-        """選択された露光時間とゲインの直積から撮影条件を生成する。"""
-        if not self._selected_exposure_ms_values:
-            msg = "露光時間が選択されていません。\n1つ以上の露光時間を選択してください。"
-            raise ValueError(msg)
-        if not self._selected_gain_values:
-            msg = "ゲインが選択されていません。\n1つ以上のゲインを選択してください。"
-            raise ValueError(msg)
-
-        return [
-            CaptureCondition(exposure_ms=exposure_ms, gain=gain)
-            for exposure_ms in self._selected_exposure_ms_values
-            for gain in self._selected_gain_values
-        ]
-
     def _emit_value_state(self) -> None:
         """候補値と選択値をセットでViewへ通知する。"""
         self.exposure_values_updated.emit(
-            self._exposure_ms_values,
-            self._selected_exposure_ms_values,
+            self._condition_selection.exposure_ms_values,
+            self._condition_selection.selected_exposure_ms_values,
         )
-        self.gain_values_updated.emit(self._gain_values, self._selected_gain_values)
+        self.gain_values_updated.emit(
+            self._condition_selection.gain_values,
+            self._condition_selection.selected_gain_values,
+        )

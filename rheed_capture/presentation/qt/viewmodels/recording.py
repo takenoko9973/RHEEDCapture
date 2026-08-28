@@ -14,9 +14,6 @@ from rheed_capture.infrastructure.config.schema import (
     AcquisitionSettings,
     RecordingCaptureSettings,
 )
-from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
-    format_recording_statistics,
-)
 from rheed_capture.presentation.qt.workers.recording_service import (
     RecordingService,
     RecordingSettings,
@@ -163,13 +160,6 @@ class RecordingViewModel(QObject):
         """RecordingServiceが実行中かを返す。"""
         return self._recording_service is not None and self._recording_service.isRunning()
 
-    def get_acquisition_statistics_text(self) -> str:
-        """現在のRecording取得統計を短いstatus summaryへ変換して返す。"""
-        statistics = self.acquisition_statistics_snapshot()
-        if statistics is None:
-            return ""
-        return format_recording_statistics(statistics)
-
     def acquisition_statistics_snapshot(self) -> AcquisitionStatistics | None:
         """現在のRecording取得統計snapshotを返す。"""
         if self._recording_service is None:
@@ -178,16 +168,11 @@ class RecordingViewModel(QObject):
 
     def _build_recording_settings(self) -> RecordingSettings:
         """UI入力値をUse Caseが要求するRecordingSettingsへ変換する。"""
-        target_interval_ms = (
-            interval_from_fps(self._fps)
-            if self._rate_mode == "fps"
-            else self._interval_ms
-        )
         return RecordingSettings(
             exposure_ms=self._exposure_ms,
             gain=self._gain,
             rate_mode=self._rate_mode,
-            target_interval_ms=target_interval_ms,
+            target_interval_ms=self._target_interval_ms(),
             duration_ms=normalize_duration_ms(self._duration_sec),
             tiff_compression_enabled=self._tiff_compression_enabled,
         )
@@ -200,14 +185,16 @@ class RecordingViewModel(QObject):
             return
 
         try:
-            interval_ms = (
-                interval_from_fps(self._fps)
-                if self._rate_mode == "fps"
-                else self._interval_ms
-            )
+            interval_ms = self._target_interval_ms()
         except ValueError:
             self.expected_frames_updated.emit("-")
             return
 
         expected_frames = math.ceil(duration_ms / interval_ms) + 1
         self.expected_frames_updated.emit(f"about {expected_frames}")
+
+    def _target_interval_ms(self) -> float:
+        """選択中のRate入力をRecordingService用の撮影間隔msへ変換する。"""
+        if self._rate_mode == "fps":
+            return interval_from_fps(self._fps)
+        return self._interval_ms

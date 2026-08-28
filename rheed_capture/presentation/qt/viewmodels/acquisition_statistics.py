@@ -32,31 +32,6 @@ def format_recording_statistics(
     )
 
 
-def format_preview_realtime_diagnostics(diagnostics: PreviewDiagnostics) -> str:
-    """PreviewとGraphの処理・表示FPS、表示Hz、drop数を整形する。"""
-    preview_drops = (
-        diagnostics.preview_input_drop_count + diagnostics.preview_result_drop_count
-    )
-    graph_drops = diagnostics.graph_input_drop_count + diagnostics.graph_result_drop_count
-    preview_text = (
-        " | Preview proc/display "
-        f"{diagnostics.preview_processing_fps:.1f}/"
-        f"{diagnostics.preview_display_fps:.1f} fps"
-    )
-    graph_text = (
-        " | Graph proc/display "
-        f"{diagnostics.graph_processing_fps:.1f}/"
-        f"{diagnostics.graph_display_fps:.1f} fps"
-    )
-    return (
-        "Realtime"
-        f"{preview_text}"
-        f"{graph_text}"
-        f" | Active display {diagnostics.active_display_hz:.1f} Hz"
-        f" | Drops P/G {preview_drops}/{graph_drops}"
-    )
-
-
 def _format_summary(
     label: str,
     statistics: AcquisitionStatistics,

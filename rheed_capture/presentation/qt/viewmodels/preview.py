@@ -6,10 +6,6 @@ from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings, PreviewSettings
 from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics, PreviewInput
-from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
-    format_preview_realtime_diagnostics,
-    format_preview_statistics,
-)
 from rheed_capture.presentation.qt.workers.preview_worker import PreviewWorker
 
 
@@ -83,20 +79,9 @@ class PreviewViewModel(QObject):
             raise RuntimeError(msg)
         self._worker.pipeline.stop()
 
-    def get_acquisition_statistics_text(self) -> str:
-        """現在のPreview取得統計を短いstatus summaryへ変換して返す。"""
-        statistics = self.acquisition_statistics_snapshot()
-        if statistics is None:
-            return ""
-        return format_preview_statistics(statistics)
-
     def acquisition_statistics_snapshot(self) -> AcquisitionStatistics | None:
         """現在のPreview取得統計snapshotを返す。"""
         return self._worker.statistics_snapshot()
-
-    def get_realtime_diagnostics_text(self) -> str:
-        """PreviewとGraphの処理・表示診断値をstatus bar表示用に返す。"""
-        return format_preview_realtime_diagnostics(self.diagnostics_snapshot())
 
     def pause_preview(self) -> None:
         """シーケンス撮影開始などのため、プレビューを一時停止する"""
