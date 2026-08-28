@@ -3,8 +3,10 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import imagecodecs
 import numpy as np
 import tifffile
 
@@ -46,6 +48,68 @@ def test_tiff_writer() -> None:
 
             loaded_meta = json.loads(page.tags["ImageDescription"].value)
             assert loaded_meta["test_key"] == "test_value"
+
+
+def test_tiff_writer_passes_fixed_zlib_settings() -> None:
+    """zlib保存時にlevel 6とpredictor OFFをTIFF writerへ渡す。"""
+    with patch("rheed_capture.infrastructure.storage.tiff_writer.tifffile.imwrite") as imwrite:
+        TiffWriter.save(
+            Path("frame.tiff"),
+            np.zeros((2, 2), dtype=np.uint16),
+            {},
+            compression="zlib",
+        )
+
+    kwargs = imwrite.call_args.kwargs
+    assert kwargs["compression"] == "zlib"
+    assert kwargs["compressionargs"] == {"level": 6}
+    assert kwargs["predictor"] is False
+
+    with patch("rheed_capture.infrastructure.storage.tiff_writer.tifffile.imwrite") as imwrite:
+        TiffWriter.save(
+            Path("frame.tiff"),
+            np.zeros((2, 2), dtype=np.uint16),
+            {},
+            compression=None,
+        )
+
+    kwargs = imwrite.call_args.kwargs
+    assert kwargs["compression"] is None
+    assert kwargs["compressionargs"] is None
+    assert kwargs["predictor"] is False
+
+
+def test_tiff_writer_zlib_uses_imagecodecs_backend() -> None:
+    """zlibのTIFF codecがimagecodecsの実装へ解決される。"""
+    assert tifffile.TIFF.COMPRESSORS[8].__module__ == imagecodecs.__name__
+
+
+def test_tiff_writer_zlib_round_trips_dark_and_bright_uint8_and_uint16_pixels() -> None:
+    """暗い画像と明るい画像のRaw uint8/uint16画素を完全一致で復号する。"""
+    images = {
+        "uint8-dark": np.arange(64, dtype=np.uint8).reshape(8, 8),
+        "uint8-bright": np.arange(255, 191, -1, dtype=np.uint8).reshape(8, 8),
+        "uint16-dark": np.arange(64, dtype=np.uint16).reshape(8, 8),
+        "uint16-bright": np.arange(65535, 65471, -1, dtype=np.uint16).reshape(8, 8),
+    }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for name, image in images.items():
+            file_path = Path(temp_dir) / f"{name}.tiff"
+            TiffWriter.save(file_path, image, {}, compression="zlib")
+
+            with tifffile.TiffFile(file_path) as tif:
+                page = cast("tifffile.TiffPage", tif.pages[0])
+                loaded = tif.asarray()
+                compression = page.tags["Compression"].value
+                has_predictor = "Predictor" in page.tags
+
+            assert compression == 8
+            assert not has_predictor
+            assert loaded.shape == image.shape
+            assert loaded.dtype == image.dtype
+            assert np.array_equal(loaded, image)
+            assert loaded.tobytes(order="C") == image.tobytes(order="C")
 
 
 def test_lazy_directory_creation() -> None:

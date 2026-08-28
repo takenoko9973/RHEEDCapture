@@ -8,6 +8,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 
 dependencies = [
+    "imagecodecs>=2026.5.10",
     "numpy>=2.4.5",
     "opencv-python-headless>=4.13.0.92",
     "pypylon>=26.4.1",
@@ -37,7 +38,7 @@ main = "rheed_capture.main:main"
 
 [tool.poe.tasks]
 # uv run poe build で実行可能
-build = "uv run nuitka --enable-plugin=pyside6 --standalone --onefile --onefile-no-compression --windows-console-mode=disable --include-windows-runtime-dlls=yes --output-dir=dist -o RHEEDCapture.exe rheed_capture/main.py"
+build = "uv run nuitka --enable-plugin=pyside6 --standalone --onefile --onefile-no-compression --windows-console-mode=disable --include-windows-runtime-dlls=yes --include-module=imagecodecs._deflate --include-module=imagecodecs._shared_cython --output-dir=dist -o RHEEDCapture.exe rheed_capture/main.py"
 
 [tool.uv.sources]
 my-pyside-app = { url = "https://pypi.org/simple" }
