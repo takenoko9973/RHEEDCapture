@@ -9,6 +9,7 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from pytestqt.qtbot import QtBot
 
+from rheed_capture.application.ports.camera import ImageFormatSnapshot
 from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import (
@@ -27,7 +28,7 @@ from rheed_capture.presentation.qt.main_window import (
     ACQUISITION_STATISTICS_UI_INTERVAL_MS,
     MainWindow,
 )
-from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
+from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics, PreviewInput
 from rheed_capture.presentation.qt.workers.recording_service import RecordingService
 
 
@@ -51,11 +52,17 @@ def mock_camera() -> MagicMock:
     """MainWindowテスト用のCamera mockを作る。"""
     camera = MagicMock(spec=CameraDevice)
 
-    def mock_retrieve(*args, **kwargs) -> None:  # noqa: ARG001
-        """Preview取得待ちを短時間だけ再現する。"""
+    def mock_wait_until_ready(*args, **kwargs) -> None:  # noqa: ARG001
+        """Previewのフレーム待機を短時間だけ再現する。"""
         time.sleep(0.01)
+        raise TimeoutError
 
-    camera.retrieve_preview_frame.side_effect = mock_retrieve
+    camera.start_trigger_session.return_value.wait_until_ready.side_effect = (
+        mock_wait_until_ready
+    )
+    camera.start_trigger_session.return_value.retrieve_frame.side_effect = (
+        mock_wait_until_ready
+    )
     camera.get_exposure_bounds.return_value = (1, 10000)
     camera.get_gain_bounds.return_value = (0, 48)
     return camera
@@ -465,7 +472,12 @@ def test_recording_preview_submission_does_not_wait_for_gui_thread(
     def emit_frame() -> None:
         """Emit a Preview frame from a Recording-worker-like thread."""
         emitter_thread_id.append(threading.get_ident())
-        service.frame_captured.emit(np.ones((2, 2), dtype=np.uint16))
+        service.frame_captured.emit(
+            PreviewInput(
+                np.ones((2, 2), dtype=np.uint16),
+                ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned"),
+            )
+        )
 
     emitter = threading.Thread(target=emit_frame)
     emitter.start()

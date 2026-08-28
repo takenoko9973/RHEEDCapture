@@ -23,6 +23,7 @@ from rheed_capture.infrastructure.config.defaults import (
     DEFAULT_ACQUISITION_HARDWARE_DELAY_US,
     DEFAULT_ACQUISITION_HARDWARE_SOURCE,
     DEFAULT_ACQUISITION_MODE,
+    DEFAULT_ACQUISITION_SENSOR_BIT_DEPTH,
     DEFAULT_ACQUISITION_TRIGGER_WAIT_TIMEOUT_SEC,
     DEFAULT_ANGLE_SCAN_DIRECTION,
     DEFAULT_ANGLE_SCAN_INTERVAL_DEG,
@@ -100,6 +101,14 @@ def _require_bool(value: object, field_name: str) -> bool:
     return value
 
 
+def _require_sensor_bit_depth(value: object) -> int:
+    """センサbit depthがJSON整数の8または12であることを検証する。"""
+    if isinstance(value, bool) or not isinstance(value, int) or value not in (8, 12):
+        msg = "sensor_bit_depth must be an integer equal to 8 or 12."
+        raise ValueError(msg)
+    return value
+
+
 def filter_existing_float_values(
     selected_values: list[float],
     valid_values: set[float],
@@ -147,6 +156,7 @@ class AcquisitionSettings:
     """Previewと保存撮影で共有するTrigger取得設定。"""
 
     mode: AcquisitionMode = DEFAULT_ACQUISITION_MODE
+    sensor_bit_depth: int = DEFAULT_ACQUISITION_SENSOR_BIT_DEPTH
     hardware_source: AcquisitionHardwareSource = DEFAULT_ACQUISITION_HARDWARE_SOURCE
     hardware_activation: AcquisitionHardwareActivation = DEFAULT_ACQUISITION_HARDWARE_ACTIVATION
     hardware_delay_us: float = DEFAULT_ACQUISITION_HARDWARE_DELAY_US
@@ -160,6 +170,7 @@ class AcquisitionSettings:
         if self.mode not in ("software", "hardware"):
             msg = f"Unknown acquisition mode: {self.mode}"
             raise ValueError(msg)
+        _require_sensor_bit_depth(self.sensor_bit_depth)
         if self.hardware_source not in ACQUISITION_HARDWARE_SOURCES:
             msg = f"Unknown hardware_source: {self.hardware_source}"
             raise ValueError(msg)
@@ -193,6 +204,9 @@ class AcquisitionSettings:
         """settings.jsonのacquisitionセクションから設定を作る。"""
         defaults = cls()
         mode = data.get("mode", defaults.mode)
+        sensor_bit_depth = _require_sensor_bit_depth(
+            data.get("sensor_bit_depth", defaults.sensor_bit_depth)
+        )
         hardware_source = data.get("hardware_source", defaults.hardware_source)
         hardware_activation = data.get("hardware_activation", defaults.hardware_activation)
         hardware_delay_us = _require_non_negative_number(
@@ -223,6 +237,7 @@ class AcquisitionSettings:
 
         return cls(
             mode=cast("AcquisitionMode", mode),
+            sensor_bit_depth=sensor_bit_depth,
             hardware_source=cast("AcquisitionHardwareSource", hardware_source),
             hardware_activation=cast("AcquisitionHardwareActivation", hardware_activation),
             hardware_delay_us=hardware_delay_us,
@@ -236,6 +251,7 @@ class AcquisitionSettings:
         """AcquisitionSettingsをsettings.json保存用dictへ変換する。"""
         return {
             "mode": self.mode,
+            "sensor_bit_depth": self.sensor_bit_depth,
             "hardware_source": self.hardware_source,
             "hardware_activation": self.hardware_activation,
             "hardware_delay_us": self.hardware_delay_us,
@@ -249,6 +265,7 @@ class AcquisitionSettings:
         """Task1のCamera Portへ渡すTrigger設定へ変換する。"""
         return TriggerSettings(
             mode=self.mode,
+            sensor_bit_depth=self.sensor_bit_depth,
             hardware_source=self.hardware_source,
             hardware_activation=self.hardware_activation,
             hardware_delay_us=self.hardware_delay_us,

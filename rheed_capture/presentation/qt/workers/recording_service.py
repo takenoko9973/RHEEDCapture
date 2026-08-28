@@ -29,9 +29,12 @@ from rheed_capture.domain.acquisition_statistics import (
 )
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.infrastructure.storage.async_tiff_save_worker import AsyncTiffSaveWorker
+from rheed_capture.presentation.qt.preview.processor import PreviewInput
 from rheed_capture.presentation.qt.workers.capture_worker import CaptureWorker
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from rheed_capture.application.capture.cancellation import CancellationToken
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
     from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
@@ -84,6 +87,9 @@ class RecordingService(CaptureWorker):
         """RecordingSessionを作成して録画Use Caseを実行する。"""
         logger.info("録画を開始します...")
         self._validate_start_conditions()
+        image_format = self.camera.configure_image_format(
+            self._trigger_settings.sensor_bit_depth
+        )
         self._reset_statistics(active=True, started_at=time.perf_counter())
 
         try:
@@ -98,6 +104,7 @@ class RecordingService(CaptureWorker):
                     duration_ms=self.settings.duration_ms,
                     accumulation_frames=self._accumulation_frames,
                     tiff_compression_enabled=self.settings.tiff_compression_enabled,
+                    image_format=image_format,
                 )
             else:
                 session = self.storage.start_recording_session(
@@ -108,11 +115,17 @@ class RecordingService(CaptureWorker):
                     target_interval_ms=self.settings.target_interval_ms,
                     duration_ms=self.settings.duration_ms,
                     tiff_compression_enabled=self.settings.tiff_compression_enabled,
+                    image_format=image_format,
                 )
             save_worker = AsyncTiffSaveWorker(
                 max_queue_size=RECORDING_SAVE_QUEUE_MAX_SIZE
             )
             self._save_worker = save_worker
+
+            def on_preview_frame_completed(image: np.ndarray) -> None:
+                """蓄積完了画像へRecording開始時の形式snapshotを束縛する。"""
+                self.frame_captured.emit(PreviewInput(image, image_format))
+
             capture = RecordingCapture(
                 CaptureConditionApplier(self.camera),
                 FrameGrabber(
@@ -125,13 +138,14 @@ class RecordingService(CaptureWorker):
                 save_worker=save_worker,
                 accumulation_frames=self._accumulation_frames,
                 trigger_wait_timeout_sec=self._trigger_wait_timeout_sec,
+                image_format=image_format,
             )
             capture.run(
                 cancellation_token,
                 hooks=RecordingHooks(
                     on_saved_frames_changed=self.saved_frames_updated.emit,
                     on_frame_captured=self._on_frame_captured,
-                    on_preview_frame_completed=self.frame_captured.emit,
+                    on_preview_frame_completed=on_preview_frame_completed,
                     on_accumulation_progress=self._on_accumulation_progress,
                     on_waiting_for_trigger_changed=self._on_waiting_for_trigger_changed,
                 ),

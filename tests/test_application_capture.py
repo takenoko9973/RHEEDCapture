@@ -14,12 +14,15 @@ from rheed_capture.application.capture.angle_scan import (
 from rheed_capture.application.capture.cancellation import CancellationToken, CaptureCancelled
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
 from rheed_capture.application.capture.sequence import SequenceCapture
-from rheed_capture.application.ports.camera import FrameReadback
+from rheed_capture.application.ports.camera import FrameReadback, ImageFormatSnapshot
 from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.motor.defaults import DEFAULT_POSITION_UNITS_PER_DEG
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 class _FakeFrameCapturer:
@@ -43,6 +46,7 @@ class _FakeFrameCapturer:
                 trigger_issued_at=datetime.fromisoformat("2026-06-17T00:00:00+09:00"),
                 trigger_issued_monotonic_sec=1.0,
             ),
+            image_format=_IMAGE_FORMAT_12,
         )
 
     def capture_group(
@@ -132,6 +136,7 @@ def test_sequence_capture_sorts_conditions_saves_all_and_reports_progress() -> N
             CaptureCondition(exposure_ms=100.0, gain=0),
             CaptureCondition(exposure_ms=100.0, gain=2),
         ],
+        image_format=_IMAGE_FORMAT_12,
     )
     capture.run(
         CancellationToken(),
@@ -165,6 +170,7 @@ def test_sequence_capture_stops_when_cancelled() -> None:
         frame_capturer,
         session,
         [CaptureCondition(exposure_ms=10.0, gain=0)],
+        image_format=_IMAGE_FORMAT_12,
     )
 
     with pytest.raises(CaptureCancelled):
@@ -201,6 +207,7 @@ def test_sequence_capture_saves_each_raw_and_notifies_clipped_sum() -> None:
                         trigger_issued_at=datetime.fromisoformat("2026-06-17T00:00:00+09:00"),
                         trigger_issued_monotonic_sec=1.0,
                     ),
+                    image_format=_IMAGE_FORMAT_12,
                 )
 
     session = _SequenceSession()
@@ -210,6 +217,7 @@ def test_sequence_capture_saves_each_raw_and_notifies_clipped_sum() -> None:
         session,
         [CaptureCondition(exposure_ms=10.0, gain=0)],
         accumulation_frames=2,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(CancellationToken(), on_frame_captured=notified.append)
@@ -252,6 +260,7 @@ def test_angle_scan_does_not_move_to_next_angle_until_group_completes() -> None:
         ),
         accumulation_frames=2,
         trigger_wait_timeout_sec=1,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     with pytest.raises(TimeoutError, match="設定時間"):
@@ -281,6 +290,7 @@ def test_angle_scan_capture_moves_by_plan_saves_angles_and_returns_to_start() ->
             position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
             motor_speed_rpm=4.0,
         ),
+        image_format=_IMAGE_FORMAT_12,
     )
     capture.run(
         CancellationToken(),
@@ -324,6 +334,7 @@ def test_angle_scan_capture_waits_before_preview_pause(
             return_to_start_after_scan=False,
             position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         ),
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(
@@ -351,6 +362,7 @@ def test_angle_scan_capture_does_not_capture_internal_zero_on_both_scan() -> Non
             return_to_start_after_scan=False,
             position_units_per_deg=DEFAULT_POSITION_UNITS_PER_DEG,
         ),
+        image_format=_IMAGE_FORMAT_12,
     )
     capture.run(CancellationToken())
 

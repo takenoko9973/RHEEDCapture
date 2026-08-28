@@ -24,6 +24,7 @@ TimeoutHandling_Return: int
 TimeoutHandling_ThrowException: int
 
 PixelType_Mono12: int
+PixelType_Mono8: int
 PixelType_Mono16: int
 OutputBitAlignment_LsbAligned: Any
 OutputBitAlignment_MsbAligned: Any

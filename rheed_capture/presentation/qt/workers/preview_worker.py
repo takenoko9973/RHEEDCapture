@@ -9,6 +9,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
 from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
     CameraError,
     CameraFrame,
     TriggerCaptureSession,
@@ -21,10 +22,12 @@ from rheed_capture.domain.acquisition_statistics import (
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.presentation.qt.preview.processor import (
     PreviewDiagnostics,
+    PreviewInput,
     PreviewPipeline,
 )
 
 if TYPE_CHECKING:
+    from rheed_capture.application.capture.frame_capturer import CapturedFrame
     from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 
 PREVIEW_RETRIEVE_POLL_TIMEOUT_MS = 100
@@ -38,6 +41,7 @@ class PreviewWorker(QThread):
     raw_frame_ready = Signal(object)
     image_ready = Signal(np.ndarray)
     histogram_ready = Signal(np.ndarray, float, float)
+    image_format_changed = Signal(int)
     error_occurred = Signal(str)
     preview_paused = Signal()
 
@@ -54,6 +58,7 @@ class PreviewWorker(QThread):
         self.pipeline = PreviewPipeline()
         self.pipeline.image_ready.connect(self.image_ready)
         self.pipeline.histogram_ready.connect(self.histogram_ready)
+        self.pipeline.image_format_changed.connect(self.image_format_changed)
         self.pipeline.error_occurred.connect(self.error_occurred)
 
         self._lifecycle_lock = threading.Lock()
@@ -223,16 +228,10 @@ class PreviewWorker(QThread):
         self._waiting_for_trigger = False
         return camera_frame
 
-    def _handle_camera_frame(self, camera_frame: CameraFrame | np.ndarray | object) -> None:
+    def _handle_camera_frame(self, camera_frame: CameraFrame) -> None:
         """Raw到着を統計へ記録し、積算完了時だけPreviewへ通知する。"""
-        if isinstance(camera_frame, CameraFrame):
-            raw_image = camera_frame.image
-        elif isinstance(camera_frame, np.ndarray):
-            raw_image = camera_frame
-        else:
-            raw_image = getattr(camera_frame, "image", None)
-        if not isinstance(raw_image, np.ndarray):
-            return
+        raw_image = camera_frame.image
+        image_format = camera_frame.image_format
 
         self._record_acquisition()
         if self._accumulation_progress >= self._accumulation_target:
@@ -241,7 +240,7 @@ class PreviewWorker(QThread):
         self._accumulation_progress += 1
         if self._accumulation_target == 1:
             self.raw_frame_ready.emit(raw_image)
-            self.submit_frame(raw_image)
+            self.submit_frame(PreviewInput(raw_image, image_format))
             return
 
         image_uint64 = np.asarray(raw_image, dtype=np.uint64)
@@ -253,9 +252,18 @@ class PreviewWorker(QThread):
         if self._accumulation_progress < self._accumulation_target:
             return
 
-        accumulated_image = np.clip(self._accumulator, 0, 65535).astype(np.uint16)
+        output_dtype = (
+            np.uint8
+            if image_format.bit_depth_sensor == SENSOR_BIT_DEPTH_8
+            else np.uint16
+        )
+        accumulated_image = np.clip(
+            self._accumulator,
+            0,
+            np.iinfo(output_dtype).max,
+        ).astype(output_dtype)
         self.raw_frame_ready.emit(accumulated_image)
-        self.submit_frame(accumulated_image)
+        self.submit_frame(PreviewInput(accumulated_image, image_format))
 
     def statistics_snapshot(self) -> AcquisitionStatistics | None:
         """表示時点のPreview取得統計を返す。"""
@@ -387,8 +395,8 @@ class PreviewWorker(QThread):
         self.enable_processing = enabled
         self.pipeline.set_processing_enabled(enabled)
 
-    def submit_frame(self, frame: object) -> bool:
-        """Raw frameをPreviewとGraphのmailboxへ待たずに投入する。"""
+    def submit_frame(self, frame: PreviewInput | CapturedFrame) -> bool:
+        """確定済み画像形式を持つframeをPreviewとGraphへ投入する。"""
         return self.pipeline.submit_frame(frame)
 
     def refresh_display(self) -> bool:

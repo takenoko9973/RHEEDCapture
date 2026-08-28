@@ -1,5 +1,5 @@
 import os
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -51,6 +51,7 @@ class _PixelFormatNode:
         self.writable = writable
         self.readable = readable
         self.write_error = write_error
+        self.write_count = 0
         self.update_value = update_value
 
     def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
@@ -376,6 +377,7 @@ class _FakeNode:
         self.writable = writable
         self.readable = readable
         self.write_error = write_error
+        self.write_count = 0
 
     def is_available(self) -> bool:
         """利用可能なnodeとして扱う。"""
@@ -391,6 +393,7 @@ class _FakeNode:
 
     def FromString(self, value: str, verify: bool = True) -> None:  # noqa: ARG002, N802
         """GenICam文字列表現からnode値を更新する。"""
+        self.write_count += 1
         if self.write_error is not None:
             raise self.write_error
         if isinstance(self.value, int):
@@ -523,6 +526,7 @@ class _FakeInstantCamera:
                 "TriggerDelayAbs": _FakeNode(0.0),
                 "AcquisitionFrameRateEnable": _FakeNode(0),
                 "AcquisitionFrameRateAbs": _FakeNode(100.0),
+                "PixelFormat": _FakeNode("Mono12Packed"),
                 "ChunkModeActive": _FakeNode("False"),
                 "ChunkSelector": chunk_selector,
                 "ChunkEnable": _FakeChunkEnableNode(
@@ -537,6 +541,12 @@ class _FakeInstantCamera:
         self.grabbing = False
         self.trigger_count = 0
         self.stop_count = 0
+
+    def GetDeviceInfo(self) -> MagicMock:  # noqa: N802
+        """実機相当のDeviceClassを返す。"""
+        device_info = MagicMock()
+        device_info.GetDeviceClass.return_value = "BaslerGigE"
+        return device_info
 
     def IsOpen(self) -> bool:  # noqa: N802
         """接続済みとして扱う。"""
@@ -652,6 +662,38 @@ def test_software_trigger_session_uses_user_grab_loop_and_restores_state(monkeyp
     assert isinstance(chunk_enable, _FakeChunkEnableNode)
     assert chunk_enable.values == instant_camera.original_chunk_enabled
     assert camera_device.state is CameraState.IDLE
+
+
+def test_trigger_session_reuses_prepared_image_format_without_rewriting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """開始前に確定したPixelFormatをTrigger Sessionで再writeしない。"""
+    monkeypatch.setattr(
+        basler_module.genicam,
+        "IsAvailable",
+        lambda node: node is not None and node.is_available(),
+    )
+    monkeypatch.setattr(basler_module.genicam, "IsReadable", lambda node: node is not None)
+    monkeypatch.setattr(basler_module.genicam, "IsWritable", lambda node: node is not None)
+    instant_camera = _FakeInstantCamera()
+    camera_device = CameraDevice()
+    camera_device._camera = cast("pylon.InstantCamera", instant_camera)  # noqa: SLF001
+    camera_device._state = CameraState.IDLE  # noqa: SLF001
+    camera_device._frame_readback_provider_factory = (  # noqa: SLF001
+        ChunkFrameReadbackProvider
+    )
+
+    camera_device.configure_image_format(12)
+    pixel_format_node = instant_camera.nodemap.nodes["PixelFormat"]
+    assert pixel_format_node.write_count == 1
+
+    with camera_device.start_trigger_session(
+        settings=SOFTWARE_TRIGGER_SETTINGS,
+        expected_frames=1,
+    ):
+        pass
+
+    assert pixel_format_node.write_count == 1
 
 
 def test_hardware_trigger_session_applies_nodes_without_software_trigger(
@@ -889,7 +931,7 @@ def test_trigger_settings_reject_non_finite_or_invalid_values(
     message: str,
 ) -> None:
     """TriggerSettingsは不正なmode、文字列、数値を生成時に拒否する。"""
-    values: dict[str, object] = {
+    values: dict[str, Any] = {
         "mode": "software",
         "hardware_source": "Line1",
         "hardware_activation": "RisingEdge",

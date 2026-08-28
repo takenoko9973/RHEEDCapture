@@ -116,7 +116,7 @@ class AngleScanSession:
         self.tiff_writer.save(
             file_path,
             image_data,
-            metadata,
+            {**metadata, **self.scan_document.image_format.to_dict()},
             compression=ANGLE_SCAN_TIFF_COMPRESSION,
         )
         return file_path
@@ -161,7 +161,7 @@ class AngleScanSession:
         self.tiff_writer.save(
             file_path,
             captured_frame.image,
-            metadata.to_dict(),
+            {**metadata.to_dict(), **self.scan_document.image_format.to_dict()},
             compression=ANGLE_SCAN_TIFF_COMPRESSION,
         )
         return file_path

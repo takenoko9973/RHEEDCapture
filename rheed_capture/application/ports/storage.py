@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rheed_capture.application.capture.frame_capturer import CapturedFrame
+    from rheed_capture.application.ports.camera import ImageFormatSnapshot
     from rheed_capture.data_formats.angle_scan_document import AngleScanDocument
     from rheed_capture.data_formats.recording import RecordingFrameRow
 
@@ -91,7 +92,11 @@ class RecordingSession(Protocol):
 class CaptureStorage(Protocol):
     """撮影Use CaseがSession作成に使うStorage Port。"""
 
-    def start_sequence_session(self) -> SequenceSession:
+    def start_sequence_session(
+        self,
+        *,
+        image_format: ImageFormatSnapshot,
+    ) -> SequenceSession:
         """次のSequence保存Sessionを開始する。"""
         ...
 

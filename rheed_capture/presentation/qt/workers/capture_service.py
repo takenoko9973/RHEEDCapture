@@ -54,7 +54,10 @@ class CaptureService(CaptureWorker):
     def _run_sequence_capture(self, cancellation_token: CancellationToken) -> str:
         logger.info("撮影シーケンスを開始します...")
 
-        session = self.storage.start_sequence_session()
+        image_format = self.camera.configure_image_format(
+            self._trigger_settings.sensor_bit_depth
+        )
+        session = self.storage.start_sequence_session(image_format=image_format)
         # Application層には解決済み条件だけを渡す。
         capture = SequenceCapture(
             FrameCapturer(
@@ -66,6 +69,7 @@ class CaptureService(CaptureWorker):
             self._conditions,
             accumulation_frames=self._accumulation_frames,
             trigger_wait_timeout_sec=self._trigger_wait_timeout_sec,
+            image_format=image_format,
         )
 
         def emit_progress(

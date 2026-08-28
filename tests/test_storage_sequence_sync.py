@@ -5,12 +5,15 @@ from uuid import uuid4
 
 import pytest
 
+from rheed_capture.application.ports.camera import ImageFormatSnapshot
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
     CaptureCondition,
 )
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 @pytest.fixture
@@ -92,7 +95,7 @@ def test_start_sequence_session_uses_disk_rescan_before_assigning(
     # 実行直前に外部要因で増えたフォルダを想定
     (exp_dir / "image_005").mkdir()
 
-    storage.start_sequence_session()
+    storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
 
     assert storage.get_current_sequence_dir().name == "image_006"
     assert storage.get_current_sequence_dir().exists()
@@ -136,4 +139,5 @@ def _scan_document() -> AngleScanDocument:
             return_to_start=False,
         ),
         capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=0)],
+        image_format=_IMAGE_FORMAT_12,
     )

@@ -4,12 +4,19 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.application.ports.camera import CameraFrame, FrameReadback, TriggerSettings
+from rheed_capture.application.ports.camera import (
+    CameraFrame,
+    FrameReadback,
+    ImageFormatSnapshot,
+    TriggerSettings,
+)
 from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.presentation.qt.workers.capture_service import CaptureService
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 @pytest.fixture
@@ -35,6 +42,7 @@ def mock_camera() -> MagicMock:
                 camera_timestamp_frequency_hz=125_000_000,
                 source="camera",
             ),
+            image_format=_IMAGE_FORMAT_12,
         )
         return session
 
@@ -123,6 +131,7 @@ def test_capture_service_snapshots_acquisition_settings(
             camera_timestamp_frequency_hz=125_000_000,
             source="camera",
         ),
+        image_format=_IMAGE_FORMAT_12,
     )
     mock_camera.start_trigger_session.side_effect = None
     mock_camera.start_trigger_session.return_value = session

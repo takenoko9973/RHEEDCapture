@@ -14,6 +14,10 @@ from rheed_capture.application.capture.frame_capturer import (
     GrabbedFrame,
 )
 from rheed_capture.application.capture.save_worker import SaveRequest, TiffSaveWorker
+from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
+    ImageFormatSnapshot,
+)
 from rheed_capture.data_formats.recording import RecordingFrameRow
 from rheed_capture.data_formats.storage_naming import RECORDING_TIFF_COMPRESSION
 from rheed_capture.domain.capture_condition import CaptureCondition
@@ -73,6 +77,7 @@ class RecordingCapture:
         save_worker: TiffSaveWorker,
         accumulation_frames: int = 1,
         trigger_wait_timeout_sec: float = 0,
+        image_format: ImageFormatSnapshot,
     ) -> None:
         """カメラ操作、保存先Session、保存ワーカーを注入して初期化する。"""
         if accumulation_frames <= 0:
@@ -93,6 +98,7 @@ class RecordingCapture:
         self.save_worker = save_worker
         self.accumulation_frames = accumulation_frames
         self.trigger_wait_timeout_sec = trigger_wait_timeout_sec
+        self.image_format = image_format
 
     def run(
         self,
@@ -339,12 +345,21 @@ class RecordingCapture:
         group_sum: np.ndarray | None,
         hooks: RecordingHooks,
     ) -> None:
-        """完了groupだけをuint16飽和画像としてPreviewへ通知する。"""
+        """完了groupだけを保存形式のdtypeへclipしてPreviewへ通知する。"""
         if group_sum is None:
             msg = "蓄積撮影でRawフレームを取得できませんでした。"
             raise RuntimeError(msg)
         if hooks.on_preview_frame_completed is not None:
-            preview_image = np.clip(group_sum, 0, np.iinfo(np.uint16).max).astype(np.uint16)
+            output_dtype = (
+                np.uint8
+                if self.image_format.bit_depth_sensor == SENSOR_BIT_DEPTH_8
+                else np.uint16
+            )
+            preview_image = np.clip(
+                group_sum,
+                0,
+                np.iinfo(output_dtype).max,
+            ).astype(output_dtype)
             hooks.on_preview_frame_completed(preview_image)
 
     def _raw_index_in_group(self, frame_index: int) -> int:
@@ -443,6 +458,7 @@ class RecordingCapture:
             "camera_timestamp_source": row.camera_timestamp_source,
             "exposure_ms": row.exposure_ms,
             "gain": row.gain,
+            **self.image_format.to_dict(),
         }
 
 

@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, FrameCapture
+from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
+    ImageFormatSnapshot,
+)
 from rheed_capture.domain.capture_condition import CaptureCondition
 
 if TYPE_CHECKING:
@@ -26,11 +30,13 @@ class SequenceCapture:
         *,
         accumulation_frames: int = 1,
         trigger_wait_timeout_sec: float = 0,
+        image_format: ImageFormatSnapshot,
     ) -> None:
         self.frame_capturer = frame_capturer
         self.session = session
         self.accumulation_frames = accumulation_frames
         self.trigger_wait_timeout_sec = trigger_wait_timeout_sec
+        self.image_format = image_format
         # 呼び出し元のリスト変更が撮影中に影響しないよう、開始時点の条件をコピーする。
         self.conditions = list(conditions)
         if not self.conditions:
@@ -92,7 +98,10 @@ class SequenceCapture:
                     group_index=shot_count,
                     raw_index=raw_index,
                 )
-                accumulated_image = _accumulate_image(accumulated_image, captured_frame.image)
+                accumulated_image = _accumulate_image(
+                    accumulated_image,
+                    captured_frame.image,
+                )
                 completed_frame = captured_frame
 
             if on_frame_captured is not None:
@@ -101,10 +110,14 @@ class SequenceCapture:
                     raise RuntimeError(msg)
                 on_frame_captured(
                     CapturedFrame(
-                        image=_clip_accumulated_image(accumulated_image),
+                        image=_clip_accumulated_image(
+                            accumulated_image,
+                            self.image_format,
+                        ),
                         condition=completed_frame.condition,
                         readback=completed_frame.readback,
                         timing=completed_frame.timing,
+                        image_format=self.image_format,
                     )
                 )
 
@@ -121,6 +134,16 @@ def _accumulate_image(
     return accumulated_image + image_wide
 
 
-def _clip_accumulated_image(accumulated_image: np.ndarray) -> np.ndarray:
-    """表示通知直前にだけ合計画像をuint16範囲へクリップする。"""
-    return np.clip(accumulated_image, 0, np.iinfo(np.uint16).max).astype(np.uint16)
+def _clip_accumulated_image(
+    accumulated_image: np.ndarray,
+    image_format: ImageFormatSnapshot,
+) -> np.ndarray:
+    """表示通知直前に合計画像を保存形式のdtype範囲へclipする。"""
+    output_dtype = (
+        np.uint8 if image_format.bit_depth_sensor == SENSOR_BIT_DEPTH_8 else np.uint16
+    )
+    return np.clip(
+        accumulated_image,
+        0,
+        np.iinfo(output_dtype).max,
+    ).astype(output_dtype)

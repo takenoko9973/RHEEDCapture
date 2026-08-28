@@ -1,10 +1,11 @@
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 
+from rheed_capture.application.capture.frame_capturer import CapturedFrame
 from rheed_capture.domain.acquisition_statistics import AcquisitionStatistics
 from rheed_capture.infrastructure.camera.basler_camera import CameraDevice
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings, PreviewSettings
-from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics
+from rheed_capture.presentation.qt.preview.processor import PreviewDiagnostics, PreviewInput
 from rheed_capture.presentation.qt.viewmodels.acquisition_statistics import (
     format_preview_realtime_diagnostics,
     format_preview_statistics,
@@ -16,8 +17,9 @@ class PreviewViewModel(QObject):
     # === データパススルー用シグナル
     # 処理済みの画像 (UI表示用の8bit ndarray) を送るシグナル
     image_ready = Signal(np.ndarray)
-    # 12bitヒストグラム配列と統計量を送るシグナル (hist_array, mean, std)
+    # センサ強度scaleのヒストグラム配列と統計量を送るシグナル (hist_array, mean, std)
     histogram_ready = Signal(np.ndarray, float, float)
+    image_format_updated = Signal(int)
     error_occurred = Signal(str)  # エラー発生シグナル
     preview_paused = Signal()  # 一時停止完了シグナル
 
@@ -35,6 +37,7 @@ class PreviewViewModel(QObject):
         # WorkerのシグナルをViewModelのシグナルに中継（繋ぎ直し）
         self._worker.image_ready.connect(self.image_ready)
         self._worker.histogram_ready.connect(self.histogram_ready)
+        self._worker.image_format_changed.connect(self.image_format_updated)
         self._worker.error_occurred.connect(self.error_occurred)
         self._worker.preview_paused.connect(self.preview_paused)
 
@@ -140,8 +143,8 @@ class PreviewViewModel(QObject):
         self.clahe_enabled_updated.emit(enabled)
 
     @Slot(object)
-    def process_captured_frame(self, frame: object) -> None:
-        """撮影中のPreview frameを処理mailboxへ待たずに投入する。"""
+    def process_captured_frame(self, frame: CapturedFrame | PreviewInput) -> None:
+        """確定済み画像形式を持つ撮影frameをPreviewへ投入する。"""
         self._worker.submit_frame(frame)
 
     @Slot()

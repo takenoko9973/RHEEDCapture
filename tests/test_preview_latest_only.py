@@ -8,17 +8,26 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
-from rheed_capture.application.ports.camera import FrameReadback
+from rheed_capture.application.ports.camera import FrameReadback, ImageFormatSnapshot
 from rheed_capture.domain.capture_condition import CaptureCondition
 from rheed_capture.domain.image_processor import ImageProcessor
 from rheed_capture.presentation.qt.preview.processor import (
     LatestOnlyProcessor,
+    PreviewInput,
     PreviewPipeline,
 )
 
 if TYPE_CHECKING:
     import pytest
     from pytestqt.qtbot import QtBot
+
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
+
+
+def _preview_input(image: np.ndarray) -> PreviewInput:
+    """確定済み12-bit形式を付けたPreview入力を作る。"""
+    return PreviewInput(image, _IMAGE_FORMAT_12)
 
 
 def _captured_frame() -> CapturedFrame:
@@ -37,6 +46,7 @@ def _captured_frame() -> CapturedFrame:
             trigger_issued_at=datetime.fromisoformat("2026-06-17T00:00:00+09:00"),
             trigger_issued_monotonic_sec=1.0,
         ),
+        image_format=_IMAGE_FORMAT_12,
     )
 
 
@@ -154,7 +164,7 @@ def test_preview_pipeline_processes_raw_and_captured_frame(qtbot: QtBot) -> None
     pipeline.start()
     try:
         raw = np.arange(16, dtype=np.uint16).reshape(4, 4) << 8
-        assert pipeline.submit_frame(raw)
+        assert pipeline.submit_frame(_preview_input(raw))
         qtbot.waitUntil(pipeline.poll_results, timeout=1000)
 
         assert images[-1].dtype == np.uint8
@@ -178,11 +188,11 @@ def test_slow_preview_processing_does_not_block_graph_processing(
     release_preview = threading.Event()
     original_to_8bit = ImageProcessor.to_8bit_preview
 
-    def slow_to_8bit(image: np.ndarray) -> np.ndarray:
+    def slow_to_8bit(image: np.ndarray, *, sensor_bit_depth: int) -> np.ndarray:
         """Preview側だけを停止する。"""
         preview_started.set()
         assert release_preview.wait(1.0)
-        return original_to_8bit(image)
+        return original_to_8bit(image, sensor_bit_depth=sensor_bit_depth)
 
     monkeypatch.setattr(ImageProcessor, "to_8bit_preview", slow_to_8bit)
     pipeline = PreviewPipeline()
@@ -192,7 +202,9 @@ def test_slow_preview_processing_does_not_block_graph_processing(
     )
     pipeline.start()
     try:
-        assert pipeline.submit_frame(np.ones((4, 4), dtype=np.uint16) << 8)
+        assert pipeline.submit_frame(
+            _preview_input(np.ones((4, 4), dtype=np.uint16) << 8)
+        )
         assert preview_started.wait(1.0)
         qtbot.waitUntil(
             lambda: pipeline.diagnostics_snapshot().graph_processed_frames >= 1,
@@ -216,12 +228,12 @@ def test_preview_pipeline_emits_only_latest_result_when_display_is_slow(
     release_preview = threading.Event()
     original_to_8bit = ImageProcessor.to_8bit_preview
 
-    def slow_first_preview(image: np.ndarray) -> np.ndarray:
+    def slow_first_preview(image: np.ndarray, *, sensor_bit_depth: int) -> np.ndarray:
         """最初のPreview処理だけ停止して、次のRawをmailboxへ残す。"""
         if not preview_started.is_set():
             preview_started.set()
             assert release_preview.wait(1.0)
-        return original_to_8bit(image)
+        return original_to_8bit(image, sensor_bit_depth=sensor_bit_depth)
 
     monkeypatch.setattr(ImageProcessor, "to_8bit_preview", slow_first_preview)
     pipeline = PreviewPipeline()
@@ -234,7 +246,9 @@ def test_preview_pipeline_emits_only_latest_result_when_display_is_slow(
     pipeline.start()
     try:
         for value in (1, 2, 3):
-            assert pipeline.submit_frame(np.array([[value << 8]], dtype=np.uint16))
+            assert pipeline.submit_frame(
+                _preview_input(np.array([[value << 8]], dtype=np.uint16))
+            )
             if value == 1:
                 assert preview_started.wait(1.0)
 
@@ -327,7 +341,9 @@ def test_realtime_rates_reset_and_decay_after_idle(qtbot: QtBot) -> None:
 
     try:
         for value, processed_count in ((1, 1), (2, 2)):
-            assert pipeline.submit_frame(np.array([[value << 8]], dtype=np.uint16))
+            assert pipeline.submit_frame(
+                _preview_input(np.array([[value << 8]], dtype=np.uint16))
+            )
             wait_for_frame(processed_count)
 
         wait_for_current_rates()
@@ -345,7 +361,9 @@ def test_realtime_rates_reset_and_decay_after_idle(qtbot: QtBot) -> None:
         assert reset.graph_display_fps == 0.0
 
         for value, processed_count in ((3, 3), (4, 4)):
-            assert pipeline.submit_frame(np.array([[value << 8]], dtype=np.uint16))
+            assert pipeline.submit_frame(
+                _preview_input(np.array([[value << 8]], dtype=np.uint16))
+            )
             wait_for_frame(processed_count)
 
         wait_for_current_rates()

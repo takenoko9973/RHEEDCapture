@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rheed_capture.data_formats.storage_naming import (
     ACCUMULATION_RAW_TIFF_FILENAME_PATTERN,
@@ -11,6 +11,8 @@ from rheed_capture.data_formats.storage_naming import (
 )
 from rheed_capture.domain.capture_defaults import DEFAULT_CAPTURE_RETRY_LIMIT
 
+if TYPE_CHECKING:
+    from rheed_capture.application.ports.camera import ImageFormatSnapshot
 
 @dataclass(frozen=True)
 class AngleScanDocumentSettings:
@@ -135,6 +137,7 @@ class AngleScanDocument:
     created_at: str
     angle_scan: AngleScanDocumentSettings
     capture_conditions: list[CaptureCondition]
+    image_format: ImageFormatSnapshot
     capture: CaptureExecutionSettings = field(default_factory=CaptureExecutionSettings)
     storage: AngleScanStorageFormat = field(default_factory=AngleScanStorageFormat)
     notes: str = ""
@@ -160,4 +163,5 @@ class AngleScanDocument:
             "capture": self.capture.to_dict(),
             "storage": self.storage.to_dict(),
             "notes": self.notes,
+            "image_format": self.image_format.to_dict(),
         }

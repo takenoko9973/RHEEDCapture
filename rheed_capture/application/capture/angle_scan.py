@@ -10,6 +10,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, FrameCapture
+from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
+    ImageFormatSnapshot,
+)
 from rheed_capture.application.ports.motor import DEFAULT_MOTOR_SPEED_RPM
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
@@ -90,6 +94,7 @@ class AngleScanCapture:
         *,
         accumulation_frames: int = 1,
         trigger_wait_timeout_sec: float = 0,
+        image_format: ImageFormatSnapshot,
     ) -> None:
         """撮影、保存、モータ操作の依存を受け取り、走査計画を確定する。"""
         self.frame_capturer = frame_capturer
@@ -98,6 +103,7 @@ class AngleScanCapture:
         self.settings = settings
         self.accumulation_frames = accumulation_frames
         self.trigger_wait_timeout_sec = trigger_wait_timeout_sec
+        self.image_format = image_format
 
         self.calibration = MotorAngleCalibration(settings.position_units_per_deg)
         self.plan = self._build_plan(settings)
@@ -219,10 +225,14 @@ class AngleScanCapture:
                     raise RuntimeError(msg)
                 hooks.on_frame_captured(
                     CapturedFrame(
-                        image=_clip_accumulated_image(accumulated_image),
+                        image=_clip_accumulated_image(
+                            accumulated_image,
+                            self.image_format,
+                        ),
                         condition=completed_frame.condition,
                         readback=completed_frame.readback,
                         timing=completed_frame.timing,
+                        image_format=self.image_format,
                     )
                 )
 
@@ -260,6 +270,7 @@ class AngleScanCapture:
             conditions=self.conditions,
             retry_limit=retry_limit,
             accumulation_frames=self.accumulation_frames,
+            image_format=self.image_format,
         )
 
 
@@ -270,6 +281,7 @@ def build_angle_scan_document(
     conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
     accumulation_frames: int = 1,
+    image_format: ImageFormatSnapshot,
 ) -> AngleScanDocument:
     """角度走査計画と撮影条件をscan.json保存モデルへ変換する。"""
     return AngleScanDocument(
@@ -300,6 +312,7 @@ def build_angle_scan_document(
             accumulation_frames=accumulation_frames,
         ),
         storage=AngleScanStorageFormat.for_accumulation(accumulation_frames),
+        image_format=image_format,
     )
 
 
@@ -309,6 +322,7 @@ def build_angle_scan_document_from_conditions(
     conditions: list[CaptureCondition],
     retry_limit: int = DEFAULT_CAPTURE_RETRY_LIMIT,
     accumulation_frames: int = 1,
+    image_format: ImageFormatSnapshot,
 ) -> AngleScanDocument:
     """角度計画と撮影条件からscan.jsonモデルを事前生成する。"""
     calibration = MotorAngleCalibration(settings.position_units_per_deg)
@@ -325,6 +339,7 @@ def build_angle_scan_document_from_conditions(
         conditions=conditions,
         retry_limit=retry_limit,
         accumulation_frames=accumulation_frames,
+        image_format=image_format,
     )
 
 
@@ -340,6 +355,16 @@ def _accumulate_image(
     return accumulated_image + image_wide
 
 
-def _clip_accumulated_image(accumulated_image: np.ndarray) -> np.ndarray:
-    """表示通知直前にだけ合計画像をuint16範囲へクリップする。"""
-    return np.clip(accumulated_image, 0, np.iinfo(np.uint16).max).astype(np.uint16)
+def _clip_accumulated_image(
+    accumulated_image: np.ndarray,
+    image_format: ImageFormatSnapshot,
+) -> np.ndarray:
+    """表示通知直前に合計画像を保存形式のdtype範囲へclipする。"""
+    output_dtype = (
+        np.uint8 if image_format.bit_depth_sensor == SENSOR_BIT_DEPTH_8 else np.uint16
+    )
+    return np.clip(
+        accumulated_image,
+        0,
+        np.iinfo(output_dtype).max,
+    ).astype(output_dtype)

@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.application.ports.camera import CameraFrame, FrameReadback, TriggerSettings
+from rheed_capture.application.ports.camera import (
+    CameraFrame,
+    FrameReadback,
+    ImageFormatSnapshot,
+    TriggerSettings,
+)
 from rheed_capture.domain.angle_scan.plan import (
     angle_to_position_units,
     build_angle_list,
@@ -27,6 +32,12 @@ from rheed_capture.presentation.qt.workers.angle_scan_service import (
 def mock_camera() -> MagicMock:
     """1フレーム用Trigger Sessionを作るCamera mockを返す。"""
     camera = MagicMock(spec=CameraDevice)
+    camera.configure_image_format.return_value = ImageFormatSnapshot(
+        12,
+        16,
+        "Mono12Packed",
+        "MsbAligned",
+    )
 
     def start_session(
         *,
@@ -46,6 +57,7 @@ def mock_camera() -> MagicMock:
                 camera_timestamp_frequency_hz=125_000_000,
                 source="camera",
             ),
+            image_format=camera.configure_image_format.return_value,
         )
         return session
 

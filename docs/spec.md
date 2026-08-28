@@ -20,7 +20,7 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 
 | モジュール名 | レイヤー | 役割・責務 |
 | --- | --- | --- |
-| **`CameraDevice`** | Model | ハードウェア制御 (pypylonラッパー)。パラメータ設定、MsbAligned適用、Min/Max取得。 |
+| **`CameraDevice`** | Model | ハードウェア制御 (pypylonラッパー)。パラメータ設定、選択bit深度に応じたPixelFormat/converter適用、Min/Max取得。 |
 | **`ImageProcessor`** | Model | 純粋な画像変換。CLAHE処理アルゴリズム。状態を持たない静的メソッド。 |
 | **`ExperimentStorage`** | Model | 実験セッションのディレクトリ状態管理、連番管理、遅延作成ロジック。 |
 | **`TiffWriter`** | Model | I/O専任。Numpy配列とJSONメタデータを指定圧縮でTIFFへ書き込む。 |
@@ -35,25 +35,31 @@ Basler社製産業用カメラを用い、RHEED（反射高速電子線回折）
 
 カメラからPCへの転送形式と、pypylon変換後にアプリケーションが扱う形式を区別する。
 
+Settingsの `acquisition.sensor_bit_depth` でセンサ撮像ビット深度を選択する。許可値は整数の `8` と `12` のみで、既定値は `12` である。既存の `settings.json` でこのキーが欠落している場合だけ既定値を補い、存在する不正値はエラーにする。
+
 **カメラ転送形式**：
 
-* 実機Basler acA720-290gm：`PixelFormat = Mono12Packed`
-* pylon Camera Emulation：`PixelFormat = Mono12`
+| 選択値 | 実機Basler acA720-290gm | pylon Camera Emulation |
+| ---: | --- | --- |
+| `12` | `PixelFormat = Mono12Packed` | `PixelFormat = Mono12` |
+| `8` | `PixelFormat = Mono8` | `PixelFormat = Mono8` |
 
 接続先はDevice Classで判定し、`BaslerCamEmu`だけをエミュレータとして扱う。
-`PixelFormat` は撮影データの意味を決める必須設定であり、nodeの利用可否と書込可否を確認し、設定後の読戻し値が期待値と一致しない場合は接続を失敗させる。
-実機で `Mono12Packed` を設定できない場合に、`Mono12` や `Mono8` へフォールバックしない。
+`PixelFormat` は撮影データの意味を決める必須設定であり、nodeの利用可否、書込可否、書込み、読戻しを確認する。要求値と読戻し値が一致しない場合は撮影を失敗させ、別のPixelFormatへフォールバックしない。
 
 **pypylon変換後の形式**：
 
-* `OutputPixelFormat = Mono16`
-* `OutputBitAlignment = MsbAligned`
-* NumPy dtype：`uint16`
-* センサ有効ビット深度：12bit
+| 選択値 | OutputPixelFormat | OutputBitAlignment | NumPy dtype | 保存dtype | センサ強度範囲 |
+| ---: | --- | --- | --- | --- | ---: |
+| `12` | `Mono16` | `MsbAligned` | `uint16` | `uint16` | `0..4095`（配列値は`0..65520`） |
+| `8` | `Mono8` | 適用しない | `uint8` | `uint8` | `0..255` |
 
 実機とエミュレータのどちらも、pypylon公式の `ImageFormatConverter` で変換する。
 PythonやNumPyによる `Mono12Packed` の手動アンパックは行わない。
-12bitデータ（0〜4095）を16bitコンテナの上位ビットへ配置し、0〜65520のスケールとしてプレビュー処理、解析処理、保存処理へ渡す。
+12bitデータ（0〜4095）は16bitコンテナの上位ビットへ配置し、0〜65520のスケールとして処理・保存へ渡す。8bitデータは転送後の `uint8` 配列をそのまま処理・保存へ渡す。
+
+各取得Sessionは、成功したカメラ設定とreadbackに対応する次のsnapshotを固定して保持する。
+`bit_depth_sensor`、`bit_depth_saved`、`pixel_format`、`alignment` を含み、12bitでは `12/16/Mono12Packed` または `12/16/Mono12/MsbAligned`、8bitでは `8/8/Mono8/null` となる。
 
 ### 4.2 強制初期化設定 (生データ保証)
 
@@ -69,13 +75,13 @@ PythonやNumPyによる `Mono12Packed` の手動アンパックは行わない�
 * **取得ロジック**: PreviewはSequence、Angle Scan、Recordingと同じTrigger Sessionを使う。取得モードは `Software` と `Hardware` の2種類で、Free Runは使用しない。
 * **Software Trigger**: `TriggerReady` を待ってからSoftware Triggerを1回発行し、1枚のRaw frameを取得する。FPS Limitが `Unlimited` の場合、アプリケーション側で意図的なsleepによる速度制限を行わない。
 * **Hardware Trigger**: アプリケーションからSoftware Triggerを発行せず、外部FrameStartに対応するRaw frameを待つ。無信号の待機は撮影エラーにせず、最後に完成したPreview画像を表示したままにする。
-* **共通Acquisition設定**: Trigger Mode、Hardware Source、Hardware Activation、Trigger Delay `[us]`、FPS Limit、Accumulation、Accumulation Frames、Trigger Wait Timeout `[s]` を使用する。既定値は `Software`、`Line1`、`RisingEdge`、遅延 `0`、FPS Limit `Unlimited`、Accumulation `Off`（`N=1`）、Trigger Wait Timeout `0`（無期限）である。Trigger DelayはHardware専用とする。
+* **共通Acquisition設定**: Trigger Mode、Sensor Bit Depth、Hardware Source、Hardware Activation、Trigger Delay `[us]`、FPS Limit、Accumulation、Accumulation Frames、Trigger Wait Timeout `[s]` を使用する。既定値は `Software`、`12-bit`、`Line1`、`RisingEdge`、遅延 `0`、FPS Limit `Unlimited`、Accumulation `Off`（`N=1`）、Trigger Wait Timeout `0`（無期限）である。Trigger DelayはHardware専用とする。
 * **Preview設定変更**: Preview中にTrigger Mode、FPS Limit、Accumulation設定を変更した場合は、現在のSessionを停止して現在値で再armする。再arm後もPreviewを自動的に再開する。
 * **画像処理 (トグル式)**:
 * **ON時**: CLAHE（Contrast Limited Adaptive Histogram Equalization）を分割数の異なる2段構成で適用。
-* **OFF時**: MsbAligned化された16bitデータを8bitにダウンスケール（`>> 8`）して表示。
+* **OFF時**: 12bitはMsbAligned化された16bitデータを `>> 8` して表示し、8bitは `uint8` データを変換せず表示する。Graphのhistogram、mean、stdとlabelは、12bitでは `0..4095`、8bitでは `0..255` のセンサ強度scaleを使う。
 
-AccumulationをONにした場合、Raw frameを `uint64` で画素ごとに加算し、`uint16` の範囲へclipしてから完成した積算画像だけをPreviewへ通知する。
+AccumulationをONにした場合、Raw frameを `uint64` で画素ごとに加算し、選択した保存形式の範囲（8bitは`uint8`の0..255、12bitは`uint16`の0..65535）へclipしてから完成した積算画像だけをPreviewへ通知する。
 Accumulation中は次のRaw frameが到着するまで前回の完成画像を表示し、積算画像そのものは保存しない。
 
 * **グリッド表示 (トグル式)**:
@@ -168,8 +174,8 @@ CLAHE処理のON/OFFとグリッド表示のON/OFFをPreview Settings内で操�
 ### 6.1 記録形式
 
 * **フォーマット**: TIFF (`.tiff`)。Sequence/Angle Scanは`zlib`固定、Recordingは圧縮booleanにより`zlib`または非圧縮。
-* **データ型**: `uint16` (MsbAligned処理済み)
-* **保存値スケール**: 12bitセンサ値を16bitコンテナの上位ビットへ配置した0〜65520
+* **データ型**: 8bit選択時は`uint8`、12bit選択時は`uint16` (MsbAligned処理済み)
+* **保存値スケール**: 8bit選択時は0..255、12bit選択時はセンサ値を16bitコンテナの上位ビットへ配置した0..65520
 * **画像加工**: 画像処理（CLAHE等）は一切適用せず、コンバータから得た配列をそのまま書き込む。
 
 ### 6.2 メタデータ仕様
@@ -188,12 +194,15 @@ TIFFの標準タグ `ImageDescription` に、以下の情報をJSON文字列と�
   "camera_timestamp_source": "camera",
   "bit_depth_sensor": 12,
   "bit_depth_saved": 16,
+  "pixel_format": "Mono12Packed",
   "alignment": "MsbAligned"
 }
 
 ```
 
 `exposure_ms` と `gain` はアプリが要求した撮影条件、`camera_exposure_ms` と `camera_gain` は取得フレームに対応するカメラ読戻し値を表す。実機ではExposure Time、Gain Allを必須Chunkから読戻し、Timestamp Chunkが利用可能な場合だけcamera timestampを使う。Timestamp Chunkが欠落・不可読なカメラでも撮影を拒否せず、`camera_timestamp_source` を `host` として `time.time_ns()` を1GHzのtickへ保存する。`timestamp` はSoftwareではPCがSoftware Trigger命令を発行する直前のJST時刻、HardwareではRaw frameをhostが取得した時点のJST時刻を表す。`camera_timestamp_source` が `camera` の場合、`camera_timestamp_ticks` は画像取得開始時のカメラ内部時計の生tick、`camera_timestamp_frequency_hz` は1秒あたりのtick数である。PTPを自動有効化しないため、camera tickを絶対日時として扱わない。pylonエミュレータではsourceを `simulation` とし、Software Trigger発行直後の `perf_counter_ns()` と周波数 `1000000000` を保存する。この値は実測値ではない。Recordingではcamera読戻し項目をTIFFと `frames.csv` の両方へ保存する。
+
+Sequence、Angle Scan、Recordingの全TIFF（通常取得とAccumulation Raw）は、撮影Sessionの `image_format` snapshotから `bit_depth_sensor`、`bit_depth_saved`、`pixel_format`、`alignment` を `ImageDescription` へ保存する。`scan.json` と `recording.json` は同じ4項目をsession-levelの `image_format` objectとして持ち、`schema_version` は既存の `1` を維持する。Recordingの状態更新でもこのobjectは変化しない。`frames.csv` のheaderとrow列は変更しない。
 
 取得統計は実行時の診断表示であり、TIFFメタデータへ追加しない。
 

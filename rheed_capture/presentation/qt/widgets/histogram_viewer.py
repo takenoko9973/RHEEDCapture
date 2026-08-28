@@ -3,6 +3,11 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import QGroupBox, QLabel, QVBoxLayout, QWidget
 
+from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
+    SENSOR_BIT_DEPTH_12,
+)
+
 
 class HistogramWidget(QWidget):
     def __init__(self) -> None:
@@ -59,8 +64,23 @@ class HistogramWidget(QWidget):
 
 class HistogramPanel(QGroupBox):
     def __init__(self) -> None:
-        super().__init__("Intensity 12bit Histogram (Log Scale)")
+        super().__init__("Intensity 12bit Histogram (0..4095, Log Scale)")
         self._setup_ui()
+
+    @Slot(int)
+    def set_sensor_bit_depth(self, sensor_bit_depth: int) -> None:
+        """センサbit depthに合わせてHistogramの強度範囲を表示する。"""
+        if sensor_bit_depth == SENSOR_BIT_DEPTH_8:
+            maximum_value = 255
+        elif sensor_bit_depth == SENSOR_BIT_DEPTH_12:
+            maximum_value = 4095
+        else:
+            msg = f"Unsupported sensor bit depth: {sensor_bit_depth}"
+            raise ValueError(msg)
+        self.setTitle(
+            f"Intensity {sensor_bit_depth}bit Histogram "
+            f"(0..{maximum_value}, Log Scale)"
+        )
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)

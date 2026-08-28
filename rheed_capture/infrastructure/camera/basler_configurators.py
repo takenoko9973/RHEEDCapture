@@ -5,7 +5,11 @@ from typing import Protocol
 
 from pypylon import genicam, pylon
 
-from rheed_capture.application.ports.camera import CameraError
+from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
+    SENSOR_BIT_DEPTH_12,
+    CameraError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +18,7 @@ CAMERA_EMULATION_ROI = (720, 540)
 CAMERA_EMULATION_DEVICE_CLASS = "BaslerCamEmu"
 CAMERA_EMULATION_PIXEL_FORMAT = "Mono12"
 CAMERA_PIXEL_FORMAT = "Mono12Packed"
+CAMERA_8BIT_PIXEL_FORMAT = "Mono8"
 NodeValue = str | int | float | bool
 
 
@@ -68,6 +73,22 @@ class BaslerCameraConfigurator(Protocol):
         """接続済みcameraへ設定を適用する。"""
 
 
+def pixel_format_for_sensor_bit_depth(device_class: str, sensor_bit_depth: int) -> str:
+    """DeviceClassとセンサbit depthから要求するBasler PixelFormatを返す。"""
+    if (
+        isinstance(sensor_bit_depth, bool)
+        or not isinstance(sensor_bit_depth, int)
+        or sensor_bit_depth not in (SENSOR_BIT_DEPTH_8, SENSOR_BIT_DEPTH_12)
+    ):
+        msg = "sensor_bit_depth must be an integer equal to 8 or 12."
+        raise ValueError(msg)
+    if sensor_bit_depth == SENSOR_BIT_DEPTH_8:
+        return CAMERA_8BIT_PIXEL_FORMAT
+    if device_class == CAMERA_EMULATION_DEVICE_CLASS:
+        return CAMERA_EMULATION_PIXEL_FORMAT
+    return CAMERA_PIXEL_FORMAT
+
+
 class BaslerMandatorySettings:
     """実機とエミュレータで共通の必須設定を適用する。"""
 
@@ -76,11 +97,7 @@ class BaslerMandatorySettings:
         nodemap = camera.GetNodeMap()
 
         device_class = camera.GetDeviceInfo().GetDeviceClass()
-        pixel_format = (
-            CAMERA_EMULATION_PIXEL_FORMAT
-            if device_class == CAMERA_EMULATION_DEVICE_CLASS
-            else CAMERA_PIXEL_FORMAT
-        )
+        pixel_format = pixel_format_for_sensor_bit_depth(device_class, 12)
         _set_required_pixel_format(nodemap, pixel_format)
         _set_node_value(nodemap, "ExposureAuto", "Off")
         _set_node_value(nodemap, "GainAuto", "Off")
@@ -89,8 +106,8 @@ class BaslerMandatorySettings:
         _set_node_value(nodemap, "ReverseX", True)
 
 
-def _set_required_pixel_format(nodemap: _NodeMap, expected: str) -> None:
-    """PixelFormat nodeを必須値へ設定し、書込み結果を検証する。"""
+def _set_required_pixel_format(nodemap: _NodeMap, expected: str) -> str:
+    """PixelFormat nodeを必須値へ設定し、検証済みの読戻し値を返す。"""
     node_name = "PixelFormat"
     try:
         node = nodemap.GetNode(node_name)
@@ -134,6 +151,7 @@ def _set_required_pixel_format(nodemap: _NodeMap, expected: str) -> None:
             f"期待値 '{expected}' と一致しません。"
         )
         raise CameraError(msg)
+    return actual
 
 
 class BaslerCameraEmulationSettings:

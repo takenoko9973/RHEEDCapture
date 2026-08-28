@@ -18,9 +18,6 @@ class SequenceFrameMetadata:
     camera_timestamp_ticks: int
     camera_timestamp_frequency_hz: int
     camera_timestamp_source: Literal["camera", "host", "simulation"]
-    bit_depth_sensor: int = 12
-    bit_depth_saved: int = 16
-    alignment: str = "MsbAligned"
 
     def to_dict(self) -> dict[str, Any]:
         """TIFF metadataへ渡す辞書を返す。"""
@@ -33,9 +30,6 @@ class SequenceFrameMetadata:
             "camera_timestamp_ticks": self.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": self.camera_timestamp_frequency_hz,
             "camera_timestamp_source": self.camera_timestamp_source,
-            "bit_depth_sensor": self.bit_depth_sensor,
-            "bit_depth_saved": self.bit_depth_saved,
-            "alignment": self.alignment,
         }
 
 
@@ -59,9 +53,6 @@ class AngleScanFrameMetadata:
     actual_angle_deg: float | None = None
     angle_coordinate: str = "relative"
     angle_reference: str = "scan_start"
-    bit_depth_sensor: int = 12
-    bit_depth_saved: int = 16
-    alignment: str = "MsbAligned"
 
     def to_dict(self) -> dict[str, Any]:
         """TIFF metadataへ渡す辞書を返す。"""
@@ -80,7 +71,4 @@ class AngleScanFrameMetadata:
             "camera_timestamp_ticks": self.camera_timestamp_ticks,
             "camera_timestamp_frequency_hz": self.camera_timestamp_frequency_hz,
             "camera_timestamp_source": self.camera_timestamp_source,
-            "bit_depth_sensor": self.bit_depth_sensor,
-            "bit_depth_saved": self.bit_depth_saved,
-            "alignment": self.alignment,
         }

@@ -35,13 +35,17 @@ class AcquisitionSettingsPanel(QGroupBox):
         self._setup_ui()
         self._update_control_state()
 
-    def _setup_ui(self) -> None:
+    def _setup_ui(self) -> None:  # noqa: PLR0915
         """入力Widgetを作成し、Settingsモデルへ変換するSignalを結線する。"""
         layout = QFormLayout(self)
 
         self.cmb_mode = QComboBox()
         self.cmb_mode.addItem("Software", "software")
         self.cmb_mode.addItem("Hardware", "hardware")
+
+        self.cmb_sensor_bit_depth = QComboBox()
+        self.cmb_sensor_bit_depth.addItem("12-bit", 12)
+        self.cmb_sensor_bit_depth.addItem("8-bit", 8)
 
         self.cmb_source = QComboBox()
         self.cmb_source.addItems(["Line1", "Line3", "Action1"])
@@ -74,6 +78,7 @@ class AcquisitionSettingsPanel(QGroupBox):
         self._configure_tooltips()
 
         layout.addRow(self.lbl_mode, self.cmb_mode)
+        layout.addRow(self.lbl_sensor_bit_depth, self.cmb_sensor_bit_depth)
         layout.addRow(self.lbl_source, self.cmb_source)
         layout.addRow(self.lbl_activation, self.cmb_activation)
         layout.addRow(self.lbl_delay, self.spin_delay_us)
@@ -83,6 +88,7 @@ class AcquisitionSettingsPanel(QGroupBox):
         layout.addRow(self.lbl_trigger_wait_timeout, self.spin_trigger_wait_timeout_sec)
 
         self.cmb_mode.currentIndexChanged.connect(self._on_mode_changed)
+        self.cmb_sensor_bit_depth.currentIndexChanged.connect(self._emit_settings_changed)
         self.cmb_source.currentIndexChanged.connect(self._emit_settings_changed)
         self.cmb_activation.currentIndexChanged.connect(self._emit_settings_changed)
         self.spin_delay_us.valueChanged.connect(self._emit_settings_changed)
@@ -98,6 +104,13 @@ class AcquisitionSettingsPanel(QGroupBox):
         self.lbl_mode.setToolTip("カメラ取得に使うTrigger方式を選択します。")
         self.cmb_mode.setToolTip(
             "SoftwareはソフトウェアTrigger、Hardwareは外部Triggerを使用します。"
+        )
+        self.lbl_sensor_bit_depth = QLabel("Sensor Bit Depth:")
+        self.lbl_sensor_bit_depth.setToolTip(
+            "センサ撮像ビット深度を8-bitまたは12-bitから選択します。"
+        )
+        self.cmb_sensor_bit_depth.setToolTip(
+            "センサ撮像ビット深度を選択します。撮影開始後は変更できません。"
         )
         self.lbl_source = QLabel("Hardware Source:")
         self.lbl_source.setToolTip("Hardware Triggerで使用する入力源を選択します。")
@@ -158,6 +171,7 @@ class AcquisitionSettingsPanel(QGroupBox):
         finite_fps_enabled = common_enabled and not self.chk_fps_unlimited.isChecked()
 
         self.cmb_mode.setEnabled(common_enabled)
+        self.cmb_sensor_bit_depth.setEnabled(common_enabled)
         self.cmb_source.setEnabled(hardware_enabled)
         self.cmb_activation.setEnabled(hardware_enabled)
         self.spin_delay_us.setEnabled(hardware_enabled)
@@ -171,6 +185,7 @@ class AcquisitionSettingsPanel(QGroupBox):
         """現在の入力値を保存用AcquisitionSettingsへ変換する。"""
         return AcquisitionSettings(
             mode=cast("AcquisitionMode", self.cmb_mode.currentData()),
+            sensor_bit_depth=cast("int", self.cmb_sensor_bit_depth.currentData()),
             hardware_source=cast("AcquisitionHardwareSource", self.cmb_source.currentText()),
             hardware_activation=cast(
                 "AcquisitionHardwareActivation",
@@ -191,6 +206,10 @@ class AcquisitionSettingsPanel(QGroupBox):
         """保存済みAcquisition設定を入力Widgetへ反映する。"""
         with QSignalBlocker(self.cmb_mode):
             self.cmb_mode.setCurrentIndex(self.cmb_mode.findData(settings.mode))
+        with QSignalBlocker(self.cmb_sensor_bit_depth):
+            self.cmb_sensor_bit_depth.setCurrentIndex(
+                self.cmb_sensor_bit_depth.findData(settings.sensor_bit_depth)
+            )
         with QSignalBlocker(self.cmb_source):
             self.cmb_source.setCurrentText(settings.hardware_source)
         with QSignalBlocker(self.cmb_activation):

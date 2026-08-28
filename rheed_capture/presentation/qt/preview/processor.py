@@ -9,6 +9,10 @@ import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 
 from rheed_capture.application.capture.frame_capturer import CapturedFrame
+from rheed_capture.application.ports.camera import (
+    SENSOR_BIT_DEPTH_8,
+    ImageFormatSnapshot,
+)
 from rheed_capture.domain.acquisition_statistics import AcquisitionStatisticsMeter
 from rheed_capture.domain.image_processor import ImageProcessor
 
@@ -216,7 +220,15 @@ class LatestOnlyProcessor[InputT, ResultT]:
                     self._processing = False
 
 
-class PreviewProcessor(LatestOnlyProcessor[np.ndarray, np.ndarray]):
+@dataclass(frozen=True)
+class PreviewInput:
+    """PreviewとGraphへ渡すRaw画像と確定済み画像形式。"""
+
+    image: np.ndarray
+    image_format: ImageFormatSnapshot
+
+
+class PreviewProcessor(LatestOnlyProcessor[PreviewInput, np.ndarray]):
     """CLAHEまたは8bit変換だけを担当するPreview処理worker。"""
 
     def __init__(self, *, on_error: Callable[[Exception], None] | None = None) -> None:
@@ -230,13 +242,19 @@ class PreviewProcessor(LatestOnlyProcessor[np.ndarray, np.ndarray]):
         with self._processing_lock:
             self._processing_enabled = enabled
 
-    def _process_image(self, raw_image: np.ndarray) -> np.ndarray:
+    def _process_image(self, value: PreviewInput) -> np.ndarray:
         """Raw画像を表示用8bit画像へ変換する。"""
         with self._processing_lock:
             processing_enabled = self._processing_enabled
         if processing_enabled:
-            return ImageProcessor.apply_double_clahe(raw_image)
-        return ImageProcessor.to_8bit_preview(raw_image)
+            return ImageProcessor.apply_double_clahe(
+                value.image,
+                sensor_bit_depth=value.image_format.bit_depth_sensor,
+            )
+        return ImageProcessor.to_8bit_preview(
+            value.image,
+            sensor_bit_depth=value.image_format.bit_depth_sensor,
+        )
 
 
 @dataclass(frozen=True)
@@ -246,22 +264,33 @@ class GraphResult:
     histogram: np.ndarray
     mean: float
     std: float
+    bit_depth_sensor: int
 
 
-class GraphProcessor(LatestOnlyProcessor[np.ndarray, GraphResult]):
+class GraphProcessor(LatestOnlyProcessor[PreviewInput, GraphResult]):
     """histogram、mean、stdだけを担当する独立Graph処理worker。"""
 
     def __init__(self, *, on_error: Callable[[Exception], None] | None = None) -> None:
         """Graph用のlatest-only workerを生成する。"""
         super().__init__(self._process_graph, name="graph", on_error=on_error)
 
-    def _process_graph(self, raw_image: np.ndarray) -> GraphResult:
-        """Raw画像から12bit histogramと統計量を計算する。"""
-        image_12bit = np.right_shift(raw_image, 4).ravel()
-        mean_val = float(np.mean(image_12bit))
-        std_val = float(np.std(image_12bit))
-        histogram, _ = np.histogram(image_12bit, range=(0, 4095), bins=256)
-        return GraphResult(histogram, mean_val, std_val)
+    def _process_graph(self, value: PreviewInput) -> GraphResult:
+        """Raw画像をセンサ強度scaleへ戻してhistogramと統計量を計算する。"""
+        if value.image_format.bit_depth_sensor == SENSOR_BIT_DEPTH_8:
+            sensor_image = np.asarray(value.image, dtype=np.uint8).ravel()
+            maximum_value = 255
+        else:
+            sensor_image = np.right_shift(value.image, 4).ravel()
+            maximum_value = 4095
+        mean_val = float(np.mean(sensor_image))
+        std_val = float(np.std(sensor_image))
+        histogram, _ = np.histogram(sensor_image, range=(0, maximum_value), bins=256)
+        return GraphResult(
+            histogram,
+            mean_val,
+            std_val,
+            value.image_format.bit_depth_sensor,
+        )
 
 
 @dataclass(frozen=True)
@@ -288,6 +317,7 @@ class PreviewPipeline(QObject):
 
     image_ready = Signal(np.ndarray)
     histogram_ready = Signal(np.ndarray, float, float)
+    image_format_changed = Signal(int)
     error_occurred = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -339,17 +369,15 @@ class PreviewPipeline(QObject):
         self._preview_processor.set_processing_enabled(enabled)
 
     @Slot(object)
-    def process_frame(self, frame: object) -> None:
-        """Raw画像またはCapturedFrameを処理mailboxへ投入する。"""
+    def process_frame(self, frame: PreviewInput | CapturedFrame) -> None:
+        """確定済み画像形式を持つフレームを処理mailboxへ投入する。"""
         self.submit_frame(frame)
 
-    def submit_frame(self, frame: object) -> bool:
-        """Raw画像をPreviewとGraphへ待たずに投入し、両方の受付結果を返す。"""
-        raw_image = self._extract_raw_image(frame)
-        if raw_image is None:
-            return False
-        preview_accepted = self._preview_processor.submit(raw_image)
-        graph_accepted = self._graph_processor.submit(raw_image)
+    def submit_frame(self, frame: PreviewInput | CapturedFrame) -> bool:
+        """確定済み画像形式を持つ画像をPreviewとGraphへ投入する。"""
+        preview_input = self._extract_preview_input(frame)
+        preview_accepted = self._preview_processor.submit(preview_input)
+        graph_accepted = self._graph_processor.submit(preview_input)
         return preview_accepted and graph_accepted
 
     def poll_results(self) -> bool:
@@ -364,6 +392,7 @@ class PreviewPipeline(QObject):
         graph_result = self._graph_processor.take_latest_result()
         if graph_result is not None:
             self._record_graph_display()
+            self.image_format_changed.emit(graph_result.bit_depth_sensor)
             self.histogram_ready.emit(
                 graph_result.histogram,
                 graph_result.mean,
@@ -416,13 +445,17 @@ class PreviewPipeline(QObject):
             graph_result_drop_count=self._graph_processor.result_drop_count,
         )
 
-    def _extract_raw_image(self, frame: object) -> np.ndarray | None:
-        """ndarrayと撮影済みCapturedFrameを表示用Raw画像へ正規化する。"""
-        if isinstance(frame, CapturedFrame):
-            return frame.image
-        if isinstance(frame, np.ndarray):
+    def _extract_preview_input(
+        self,
+        frame: PreviewInput | CapturedFrame,
+    ) -> PreviewInput:
+        """取得結果を表示用Raw画像とsnapshotへ変換する。"""
+        if isinstance(frame, PreviewInput):
             return frame
-        return None
+        if isinstance(frame, CapturedFrame):
+            return PreviewInput(frame.image, frame.image_format)
+        msg = f"Unsupported preview frame type: {type(frame).__name__}"
+        raise TypeError(msg)
 
     def _record_preview_display(self) -> None:
         """Preview結果をGUIへ通知した回数を記録する。"""

@@ -9,12 +9,17 @@ import time
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, Self
 
+import numpy as np
 from pypylon import genicam, pylon
 from pypylon.pylon import GenericException, InstantCamera, TlFactory
 
 from rheed_capture.application.ports.camera import (
+    SAVED_BIT_DEPTH_12,
+    SENSOR_BIT_DEPTH_8,
+    SENSOR_BIT_DEPTH_12,
     CameraError,
     CameraFrame,
+    ImageFormatSnapshot,
     TriggerSettings,
 )
 from rheed_capture.domain.acquisition_statistics import AcquisitionSample
@@ -23,6 +28,8 @@ from rheed_capture.infrastructure.camera.basler_configurators import (
     BaslerCameraConfigurator,
     BaslerCameraEmulationSettings,
     BaslerMandatorySettings,
+    _set_required_pixel_format,
+    pixel_format_for_sensor_bit_depth,
 )
 from rheed_capture.infrastructure.camera.basler_frame_readback import (
     BaslerFrameReadbackProvider,
@@ -33,8 +40,6 @@ from rheed_capture.infrastructure.camera.basler_frame_readback import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import TracebackType
-
-    import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +94,7 @@ class BaslerCamera:
         self._owner_thread_id: int | None = None
         self._active_trigger_session: _BaslerTriggerCaptureSession | None = None
         self._latest_acquisition_sample: AcquisitionSample | None = None
+        self._image_format: ImageFormatSnapshot | None = None
         self._frame_readback_provider_factory: (
             type[ChunkFrameReadbackProvider | SimulationFrameReadbackProvider]
         )
@@ -129,7 +135,7 @@ class BaslerCamera:
                 devices = tl_factory.EnumerateDevices()
                 if not devices:
                     msg = "カメラが見つかりません。"
-                    raise CameraError(msg)
+                    raise CameraError(msg)  # noqa: TRY301
 
                 self._camera = InstantCamera(tl_factory.CreateFirstDevice())
                 self._camera.Open()
@@ -145,12 +151,19 @@ class BaslerCamera:
                     else ChunkFrameReadbackProvider
                 )
 
-                try:
-                    for configurator in self._configurators:
-                        configurator.apply(self.camera)
-                except CameraError:
-                    self._cleanup_failed_connection()
-                    raise
+                for configurator in self._configurators:
+                    configurator.apply(self.camera)
+                # BaslerMandatorySettingsが同じ値を設定・読戻し済みなので、ここでは
+                # その成功した値に対応するsnapshotだけを確定する。
+                self._image_format = ImageFormatSnapshot(
+                    bit_depth_sensor=SENSOR_BIT_DEPTH_12,
+                    bit_depth_saved=SAVED_BIT_DEPTH_12,
+                    pixel_format=pixel_format_for_sensor_bit_depth(
+                        device_info.GetDeviceClass(),
+                        SENSOR_BIT_DEPTH_12,
+                    ),
+                    alignment="MsbAligned",
+                )
                 if is_emulation:
                     BaslerCameraEmulationSettings().apply(self.camera)
 
@@ -163,6 +176,9 @@ class BaslerCamera:
                     device_info.GetDeviceVersion(),
                 )
 
+            except CameraError:
+                self._cleanup_failed_connection()
+                raise
             except GenericException as e:
                 self._cleanup_failed_connection()
                 msg = f"カメラへの接続に失敗しました: {e}"
@@ -181,6 +197,7 @@ class BaslerCamera:
             self._camera = None
             self._state = CameraState.DISCONNECTED
             self._latest_acquisition_sample = None
+            self._image_format = None
 
     def disconnect(self) -> None:
         """IDLE状態のカメラを切断する。"""
@@ -192,6 +209,7 @@ class BaslerCamera:
             self._camera = None
             self._state = CameraState.DISCONNECTED
             self._latest_acquisition_sample = None
+            self._image_format = None
 
     def is_connected(self) -> bool:
         """カメラがオープン済みかどうかを返す。"""
@@ -227,6 +245,51 @@ class BaslerCamera:
         with self._lock:
             self._require_state(CameraState.IDLE, "ゲイン設定")
             self.camera.GainRaw.SetValue(gain)
+
+    def configure_image_format(self, sensor_bit_depth: int) -> ImageFormatSnapshot:
+        """IDLE状態でPixelFormatとconverterを設定し、読戻しsnapshotを返す。"""
+        with self._lock:
+            self._require_state(CameraState.IDLE, "画像形式設定")
+            return self._ensure_image_format(sensor_bit_depth)
+
+    def _configure_image_format(
+        self,
+        sensor_bit_depth: int,
+    ) -> ImageFormatSnapshot:
+        """カメラのPixelFormatとconverterを設定する。"""
+        device_class = self.camera.GetDeviceInfo().GetDeviceClass()
+        expected_pixel_format = pixel_format_for_sensor_bit_depth(
+            device_class,
+            sensor_bit_depth,
+        )
+        nodemap = self.camera.GetNodeMap()
+        actual_pixel_format = _set_required_pixel_format(nodemap, expected_pixel_format)
+
+        if sensor_bit_depth == SENSOR_BIT_DEPTH_8:
+            self.converter.OutputPixelFormat = pylon.PixelType_Mono8
+            saved_bit_depth = 8
+            alignment = None
+        else:
+            self.converter.OutputPixelFormat = pylon.PixelType_Mono16
+            self.converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
+            saved_bit_depth = 16
+            alignment = "MsbAligned"
+
+        snapshot = ImageFormatSnapshot(
+            bit_depth_sensor=sensor_bit_depth,
+            bit_depth_saved=saved_bit_depth,
+            pixel_format=actual_pixel_format,
+            alignment=alignment,
+        )
+        self._image_format = snapshot
+        return snapshot
+
+    def _ensure_image_format(self, sensor_bit_depth: int) -> ImageFormatSnapshot:
+        """必要なときだけIDLE状態で画像形式を設定し、現在のsnapshotを返す。"""
+        image_format = self._image_format
+        if image_format is None or image_format.bit_depth_sensor != sensor_bit_depth:
+            return self._configure_image_format(sensor_bit_depth)
+        return image_format
 
     def get_gain(self) -> float:
         """現在のゲインを返す。"""
@@ -297,10 +360,12 @@ class BaslerCamera:
 
         with self._lock:
             self._require_state(CameraState.IDLE, "Trigger Session開始")
+            image_format = self._ensure_image_format(settings.sensor_bit_depth)
             session = _BaslerTriggerCaptureSession(
                 self,
                 settings=settings,
                 expected_frames=expected_frames,
+                image_format=image_format,
             )
             try:
                 session._start()
@@ -339,8 +404,7 @@ class BaslerCamera:
 
                     if result.GrabSucceeded():
                         self._record_successful_acquisition(result)
-                        image = self.converter.Convert(result)
-                        return image.GetArray()
+                        return self._convert_result(result)
 
                     return None
 
@@ -356,6 +420,36 @@ class BaslerCamera:
             timestamp=time.perf_counter(),
             payload_bytes=payload_bytes,
         )
+
+    def _convert_result(self, result: object) -> np.ndarray:
+        """現在のconverterでGrabResultを変換し、期待dtypeを検証する。"""
+        image_format = self._require_image_format()
+        try:
+            converted = self.converter.Convert(result)
+            image = converted.GetArray()
+        except GenericException as e:
+            msg = "画像変換に失敗しました。"
+            raise CameraError(msg) from e
+
+        expected_dtype = (
+            np.dtype(np.uint8)
+            if image_format.bit_depth_sensor == SENSOR_BIT_DEPTH_8
+            else np.dtype(np.uint16)
+        )
+        if not isinstance(image, np.ndarray) or image.dtype != expected_dtype:
+            msg = (
+                "converterの出力dtypeが期待値と異なります: "
+                f"actual={getattr(image, 'dtype', None)}, expected={expected_dtype}"
+            )
+            raise CameraError(msg)
+        return image
+
+    def _require_image_format(self) -> ImageFormatSnapshot:
+        """接続済みcameraで確定した画像形式snapshotを返す。"""
+        if self._image_format is None:
+            msg = "画像形式がcameraへ設定されていません。"
+            raise CameraError(msg)
+        return self._image_format
 
     def _require_state(self, expected: CameraState, operation: str) -> None:
         """操作に必要な状態でなければ暗黙切替せず失敗させる。"""
@@ -379,6 +473,7 @@ class _BaslerTriggerCaptureSession:
         *,
         settings: TriggerSettings,
         expected_frames: int | None,
+        image_format: ImageFormatSnapshot,
     ) -> None:
         """対象カメラと予定フレーム数を保持する。"""
         self._camera_device = camera_device
@@ -388,6 +483,7 @@ class _BaslerTriggerCaptureSession:
         self._readback_provider: BaslerFrameReadbackProvider = (
             camera_device._frame_readback_provider_factory()
         )
+        self._image_format = image_format
 
     def __enter__(self) -> Self:
         """開始済みSession自身を返す。"""
@@ -512,16 +608,12 @@ class _BaslerTriggerCaptureSession:
                         self._camera_device.camera,
                         result,
                     )
-                    try:
-                        converted = self._camera_device.converter.Convert(result)
-                        image = converted.GetArray()
-                    except GenericException as e:
-                        msg = f"Mono16 / MsbAligned画像変換に失敗しました: {e}"
-                        raise CameraError(msg) from e
+                    image = self._camera_device._convert_result(result)
 
                     return CameraFrame(
                         image=image,
                         readback=readback,
+                        image_format=self._image_format,
                     )
 
             except pylon.TimeoutException as e:

@@ -22,11 +22,17 @@ def mock_camera() -> MagicMock:
     """保存先プレビュー更新テスト用のCamera mockを作る。"""
     camera = MagicMock(spec=CameraDevice)
 
-    def mock_retrieve(*args, **kwargs) -> None:  # noqa: ARG001
-        """Preview取得待ちを短時間だけ再現する。"""
+    def mock_wait_until_ready(*args, **kwargs) -> None:  # noqa: ARG001
+        """Previewのフレーム待機を短時間だけ再現する。"""
         time.sleep(0.01)
+        raise TimeoutError
 
-    camera.retrieve_preview_frame.side_effect = mock_retrieve
+    camera.start_trigger_session.return_value.wait_until_ready.side_effect = (
+        mock_wait_until_ready
+    )
+    camera.start_trigger_session.return_value.retrieve_frame.side_effect = (
+        mock_wait_until_ready
+    )
     camera.get_exposure_bounds.return_value = (1, 10000)
     camera.get_gain_bounds.return_value = (0, 48)
     return camera

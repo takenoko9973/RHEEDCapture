@@ -13,6 +13,7 @@ from rheed_capture.application.ports.camera import (
     Camera,
     CameraError,
     FrameReadback,
+    ImageFormatSnapshot,
     TriggerCaptureSession,
     TriggerSettings,
 )
@@ -52,6 +53,7 @@ class CapturedFrame:
     condition: CaptureCondition
     readback: FrameReadback
     timing: CaptureTiming
+    image_format: ImageFormatSnapshot
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,7 @@ class GrabbedFrame:
     image: np.ndarray
     readback: FrameReadback
     timing: CaptureTiming
+    image_format: ImageFormatSnapshot
 
 
 class FrameCapture(Protocol):
@@ -145,6 +148,7 @@ class FrameGrabber:
         return GrabbedFrame(
             image=camera_frame.image,
             readback=camera_frame.readback,
+            image_format=camera_frame.image_format,
             timing=CaptureTiming(
                 trigger_issued_at=trigger_issued_at,
                 trigger_issued_monotonic_sec=trigger_issued_monotonic_sec,
@@ -263,6 +267,7 @@ class FrameGrabberSession:
             return GrabbedFrame(
                 image=camera_frame.image,
                 readback=camera_frame.readback,
+                image_format=camera_frame.image_format,
                 timing=CaptureTiming(
                     trigger_issued_at=datetime.now(JST),
                     trigger_issued_monotonic_sec=time.perf_counter(),
@@ -337,6 +342,7 @@ class FrameCapturer:
             condition=condition,
             readback=grabbed.readback,
             timing=grabbed.timing,
+            image_format=grabbed.image_format,
         )
 
     def capture_group(
@@ -371,4 +377,5 @@ class FrameCapturer:
                     condition=condition,
                     readback=grabbed.readback,
                     timing=grabbed.timing,
+                    image_format=grabbed.image_format,
                 )

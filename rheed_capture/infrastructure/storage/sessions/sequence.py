@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from rheed_capture.application.capture.frame_capturer import CapturedFrame
+    from rheed_capture.application.ports.camera import ImageFormatSnapshot
 
 
 class SequenceSession:
@@ -29,12 +30,14 @@ class SequenceSession:
         experiment_dir_name: str,
         sequence_number: int,
         tiff_writer: type[TiffWriter] = TiffWriter,
+        image_format: ImageFormatSnapshot,
     ) -> None:
         """Sequenceディレクトリと番号、TIFF writerを保持する。"""
         self.session_dir = session_dir
         self.experiment_dir_name = experiment_dir_name
         self.sequence_number = sequence_number
         self.tiff_writer = tiff_writer
+        self._image_format = image_format
 
     @property
     def dir_name(self) -> str:
@@ -84,7 +87,7 @@ class SequenceSession:
         self.tiff_writer.save(
             file_path,
             image_data,
-            metadata,
+            {**metadata, **self._image_format.to_dict()},
             compression=SEQUENCE_TIFF_COMPRESSION,
         )
         return file_path
@@ -125,7 +128,7 @@ class SequenceSession:
         self.tiff_writer.save(
             file_path,
             captured_frame.image,
-            metadata.to_dict(),
+            {**metadata.to_dict(), **self._image_format.to_dict()},
             compression=SEQUENCE_TIFF_COMPRESSION,
         )
         return file_path

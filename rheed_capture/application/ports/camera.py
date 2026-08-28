@@ -17,6 +17,66 @@ class CameraError(RuntimeError):
 type TriggerMode = Literal["software", "hardware"]
 type FrameReadbackSource = Literal["camera", "host", "simulation"]
 
+SENSOR_BIT_DEPTH_8 = 8
+SENSOR_BIT_DEPTH_12 = 12
+SAVED_BIT_DEPTH_8 = 8
+SAVED_BIT_DEPTH_12 = 16
+
+
+@dataclass(frozen=True)
+class ImageFormatSnapshot:
+    """1つの撮影Sessionで確定した画像形式と保存形式を保持する。"""
+
+    bit_depth_sensor: int
+    bit_depth_saved: int
+    pixel_format: str
+    alignment: str | None
+
+    def __post_init__(self) -> None:
+        """センサbit depthと保存形式の対応を検証する。"""
+        if (
+            isinstance(self.bit_depth_sensor, bool)
+            or not isinstance(self.bit_depth_sensor, int)
+            or self.bit_depth_sensor not in (SENSOR_BIT_DEPTH_8, SENSOR_BIT_DEPTH_12)
+        ):
+            msg = "bit_depth_sensor must be 8 or 12."
+            raise ValueError(msg)
+        if not isinstance(self.pixel_format, str) or not self.pixel_format:
+            msg = "pixel_format must be a non-empty string."
+            raise ValueError(msg)
+
+        expected_saved_depth = (
+            SAVED_BIT_DEPTH_8
+            if self.bit_depth_sensor == SENSOR_BIT_DEPTH_8
+            else SAVED_BIT_DEPTH_12
+        )
+        expected_alignment = (
+            None if self.bit_depth_sensor == SENSOR_BIT_DEPTH_8 else "MsbAligned"
+        )
+        expected_pixel_formats = (
+            ("Mono8",)
+            if self.bit_depth_sensor == SENSOR_BIT_DEPTH_8
+            else ("Mono12", "Mono12Packed")
+        )
+        if self.bit_depth_saved != expected_saved_depth:
+            msg = "bit_depth_saved does not match bit_depth_sensor."
+            raise ValueError(msg)
+        if self.alignment != expected_alignment:
+            msg = "alignment does not match bit_depth_sensor."
+            raise ValueError(msg)
+        if self.pixel_format not in expected_pixel_formats:
+            msg = f"pixel_format does not match bit_depth_sensor: {self.pixel_format}"
+            raise ValueError(msg)
+
+    def to_dict(self) -> dict[str, int | str | None]:
+        """保存用のimage_format辞書へ変換する。"""
+        return {
+            "bit_depth_sensor": self.bit_depth_sensor,
+            "bit_depth_saved": self.bit_depth_saved,
+            "pixel_format": self.pixel_format,
+            "alignment": self.alignment,
+        }
+
 
 @dataclass(frozen=True)
 class TriggerSettings:
@@ -27,6 +87,7 @@ class TriggerSettings:
     hardware_activation: str
     hardware_delay_us: float
     fps_limit: float | None
+    sensor_bit_depth: int = 12
 
     def __post_init__(self) -> None:
         """共通設定の数値制約をSession開始前に検証する。"""
@@ -55,6 +116,13 @@ class TriggerSettings:
         ):
             msg = "FPS Limitは正の値またはUnlimitedにしてください。"
             raise ValueError(msg)
+        if (
+            isinstance(self.sensor_bit_depth, bool)
+            or not isinstance(self.sensor_bit_depth, int)
+            or self.sensor_bit_depth not in (SENSOR_BIT_DEPTH_8, SENSOR_BIT_DEPTH_12)
+        ):
+            msg = "Sensor bit depthは8または12の整数にしてください。"
+            raise ValueError(msg)
 
 
 DEFAULT_TRIGGER_SETTINGS = TriggerSettings(
@@ -81,9 +149,9 @@ class FrameReadback:
 class CameraFrame:
     """Raw画像と、そのフレームに対応する読戻し情報を保持する。"""
 
-    # pypylon converterでMono16 / MsbAlignedへ変換した、画像処理前のRaw相当画像。
     image: np.ndarray
     readback: FrameReadback
+    image_format: ImageFormatSnapshot
 
 
 class TriggerCaptureSession(Protocol):
@@ -128,6 +196,10 @@ class Camera(Protocol):
 
     def set_gain(self, gain: int) -> None:
         """カメラゲインを設定する。"""
+        ...
+
+    def configure_image_format(self, sensor_bit_depth: int) -> ImageFormatSnapshot:
+        """IDLE状態で画像転送形式とconverterを設定し、readback済みsnapshotを返す。"""
         ...
 
     def start_trigger_session(

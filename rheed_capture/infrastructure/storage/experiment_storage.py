@@ -17,6 +17,7 @@ from rheed_capture.infrastructure.storage.sessions.recording import RecordingSes
 from rheed_capture.infrastructure.storage.sessions.sequence import SequenceSession
 
 if TYPE_CHECKING:
+    from rheed_capture.application.ports.camera import ImageFormatSnapshot
     from rheed_capture.data_formats.angle_scan_document import AngleScanDocument
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,11 @@ class ExperimentStorage:
         exp_dir.mkdir(parents=True, exist_ok=True)
         return exp_dir
 
-    def start_sequence_session(self) -> SequenceSession:
+    def start_sequence_session(
+        self,
+        *,
+        image_format: ImageFormatSnapshot,
+    ) -> SequenceSession:
         """次の `image_NNN` を確定し、SequenceSessionを生成する。"""
         # 撮影開始直前にディスクを再走査し、外部作成済み番号との衝突を避ける。
         self.refresh_capture_counters_from_disk()
@@ -193,6 +198,7 @@ class ExperimentStorage:
             sequence_dir,
             experiment_dir_name=exp_dir.name,
             sequence_number=self._sequence_counter,
+            image_format=image_format,
         )
         logger.info("新規シーケンス作成: %s", sequence_dir)
         return self._current_sequence_session
@@ -227,6 +233,7 @@ class ExperimentStorage:
         duration_ms: float | None,
         accumulation_frames: int = 1,
         tiff_compression_enabled: bool = True,
+        image_format: ImageFormatSnapshot,
     ) -> RecordingSession:
         """次の `record-N` を確定し、RecordingSessionを生成する。"""
         # RecordingはSequence/Angle Scanと独立した番号系列で保存する。
@@ -249,6 +256,7 @@ class ExperimentStorage:
             duration_ms=duration_ms,
             accumulation_frames=accumulation_frames,
             tiff_compression_enabled=tiff_compression_enabled,
+            image_format=image_format,
         )
         logger.info("新規録画作成: %s", recording_dir)
         return self._current_recording_session

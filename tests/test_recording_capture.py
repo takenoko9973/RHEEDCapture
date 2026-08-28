@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import csv
+import json
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, cast
 
 import numpy as np
 import pytest
+import tifffile
 
 from rheed_capture.application.capture.cancellation import CancellationToken
 from rheed_capture.application.capture.frame_capturer import (
@@ -23,6 +26,7 @@ from rheed_capture.application.ports.camera import (
     CameraError,
     CameraFrame,
     FrameReadback,
+    ImageFormatSnapshot,
     TriggerSettings,
 )
 
@@ -34,6 +38,10 @@ if TYPE_CHECKING:
     from rheed_capture.data_formats.recording import RecordingFrameRow
 
 from rheed_capture.application.capture.save_worker import SaveQueueTelemetry
+from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
+from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 class _FakeCamera:
@@ -45,6 +53,7 @@ class _FakeCamera:
         *,
         sleep_sec: float = 0.0,
         expected_mode: str = "software",
+        image_format: ImageFormatSnapshot = _IMAGE_FORMAT_12,
     ) -> None:
         """返す画像列と任意の取得遅延を保持する。"""
         self.images = list(images)
@@ -53,6 +62,7 @@ class _FakeCamera:
         self.gains: list[int] = []
         self.sessions: list[_FakeTriggerCaptureSession] = []
         self.expected_mode = expected_mode
+        self.image_format = image_format
 
     def set_exposure(self, exposure_ms: float) -> None:
         """設定された露光時間を記録する。"""
@@ -61,6 +71,10 @@ class _FakeCamera:
     def set_gain(self, gain: int) -> None:
         """設定されたGainを記録する。"""
         self.gains.append(gain)
+
+    def configure_image_format(self, sensor_bit_depth: int) -> ImageFormatSnapshot:  # noqa: ARG002
+        """Camera Portの画像形式設定を満たすtest doubleの応答を返す。"""
+        return self.image_format
 
     def start_trigger_session(
         self,
@@ -81,6 +95,7 @@ class _FakeTriggerCaptureSession:
     def __init__(self, camera: _FakeCamera, *, expected_frames: int | None) -> None:
         """共有画像列と予定フレーム数を保持する。"""
         self.camera = camera
+        self.image_format = camera.image_format
         self.expected_frames = expected_frames
         self.closed = False
         self.trigger_count = 0
@@ -128,6 +143,7 @@ class _FakeTriggerCaptureSession:
                 camera_timestamp_frequency_hz=125_000_000,
                 source="camera",
             ),
+            image_format=self.camera.image_format,
         )
 
     def close(self) -> None:
@@ -257,6 +273,20 @@ class _DeferredSaveWorker(_SaveWorker):
             self.current_queue_depth -= 1
 
 
+class _FilesystemSaveWorker(_SaveWorker):
+    """保存要求を実TIFFへ書き出すRecording用の同期worker。"""
+
+    def enqueue(self, request: SaveRequest) -> None:
+        """TIFFを書き出してから保存完了callbackを実行する。"""
+        TiffWriter.save(
+            request.file_path,
+            request.image,
+            request.metadata,
+            compression=request.compression,
+        )
+        super().enqueue(request)
+
+
 def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
     """0ms時点の初回フレームを保存し、duration到達後に完了する。"""
     images = [np.full((2, 2), index, dtype=np.uint16) for index in range(1, 4)]
@@ -278,6 +308,7 @@ def test_recording_captures_zero_time_frame_and_stops_after_duration() -> None:
         session,
         settings,
         save_worker=worker,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(
@@ -326,6 +357,7 @@ def test_recording_compression_off_passes_none_to_save_request() -> None:
             tiff_compression_enabled=False,
         ),
         save_worker=worker,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(CancellationToken())
@@ -357,6 +389,7 @@ def test_recording_queue_depth_stays_bound_to_each_frame_until_save_callback() -
             duration_ms=None,
         ),
         save_worker=worker,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(token)
@@ -387,6 +420,7 @@ def test_recording_stop_after_grab_saves_frame_then_cancels() -> None:
         session,
         settings,
         save_worker=worker,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(token)
@@ -418,6 +452,7 @@ def test_recording_stop_during_wait_returns_without_next_frame() -> None:
         session,
         settings,
         save_worker=_SaveWorker(),
+        image_format=_IMAGE_FORMAT_12,
     )
 
     thread = threading.Thread(target=lambda: capture.run(token))
@@ -453,6 +488,7 @@ def test_recording_recreates_failed_session_without_skipping_frame_index() -> No
         session,
         settings,
         save_worker=_SaveWorker(),
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(CancellationToken())
@@ -478,6 +514,7 @@ def test_recording_rejects_exposure_longer_than_interval() -> None:
             _Session(),
             settings,
             save_worker=_SaveWorker(),
+            image_format=_IMAGE_FORMAT_12,
         )
 
 
@@ -506,6 +543,7 @@ def test_accumulation_recording_saves_raw_and_notifies_saturated_group_preview()
         ),
         save_worker=worker,
         accumulation_frames=2,
+        image_format=_IMAGE_FORMAT_12,
     )
     previews: list[np.ndarray] = []
 
@@ -522,6 +560,82 @@ def test_accumulation_recording_saves_raw_and_notifies_saturated_group_preview()
     ]
     assert len(previews) == 1
     assert np.array_equal(previews[0], np.full((2, 2), 65_535, dtype=np.uint16))
+
+
+@pytest.mark.parametrize("accumulation_frames", [1, 2])
+def test_recording_tiff_preserves_snapshot_dtype_metadata_and_csv_contract(
+    tmp_path: Path,
+    accumulation_frames: int,
+) -> None:
+    """Recordingの通常・蓄積Raw TIFFとJSONが選択形式を保持する。"""
+    image_format = ImageFormatSnapshot(8, 8, "Mono8", None)
+    images = [
+        np.full((2, 2), value, dtype=np.uint8)
+        for value in ([200] if accumulation_frames == 1 else [100, 200])
+    ]
+    camera = _FakeCamera(images, image_format=image_format)
+    storage = ExperimentStorage(tmp_path)
+    session = storage.start_recording_session(
+        sample_name="STO",
+        exposure_ms=1.0,
+        gain=0,
+        rate_mode="interval",
+        target_interval_ms=1.0,
+        duration_ms=None,
+        accumulation_frames=accumulation_frames,
+        image_format=image_format,
+    )
+    token = CancellationToken()
+    worker = _FilesystemSaveWorker(
+        cancel_after_first=token,
+        cancel_after_frames=accumulation_frames,
+    )
+    capture = RecordingCapture(
+        CaptureConditionApplier(camera),
+        FrameGrabber(camera, retry_interval_sec=0),
+        session,
+        RecordingSettings(
+            exposure_ms=1.0,
+            gain=0,
+            rate_mode="interval",
+            target_interval_ms=1.0,
+            duration_ms=None,
+        ),
+        save_worker=worker,
+        accumulation_frames=accumulation_frames,
+        image_format=image_format,
+    )
+    previews: list[np.ndarray] = []
+
+    capture.run(
+        token,
+        hooks=RecordingHooks(on_preview_frame_completed=previews.append),
+    )
+
+    request_paths = [
+        request.file_path for request in worker.requests
+    ]
+    assert len(request_paths) == accumulation_frames
+    assert len(previews) == 1
+    assert previews[0].dtype == np.uint8
+    assert int(previews[0].max()) == (200 if accumulation_frames == 1 else 255)
+    for path in request_paths:
+        with tifffile.TiffFile(path) as tif:
+            assert tif.asarray().dtype == np.uint8
+            page = cast("tifffile.TiffPage", tif.pages[0])
+            metadata = json.loads(page.tags["ImageDescription"].value)
+        assert {
+            key: metadata[key]
+            for key in ("bit_depth_sensor", "bit_depth_saved", "pixel_format", "alignment")
+        } == image_format.to_dict()
+
+    with (session.session_dir / "recording.json").open(encoding="utf-8") as file:
+        recording = json.load(file)
+    assert recording["schema_version"] == 1
+    assert recording["image_format"] == image_format.to_dict()
+    with (session.session_dir / "frames.csv").open(encoding="utf-8", newline="") as file:
+        header = next(csv.reader(file))
+    assert header == session.csv_header
 
 
 def test_hardware_recording_first_trigger_timeout_marks_error() -> None:
@@ -551,6 +665,7 @@ def test_hardware_recording_first_trigger_timeout_marks_error() -> None:
         ),
         save_worker=_SaveWorker(),
         trigger_wait_timeout_sec=0.001,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     with pytest.raises(TimeoutError, match="Trigger Wait Timeout Error"):
@@ -589,6 +704,7 @@ def test_hardware_recording_stops_normally_when_trigger_stops_after_first_raw() 
             duration_ms=1.0,
         ),
         save_worker=_SaveWorker(),
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(CancellationToken())
@@ -633,6 +749,7 @@ def test_hardware_duration_finishes_started_group_without_starting_next_group() 
         ),
         save_worker=_SaveWorker(),
         accumulation_frames=2,
+        image_format=_IMAGE_FORMAT_12,
     )
 
     capture.run(CancellationToken())

@@ -9,7 +9,7 @@ import numpy as np
 import tifffile
 
 from rheed_capture.application.capture.frame_capturer import CapturedFrame, CaptureTiming
-from rheed_capture.application.ports.camera import FrameReadback
+from rheed_capture.application.ports.camera import FrameReadback, ImageFormatSnapshot
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
@@ -26,6 +26,7 @@ from rheed_capture.infrastructure.storage.experiment_storage import ExperimentSt
 from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
 
 JST = ZoneInfo("Asia/Tokyo")
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 def test_tiff_writer() -> None:
@@ -55,7 +56,7 @@ def test_lazy_directory_creation() -> None:
         assert not storage.get_current_experiment_dir().exists()
 
         # 撮影開始時に初めて作られる
-        storage.start_sequence_session()
+        storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         assert storage.get_current_experiment_dir().exists()
         assert storage.get_current_sequence_dir().exists()
 
@@ -66,7 +67,7 @@ def test_experiment_storage_save_sequence() -> None:
         storage = ExperimentStorage(root_dir=temp_dir)
 
         # 1回目のシーケンス撮影開始
-        session = storage.start_sequence_session()
+        session = storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         assert storage.get_current_sequence_dir().name == "image_001"
 
         data = np.zeros((10, 10), dtype=np.uint16)
@@ -83,7 +84,7 @@ def test_experiment_storage_save_sequence() -> None:
         # ===
 
         # 2回目のシーケンス撮影開始
-        session2 = storage.start_sequence_session()
+        session2 = storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         assert storage.get_current_sequence_dir().name == "image_002"
 
         saved_path2 = session2.save_raw_frame(data, exposure_ms=2000, gain=1.5, metadata=meta)
@@ -97,7 +98,7 @@ def test_sequence_tiff_round_trips_requested_condition_and_camera_readback() -> 
     """Sequence TIFFで要求条件とcamera読戻し値を区別して保存する。"""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = ExperimentStorage(root_dir=temp_dir)
-        session = storage.start_sequence_session()
+        session = storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         captured_frame = CapturedFrame(
             image=np.zeros((2, 2), dtype=np.uint16),
             condition=DomainCaptureCondition(exposure_ms=50.0, gain=1),
@@ -112,6 +113,7 @@ def test_sequence_tiff_round_trips_requested_condition_and_camera_readback() -> 
                 trigger_issued_at=datetime.fromisoformat("2026-07-11T12:00:00+09:00"),
                 trigger_issued_monotonic_sec=1.0,
             ),
+            image_format=_IMAGE_FORMAT_12,
         )
 
         saved_path = session.save_frame(captured_frame)
@@ -150,7 +152,7 @@ def test_root_change_and_branch_detection() -> None:
         assert storage.get_current_experiment_dir().name == f"{date_str}-2"
 
         # 次のシーケンスは image_006 になるはず
-        storage.start_sequence_session()
+        storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         assert storage.get_current_sequence_dir().name == "image_006"
 
 
@@ -188,9 +190,10 @@ def test_angle_scan_storage_uses_independent_counter_and_spec_names() -> None:
                 return_to_start=False,
             ),
             capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=0)],
+            image_format=_IMAGE_FORMAT_12,
         )
 
-        storage.start_sequence_session()
+        storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         scan_session = storage.start_angle_scan_session(scan_document)
         scan_id = scan_session.scan_id
         scan_dir = scan_session.session_dir
@@ -241,9 +244,10 @@ def test_accumulation_storage_writes_raw_groups_without_changing_tiff_metadata()
                 trigger_issued_at=datetime.fromisoformat("2026-07-11T12:00:00+09:00"),
                 trigger_issued_monotonic_sec=1.0,
             ),
+            image_format=_IMAGE_FORMAT_12,
         )
 
-        sequence_session = storage.start_sequence_session()
+        sequence_session = storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
         sequence_regular_path = sequence_session.save_frame(captured_frame)
         sequence_paths = [
             sequence_session.save_accumulation_frame(
@@ -275,6 +279,7 @@ def test_accumulation_storage_writes_raw_groups_without_changing_tiff_metadata()
                 return_to_start=False,
             ),
             capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=2)],
+            image_format=_IMAGE_FORMAT_12,
             capture=CaptureExecutionSettings.for_accumulation(
                 retry_limit=3,
                 accumulation_frames=10,

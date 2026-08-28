@@ -10,6 +10,7 @@ import pytest
 
 from rheed_capture.application.capture.cancellation import CancellationToken
 from rheed_capture.application.capture.save_worker import SaveQueueTelemetry, SaveRequest
+from rheed_capture.application.ports.camera import ImageFormatSnapshot
 from rheed_capture.domain.acquisition_statistics import (
     AcquisitionSample,
     AcquisitionStatistics,
@@ -30,11 +31,23 @@ if TYPE_CHECKING:
     )
 
 
+def _camera() -> MagicMock:
+    """画像形式snapshotを返すRecording用camera mockを作る。"""
+    camera = MagicMock(spec=CameraDevice)
+    camera.configure_image_format.return_value = ImageFormatSnapshot(
+        12,
+        16,
+        "Mono12Packed",
+        "MsbAligned",
+    )
+    return camera
+
+
 def test_recording_service_uses_storage_root_name_as_sample(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """RecordingServiceがStorage root名をsample名としてSessionへ渡す。"""
-    camera = MagicMock(spec=CameraDevice)
+    camera = _camera()
     storage = MagicMock(spec=ExperimentStorage)
     storage.root_dir = Path("STO")
     storage.start_recording_session.return_value.dir_name = "record-1"
@@ -71,6 +84,7 @@ def test_recording_service_uses_storage_root_name_as_sample(
         target_interval_ms=100.0,
         duration_ms=None,
         tiff_compression_enabled=True,
+        image_format=camera.configure_image_format.return_value,
     )
     assert service.statistics_snapshot() is None
 
@@ -79,7 +93,7 @@ def test_recording_service_measures_captured_frames_not_saved_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """保存通知とSession境界ではなく、正常取得フレームを累計する。"""
-    camera = MagicMock(spec=CameraDevice)
+    camera = _camera()
     camera.take_acquisition_sample.side_effect = [
         AcquisitionSample(timestamp=10.1, payload_bytes=1000),
         AcquisitionSample(timestamp=10.6, payload_bytes=1000),
@@ -151,7 +165,7 @@ def test_recording_service_clears_statistics_after_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Recording例外終了後も取得統計を非表示状態へ戻す。"""
-    camera = MagicMock(spec=CameraDevice)
+    camera = _camera()
     storage = MagicMock(spec=ExperimentStorage)
     storage.root_dir = Path("STO")
     storage.start_recording_session.return_value.dir_name = "record-1"
@@ -194,7 +208,7 @@ def test_recording_service_clears_statistics_after_error(
 
 def test_recording_service_rejects_software_rate_above_fps_limit_before_storage() -> None:
     """Softwareの要求rateがFPS Limit超過ならSession作成前に失敗する。"""
-    camera = MagicMock(spec=CameraDevice)
+    camera = _camera()
     storage = MagicMock(spec=ExperimentStorage)
     storage.root_dir = Path("STO")
     service = RecordingService(
@@ -220,7 +234,7 @@ def test_recording_service_passes_compression_setting_to_storage_and_capture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Recording圧縮booleanをSessionとRecordingCaptureへ同じ値で渡す。"""
-    camera = MagicMock(spec=CameraDevice)
+    camera = _camera()
     storage = MagicMock(spec=ExperimentStorage)
     storage.root_dir = Path("STO")
     storage.start_recording_session.return_value.dir_name = "record-1"
@@ -262,6 +276,7 @@ def test_recording_service_passes_compression_setting_to_storage_and_capture(
         target_interval_ms=100.0,
         duration_ms=None,
         tiff_compression_enabled=False,
+        image_format=camera.configure_image_format.return_value,
     )
     assert capture_settings[0].tiff_compression_enabled is False
 
@@ -270,7 +285,7 @@ def test_recording_service_exposes_save_queue_depth_in_statistics_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Recording中のqueue current/peakを既存統計snapshotへ伝播する。"""
-    camera = MagicMock(spec=CameraDevice)
+    camera = _camera()
     storage = MagicMock(spec=ExperimentStorage)
     storage.root_dir = Path("STO")
     storage.start_recording_session.return_value.dir_name = "record-1"

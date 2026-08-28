@@ -17,6 +17,7 @@ from rheed_capture.data_formats.storage_naming import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from rheed_capture.application.ports.camera import ImageFormatSnapshot
     from rheed_capture.data_formats.recording import RecordingFrameRow
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -57,6 +58,7 @@ class RecordingSession:
         duration_ms: float | None,
         accumulation_frames: int = 1,
         tiff_compression_enabled: bool = True,
+        image_format: ImageFormatSnapshot,
     ) -> None:
         """Recordingのメタ情報を保持し、recording.jsonとframes.csvを初期化する。"""
         self.session_dir = session_dir
@@ -71,6 +73,7 @@ class RecordingSession:
         self.duration_ms = duration_ms
         self.accumulation_frames = accumulation_frames
         self.tiff_compression_enabled = tiff_compression_enabled
+        self._image_format = image_format
         self.created_at = datetime.now(JST).isoformat()
         self._saved_frames = 0
         self._lock = threading.Lock()
@@ -197,6 +200,7 @@ class RecordingSession:
                 "duration_ms": self.duration_ms,
             },
             "storage": self._build_storage_document(),
+            "image_format": self._image_format.to_dict(),
             "result": None,
         }
         if status != "running":

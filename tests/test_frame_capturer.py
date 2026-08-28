@@ -14,6 +14,7 @@ from rheed_capture.application.ports.camera import (
     CameraError,
     CameraFrame,
     FrameReadback,
+    ImageFormatSnapshot,
     TriggerSettings,
 )
 from rheed_capture.domain.capture_condition import CaptureCondition
@@ -25,6 +26,7 @@ class _FakeTriggerCaptureSession:
     def __init__(self, result: CameraFrame | Exception) -> None:
         """1回の取得結果と呼出履歴を保持する。"""
         self.result = result
+        self.image_format = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
         self.calls: list[tuple[str, int | None]] = []
         self.closed = False
 
@@ -62,6 +64,7 @@ class _FakeCamera:
     def __init__(self, results: list[CameraFrame | Exception]) -> None:
         """各試行で返す結果を保持する。"""
         self.results = results
+        self.image_format = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
         self.exposures: list[float] = []
         self.gains: list[int] = []
         self.expected_frames: list[int | None] = []
@@ -75,6 +78,10 @@ class _FakeCamera:
     def set_gain(self, gain: int) -> None:
         """設定されたGainを記録する。"""
         self.gains.append(gain)
+
+    def configure_image_format(self, sensor_bit_depth: int) -> ImageFormatSnapshot:  # noqa: ARG002
+        """Camera Portの画像形式設定を満たすtest doubleの応答を返す。"""
+        return self.image_format
 
     def start_trigger_session(
         self,
@@ -101,6 +108,7 @@ def _camera_frame(image: np.ndarray, ticks: int = 10) -> CameraFrame:
             camera_timestamp_frequency_hz=125_000_000,
             source="camera",
         ),
+        image_format=ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned"),
     )
 
 

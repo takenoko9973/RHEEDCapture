@@ -297,6 +297,9 @@ class MainWindow(QMainWindow):
 
         self.preview_vm.image_ready.connect(self.image_viewer.update_image)
         self.preview_vm.histogram_ready.connect(self.histogram_panel.update_histogram)
+        self.preview_vm.image_format_updated.connect(
+            self.histogram_panel.set_sensor_bit_depth
+        )
         self.preview_vm.exposure_updated.connect(self.preview_panel.update_exposure_ui)
         self.preview_vm.gain_updated.connect(self.preview_panel.update_gain_ui)
         self.preview_vm.clahe_enabled_updated.connect(self.preview_panel.update_clahe_ui)

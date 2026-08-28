@@ -6,13 +6,20 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 from pytestqt.qtbot import QtBot
 
-from rheed_capture.application.ports.camera import CameraFrame, FrameReadback
+from rheed_capture.application.ports.camera import (
+    CameraFrame,
+    FrameReadback,
+    ImageFormatSnapshot,
+)
 from rheed_capture.domain.acquisition_statistics import AcquisitionSample
 from rheed_capture.infrastructure.config.schema import AcquisitionSettings
 from rheed_capture.presentation.qt.workers.preview_worker import PreviewWorker
 
 if TYPE_CHECKING:
     from rheed_capture.infrastructure.camera import basler_camera
+
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 def _frame(value: int) -> CameraFrame:
@@ -26,6 +33,7 @@ def _frame(value: int) -> CameraFrame:
             camera_timestamp_frequency_hz=1,
             source="simulation",
         ),
+        image_format=_IMAGE_FORMAT_12,
     )
 
 
@@ -45,6 +53,7 @@ class FakeSession:
         self.closed = False
         self.close_thread_id: int | None = None
         self._software_ready = True
+        self.image_format = _IMAGE_FORMAT_12
 
     def wait_until_ready(self, timeout_ms: int) -> None:
         """Software ready待機の呼出を記録する。"""

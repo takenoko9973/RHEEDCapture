@@ -9,6 +9,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from rheed_capture.application.ports.camera import ImageFormatSnapshot
 from rheed_capture.data_formats.angle_scan_document import (
     AngleScanDocument,
     AngleScanDocumentSettings,
@@ -21,6 +22,8 @@ from rheed_capture.data_formats.storage_naming import (
 )
 from rheed_capture.infrastructure.storage.experiment_storage import ExperimentStorage
 from rheed_capture.infrastructure.storage.tiff_writer import TiffWriter
+
+_IMAGE_FORMAT_12 = ImageFormatSnapshot(12, 16, "Mono12Packed", "MsbAligned")
 
 
 def test_recording_session_creates_record_dirs_json_csv_and_filenames() -> None:
@@ -35,6 +38,7 @@ def test_recording_session_creates_record_dirs_json_csv_and_filenames() -> None:
             rate_mode="interval",
             target_interval_ms=300.0,
             duration_ms=None,
+            image_format=_IMAGE_FORMAT_12,
         )
 
         assert session.dir_name == "record-1"
@@ -58,6 +62,7 @@ def test_recording_session_creates_record_dirs_json_csv_and_filenames() -> None:
             rate_mode="interval",
             target_interval_ms=300.0,
             duration_ms=1000.0,
+            image_format=_IMAGE_FORMAT_12,
         )
         assert next_session.dir_name == "record-2"
         next_session.mark_completed()
@@ -74,6 +79,7 @@ def test_recording_session_appends_csv_after_saved_and_marks_cancelled() -> None
             rate_mode="interval",
             target_interval_ms=300.0,
             duration_ms=1000.0,
+            image_format=_IMAGE_FORMAT_12,
         )
         row = RecordingFrameRow(
             frame_index=1,
@@ -141,6 +147,7 @@ def test_accumulation_recording_uses_group_raw_paths_and_relative_csv_filename()
             target_interval_ms=300.0,
             duration_ms=None,
             accumulation_frames=2,
+            image_format=_IMAGE_FORMAT_12,
         )
         raw_path = session.build_accumulation_frame_path(1, 2)
         assert raw_path.relative_to(session.session_dir).as_posix() == "group_000001/raw_0002.tiff"
@@ -199,6 +206,7 @@ def test_recording_session_records_actual_tiff_compression(
             target_interval_ms=100.0,
             duration_ms=None,
             tiff_compression_enabled=compression_enabled,
+            image_format=_IMAGE_FORMAT_12,
         )
 
         with session.recording_json_path.open(encoding="utf-8") as f:
@@ -216,7 +224,7 @@ def test_sequence_and_angle_scan_use_zlib_compression() -> None:
     with patch.object(TiffWriter, "save") as save:
         with tempfile.TemporaryDirectory() as temp_dir:
             storage = ExperimentStorage(temp_dir)
-            sequence_session = storage.start_sequence_session()
+            sequence_session = storage.start_sequence_session(image_format=_IMAGE_FORMAT_12)
             sequence_session.save_raw_frame(
                 np.zeros((2, 2), dtype=np.uint16),
                 exposure_ms=10.0,
@@ -241,6 +249,7 @@ def test_sequence_and_angle_scan_use_zlib_compression() -> None:
                         return_to_start=False,
                     ),
                     capture_conditions=[CaptureCondition(exposure_ms=10.0, gain=0)],
+                    image_format=_IMAGE_FORMAT_12,
                 )
             )
             angle_session.save_raw_frame(
