@@ -59,11 +59,6 @@ class ChipSelector(QWidget):
         """外部から現在の選択状態を読むため、内部リストのコピーを返す。"""
         return list(self._selected_values)
 
-    def setEnabled(self, enabled: bool) -> None:  # noqa: N802
-        super().setEnabled(enabled)
-        for button in self._buttons.values():
-            button.setEnabled(enabled)
-
     def _on_toggled(self, value: ChipValue, checked: bool) -> None:
         if self._updating:
             return

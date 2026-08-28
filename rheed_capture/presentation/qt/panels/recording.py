@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from rheed_capture.application.capture.recording import interval_from_fps
 from rheed_capture.presentation.qt.widgets.capture_controls import (
     configure_capture_buttons,
     configure_next_capture_label,
@@ -211,7 +212,7 @@ class RecordingPanel(QGroupBox):
             self.fps_changed.emit(value)
         else:
             value = (
-                1000.0 / self.spin_fps.value()
+                interval_from_fps(self.spin_fps.value())
                 if convert_value
                 else self.spin_interval_ms.value()
             )
